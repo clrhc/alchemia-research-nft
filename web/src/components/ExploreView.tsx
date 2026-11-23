@@ -256,9 +256,11 @@ export function ExploreView({
                   setTapNote(
                     ev.kind === "pet-clicked"
                       ? "Your tap made the pet happy."
-                      : ev.combo && ev.combo > 1
-                        ? `Proton combo x${ev.combo}.`
-                        : "You popped a floating proton."
+                      : ev.kind === "room-clicked"
+                        ? `Tapped ${ev.roomName || "lab room"} in 3D.`
+                        : ev.combo && ev.combo > 1
+                          ? `Proton combo x${ev.combo}.`
+                          : "You popped a floating proton."
                   );
                 }}
                 impact={{

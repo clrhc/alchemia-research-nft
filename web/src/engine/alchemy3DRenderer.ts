@@ -91,9 +91,11 @@ export type LightingMood = "daylight" | "silver" | "moonlit";
 export type AtmosphereMode = "clear" | "snow" | "motes";
 
 export interface InteractiveEvent {
-  kind: "pet-clicked" | "atom-popped";
+  kind: "pet-clicked" | "atom-popped" | "room-clicked";
   bonusCoins: number;
   combo?: number;
+  sectorId?: number;
+  roomName?: string;
 }
 
 const UP_AXIS = new THREE.Vector3(0, 1, 0);
@@ -199,6 +201,9 @@ export class Alchemy3DRenderer {
   private acceleratorRings: THREE.Object3D[] = [];
   private cryoBeacons: THREE.Mesh[] = [];
   private companions: CompanionRig[] = [];
+  private builtWingGroups: Array<{ sectorId: number; name: string; group: THREE.Group }> = [];
+  private highlightedResidueIdx: number | null = null;
+  private highlightHalo: THREE.Sprite | null = null;
   private bursts: Burst3D[] = [];
   private shockwaveRing: THREE.Mesh | null = null;
 
@@ -393,6 +398,10 @@ export class Alchemy3DRenderer {
   public setComputeActive(active: boolean) {
     this.compute.setActive(active);
     this.onComputeTick?.(this.compute.getSnapshot());
+  }
+
+  public setHighlightedResidue(index: number | null) {
+    this.highlightedResidueIdx = index;
   }
 
   public selectBenchmark(benchmarkIndex: number) {
@@ -651,7 +660,13 @@ export class Alchemy3DRenderer {
     this.hoveredAtom = null;
     const petTargets = this.companions.map((c) => c.group);
     const petHits = petTargets.length > 0 ? this.raycaster.intersectObjects(petTargets, true) : [];
-    this.renderer.domElement.style.cursor = petHits.length > 0 ? "pointer" : "grab";
+    if (petHits.length > 0) {
+      this.renderer.domElement.style.cursor = "pointer";
+      return;
+    }
+    const wingTargets = this.builtWingGroups.map((w) => w.group);
+    const wingHits = wingTargets.length > 0 ? this.raycaster.intersectObjects(wingTargets, true) : [];
+    this.renderer.domElement.style.cursor = wingHits.length > 0 ? "pointer" : "grab";
   };
 
   private handlePointerUp = (e: PointerEvent) => {
@@ -693,6 +708,49 @@ export class Alchemy3DRenderer {
         bonusCoins: 1 + this.protonCombo,
         combo: this.protonCombo
       });
+      return;
+    }
+
+    // 3. Did the user tap a built Sims-style 3D architectural room? -> Tactile room micro-reaction!
+    const wingTargets = this.builtWingGroups.map((w) => w.group);
+    const wingHits = wingTargets.length > 0 ? this.raycaster.intersectObjects(wingTargets, true) : [];
+    if (wingHits.length > 0) {
+      let cur: THREE.Object3D | null = wingHits[0].object;
+      let matched: { sectorId: number; name: string; group: THREE.Group } | undefined;
+      while (cur && !matched) {
+        matched = this.builtWingGroups.find((w) => w.group === cur);
+        cur = cur.parent;
+      }
+      if (matched) {
+        const hitPt = wingHits[0].point.clone().add(new THREE.Vector3(0, 0.25, 0));
+        this.excitement = Math.min(1.6, this.excitement + 0.65);
+        if (matched.sectorId === 0) {
+          soundEngine.playTap(1318.51);
+          this.spawnColoredBurst(hitPt, 14, ["#38bdf8", "#bae6fd", "#ffffff"]);
+          this.compute.triggerFoldAction("wiggle");
+        } else if (matched.sectorId === 1) {
+          soundEngine.playProtonPop(3);
+          this.spawnColoredBurst(hitPt, 16, ["#6366f1", "#fbbf24", "#ffffff"]);
+        } else if (matched.sectorId === 2) {
+          soundEngine.playTap(987.77);
+          this.spawnColoredBurst(hitPt, 14, ["#10b981", "#6ee7b7", "#fde68a"]);
+        } else if (matched.sectorId === 3) {
+          this.triggerTamagotchiReaction("pet");
+        } else if (matched.sectorId === 4) {
+          soundEngine.playProtonPop(5);
+          this.shockwaveLife = 0.85;
+          this.spawnColoredBurst(hitPt, 16, ["#8b5cf6", "#c4b5fd", "#ffffff"]);
+        } else {
+          soundEngine.playBuildRoom();
+          this.spawnColoredBurst(hitPt, 18, ["#f59e0b", "#fde68a", "#5b8def", "#ffffff"]);
+        }
+        this.onInteractiveEvent?.({
+          kind: "room-clicked",
+          sectorId: matched.sectorId,
+          roomName: matched.name,
+          bonusCoins: 1
+        });
+      }
     }
   };
 
@@ -1063,6 +1121,8 @@ export class Alchemy3DRenderer {
     this.orbitals = [];
     this.floatingAtoms = [];
     this.condenserDroplets = [];
+    this.builtWingGroups = [];
+    this.highlightHalo = null;
     this.vialBubbles = [];
     this.residueMeshes = [];
     this.bondCylinders = [];
@@ -2209,6 +2269,12 @@ export class Alchemy3DRenderer {
       this.proteinRibbonMesh = new THREE.Mesh(ribbonGeo, ribbonMat);
       this.proteinGroup.add(this.proteinRibbonMesh);
     }
+
+    // 1D<->3D Mol* spotlight halo sprite for hovering residues in the sequence bar
+    const halo = this.makeGlowSprite("#f472b6", 0.32, 0.92);
+    halo.visible = false;
+    this.highlightHalo = halo;
+    this.proteinGroup.add(halo);
   }
 
   // ---------------------------------------------------------------------------
@@ -2764,6 +2830,7 @@ export class Alchemy3DRenderer {
     group.add(bridge);
 
     this.dynamicGroup.add(group);
+    this.builtWingGroups.push({ sectorId: 0, name: "Cold Room", group });
   }
 
   private buildQuantumMiningRigWing3D() {
@@ -2832,6 +2899,7 @@ export class Alchemy3DRenderer {
     group.add(conduit);
 
     this.dynamicGroup.add(group);
+    this.builtWingGroups.push({ sectorId: 1, name: "Mining Room", group });
   }
 
   private buildSolarCatalysisDome3D() {
@@ -2909,6 +2977,7 @@ export class Alchemy3DRenderer {
     }
 
     this.dynamicGroup.add(group);
+    this.builtWingGroups.push({ sectorId: 2, name: "Greenhouse", group });
   }
 
   private buildCompanionSanctuaryWing3D() {
@@ -2980,6 +3049,7 @@ export class Alchemy3DRenderer {
     this.cryoBeacons.push(orb);
 
     this.dynamicGroup.add(group);
+    this.builtWingGroups.push({ sectorId: 3, name: "Pet Lounge", group });
   }
 
   private buildProtonAcceleratorSpire3D() {
@@ -3059,6 +3129,7 @@ export class Alchemy3DRenderer {
     group.add(finial);
 
     this.dynamicGroup.add(group);
+    this.builtWingGroups.push({ sectorId: 4, name: "Particle Tower", group });
   }
 
   private buildObservatoryCrown3D() {
@@ -3110,6 +3181,7 @@ export class Alchemy3DRenderer {
     }
     this.acceleratorRings.push(group);
     this.dynamicGroup.add(group);
+    this.builtWingGroups.push({ sectorId: 5, name: "Glass Dome", group });
   }
 
   // ---------------------------------------------------------------------------
@@ -3453,9 +3525,25 @@ export class Alchemy3DRenderer {
 
       for (let i = 0; i < snap.residues.length; i++) {
         const r = snap.residues[i];
-        this.residueMeshes[i].position.set(r.x * angstromScale, r.y * angstromScale, r.z * angstromScale);
+        const mesh = this.residueMeshes[i];
+        mesh.position.set(r.x * angstromScale, r.y * angstromScale, r.z * angstromScale);
+        const baseScale = r.aromatic ? 1.15 : r.hydrophobic ? 1.05 : 0.92;
+        const isSpotlit = this.highlightedResidueIdx === i;
+        mesh.scale.setScalar(isSpotlit ? baseScale * 1.75 : baseScale);
         if (this.proteinRibbonCurvePts[i]) {
-          this.proteinRibbonCurvePts[i].copy(this.residueMeshes[i].position);
+          this.proteinRibbonCurvePts[i].copy(mesh.position);
+        }
+      }
+
+      if (this.highlightHalo) {
+        const hi = this.highlightedResidueIdx;
+        if (hi !== null && hi >= 0 && hi < this.residueMeshes.length) {
+          this.highlightHalo.visible = true;
+          this.highlightHalo.position.copy(this.residueMeshes[hi].position);
+          const pulse = 0.28 + Math.sin(t * 7.5) * 0.05;
+          this.highlightHalo.scale.set(pulse, pulse, 1);
+        } else {
+          this.highlightHalo.visible = false;
         }
       }
 

@@ -1908,6 +1908,93 @@ select:focus-visible,
   color: #ffffff;
 }
 
+/* Mol* / RCSB PDB-Standard 1D<->3D Amino Acid Sequence Ribbon Bar */
+.seq-ribbon-box {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px 11px;
+  border-radius: 14px;
+  background: rgba(244, 247, 252, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.seq-ribbon-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.seq-ribbon-caption {
+  font-size: 0.71rem;
+  color: var(--ink-secondary);
+}
+
+.seq-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--ink-muted);
+}
+
+.seq-legend i {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.seq-ribbon-cells {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.seq-cell {
+  appearance: none;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 6px;
+  width: 21px;
+  height: 22px;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 500;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.seq-cell.ss-H {
+  background: rgba(252, 231, 243, 0.95);
+  border-color: rgba(236, 72, 153, 0.42);
+  color: #9d174d;
+}
+
+.seq-cell.ss-E {
+  background: rgba(254, 243, 199, 0.95);
+  border-color: rgba(245, 158, 11, 0.44);
+  color: #92400e;
+}
+
+.seq-cell.ss-C {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(148, 163, 184, 0.3);
+  color: #475569;
+}
+
+.seq-cell.is-hovered,
+.seq-cell:hover {
+  transform: translateY(-2px) scale(1.12);
+  box-shadow: 0 4px 10px -4px rgba(236, 72, 153, 0.45);
+  z-index: 2;
+}
+
 @media (max-width: 900px) {
   .single-view-grid,
   .mylabs-grid {

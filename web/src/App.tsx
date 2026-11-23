@@ -616,7 +616,9 @@ export function App() {
                   setNotice(
                     ev.kind === "pet-clicked"
                       ? `Petted in 3D. +${ev.bonusCoins} spark.`
-                      : `Popped a floating proton. +${ev.bonusCoins} sparks.`
+                      : ev.kind === "room-clicked"
+                        ? `Tapped ${ev.roomName || "lab room"} in 3D. +${ev.bonusCoins} spark.`
+                        : `Popped a floating proton. +${ev.bonusCoins} sparks.`
                   );
                 }}
                 onPulseClick={() => setBgPulseSignal((n) => n + 1)}

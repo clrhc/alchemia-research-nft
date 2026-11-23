@@ -235,7 +235,9 @@ function StandaloneAnimationViewer() {
             setToast(
               ev.kind === "pet-clicked"
                 ? "Your tap made the pet happy."
-                : "Popped a floating proton."
+                : ev.kind === "room-clicked"
+                  ? `Tapped ${ev.roomName || "lab room"}.`
+                  : "Popped a floating proton."
             );
           }}
         />

@@ -24,6 +24,7 @@ interface ArtworkCanvasProps {
   previewSectorId?: number | null;
   lightingMood?: LightingMood;
   atmosphereMode?: AtmosphereMode;
+  highlightedResidueIdx?: number | null;
   benchmarkIndex?: number | null;
   foldSignal?: { action: "wiggle" | "shake"; seq: number } | null;
   onComputeSnapshot?: (snap: ComputeSnapshot) => void;
@@ -41,6 +42,7 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
     previewSectorId = null,
     lightingMood = "daylight",
     atmosphereMode = "clear",
+    highlightedResidueIdx = null,
     benchmarkIndex = null,
     foldSignal = null,
     onComputeSnapshot,
@@ -138,6 +140,10 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
   useEffect(() => {
     rendererRef.current?.setAtmosphereMode(atmosphereMode);
   }, [atmosphereMode]);
+
+  useEffect(() => {
+    rendererRef.current?.setHighlightedResidue(highlightedResidueIdx);
+  }, [highlightedResidueIdx]);
 
   useEffect(() => {
     if (benchmarkIndex !== null && benchmarkIndex >= 0) {

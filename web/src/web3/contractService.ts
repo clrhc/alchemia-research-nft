@@ -261,9 +261,11 @@ function getReadProvider(chainId: number): JsonRpcProvider {
   if (existing) return existing;
   const rpcUrl = CHAIN_RPC_URLS[chainId] || CHAIN_RPC_URLS[1];
   const network = ethers.Network.from(chainId);
+  // Keep staticNetwork (zero redundant eth_chainId calls) and batchMaxCount: 1
+  // because public RPCs like sepolia.base.org return HTTP 413 on large JSON-RPC batches.
   const provider = new JsonRpcProvider(rpcUrl, network, {
     staticNetwork: network,
-    batchMaxCount: 10
+    batchMaxCount: 1
   });
   readProviderCache.set(chainId, provider);
   return provider;
@@ -347,13 +349,24 @@ export async function fetchOnChainCollectionSnapshot(
   const provider = getReadProvider(chainId);
   const contract = new Contract(contractAddress, ALCHEMIA_ABI, provider);
 
+  // Split into two small concurrent groups of 6 to stay well under public RPC rate limits
   const [
     totalSupply,
     maxSupply,
     supplyLocked,
     mintPriceWei,
     totalDonatedWei,
-    liquidityReserveWei,
+    liquidityReserveWei
+  ] = await Promise.all([
+    contract.totalSupply(),
+    contract.maxSupply(),
+    contract.supplyConfigLocked(),
+    contract.mintPriceWei(),
+    contract.totalDonatedWei(),
+    contract.liquidityReserveWei()
+  ]);
+
+  const [
     liquidityThresholdWei,
     liquiditySeeded,
     totalCoinsTithed,
@@ -361,12 +374,6 @@ export async function fetchOnChainCollectionSnapshot(
     rawCauses,
     coinAddr
   ] = await Promise.all([
-    contract.totalSupply(),
-    contract.maxSupply(),
-    contract.supplyConfigLocked(),
-    contract.mintPriceWei(),
-    contract.totalDonatedWei(),
-    contract.liquidityReserveWei(),
     contract.liquidityThresholdWei(),
     contract.liquiditySeeded(),
     contract.totalCoinsTithedToResearch(),
@@ -457,11 +464,11 @@ export async function fetchOnChainCollectionSnapshot(
     }
   }
 
-  // Fetch recent on-chain ResearchDiscoveryAnchored logs cleanly (best-effort)
+  // Fetch recent on-chain ResearchDiscoveryAnchored logs cleanly within public RPC 10k-block limit
   let recentDiscoveries: ResearchDiscoveryLog[] = [];
   try {
     const latestBlock = await provider.getBlockNumber();
-    const fromBlock = Math.max(0, latestBlock - 45000);
+    const fromBlock = Math.max(0, latestBlock - 9000);
     const logs = await contract.queryFilter(
       contract.filters.ResearchDiscoveryAnchored(),
       fromBlock,

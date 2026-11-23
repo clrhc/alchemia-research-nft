@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { ArtworkCanvas, type ArtworkCanvasHandle } from "./ArtworkCanvas";
 import { ContactMapSvg } from "./ContactMapSvg";
+import { SequenceRibbonBar } from "./SequenceRibbonBar";
 import type { AtmosphereMode, CameraPreset, LightingMood } from "../engine/alchemy3DRenderer";
 import { deriveTraitsFromSeed } from "../engine/prng";
 import {
@@ -196,6 +197,7 @@ export function MyLabsView({
     null
   );
   const [showContactMap, setShowContactMap] = useState(false);
+  const [highlightedResidueIdx, setHighlightedResidueIdx] = useState<number | null>(null);
   const [showGoals, setShowGoals] = useState(false);
   const [goals, setGoals] = useState<Record<GoalKey, boolean>>(() => loadGoals());
   const [editingPetName, setEditingPetName] = useState(false);
@@ -478,6 +480,7 @@ export function MyLabsView({
               cameraPreset={camPreset}
               lightingMood={lightingMood}
               atmosphereMode={atmosphereMode}
+              highlightedResidueIdx={highlightedResidueIdx}
               previewSectorId={previewSectorId}
               benchmarkIndex={selectedBenchmark}
               foldSignal={foldSignal}
@@ -491,6 +494,9 @@ export function MyLabsView({
                   onAwardPlayBonus(ev.bonusCoins);
                   markGoalDone("pet");
                   setFeedback(`Petted ${petDisplayName} in 3D. +${ev.bonusCoins} spark.`);
+                } else if (ev.kind === "room-clicked") {
+                  onAwardPlayBonus(ev.bonusCoins);
+                  setFeedback(`Tapped ${ev.roomName || "lab room"} in 3D. +${ev.bonusCoins} spark.`);
                 } else {
                   onAwardPlayBonus(ev.bonusCoins);
                   markGoalDone("proton");
@@ -893,6 +899,16 @@ export function MyLabsView({
                     )}
                   </div>
                 </div>
+
+                {structuralStats && (
+                  <SequenceRibbonBar
+                    residues={
+                      liveSnap.bestResidues?.length ? liveSnap.bestResidues : liveSnap.residues
+                    }
+                    secondaryCodes={structuralStats.ss.codes}
+                    onHoverResidue={setHighlightedResidueIdx}
+                  />
+                )}
 
                 {showContactMap && structuralStats && (
                   <ContactMapSvg

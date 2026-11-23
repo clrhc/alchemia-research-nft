@@ -35,7 +35,7 @@ async function main() {
   const network = ethers.Network.from(84532);
   const provider = new ethers.JsonRpcProvider(RPC, network, {
     staticNetwork: network,
-    batchMaxCount: 8
+    batchMaxCount: 1
   });
   console.log(`\n=== LIVE BASE SEPOLIA VERIFICATION (chainId: ${network.chainId}) ===`);
 
