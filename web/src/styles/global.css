@@ -1448,6 +1448,17 @@ body {
   flex-wrap: wrap;
 }
 
+.gallery-meta-line {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+}
+
 .gallery-filters {
   display: flex;
   gap: 7px;

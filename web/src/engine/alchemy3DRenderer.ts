@@ -970,6 +970,9 @@ export class Alchemy3DRenderer {
             break;
           }
         }
+      } else if (this.impact.complexityTier !== prevTier && this.builtTier !== -1) {
+        // Tactile spring pop-in when sliding $1 -> $500 across complexity levels
+        this.buildPopScale = 0.945;
       }
       this.rebuild3DModel();
       this.onComputeTick?.(this.compute.getSnapshot());
@@ -1866,18 +1869,23 @@ export class Alchemy3DRenderer {
 
     const glassMat = new THREE.MeshPhysicalMaterial({
       color: "#ffffff",
-      transmission: 0.92,
+      transmission: 0.93,
       opacity: 1,
       transparent: true,
-      roughness: 0.04,
-      metalness: 0.02,
+      roughness: 0.03,
+      metalness: 0.01,
       ior: 1.47,
-      thickness: 0.42,
+      thickness: 0.44,
+      dispersion: 0.22,
+      iridescence: 0.22,
+      iridescenceIOR: 1.3,
+      iridescenceThicknessRange: [120, 380],
+      specularIntensity: 1.0,
       attenuationColor: new THREE.Color("#e8f1fb"),
       attenuationDistance: 1.35,
       clearcoat: 1.0,
       clearcoatRoughness: 0.03,
-      envMapIntensity: 1.55,
+      envMapIntensity: 1.6,
       side: THREE.DoubleSide
     });
 
@@ -3241,12 +3249,16 @@ export class Alchemy3DRenderer {
     });
     const crystalGlass = new THREE.MeshPhysicalMaterial({
       color: "#ffffff",
-      transmission: 0.88,
-      roughness: 0.06,
+      transmission: 0.89,
+      roughness: 0.05,
       ior: 1.5,
-      thickness: 0.14,
+      thickness: 0.18,
+      dispersion: 0.42,
+      iridescence: 0.34,
+      iridescenceIOR: 1.32,
+      iridescenceThicknessRange: [140, 440],
       transparent: true,
-      opacity: 0.65
+      opacity: 0.68
     });
 
     const crown = new THREE.Mesh(new THREE.TorusGeometry(1.18, 0.028, 12, 64), goldSilver);

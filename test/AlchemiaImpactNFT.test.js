@@ -501,4 +501,64 @@ describe("Alchemia Ecosystem ($ALCH Coin + Liquidity Threshold + Sims-Style Lab 
     await coin.connect(other).burnFrom(minter.address, ethers.parseEther("15"));
     expect(await coin.totalSupply()).to.equal(supplyBefore - ethers.parseEther("25"));
   });
+
+  it("conserves ETH accounting to the exact 1 wei across 25 randomized odd-wei mints, upgrades, rooms & Phase 1 -> Phase 2 LP transition", async function () {
+    const { contract, minter, other, devWallet, lpVault, research0, research1, research2, research3, mintPrice } =
+      await deployFixture(0n);
+
+    // Lower LP threshold to 0.08 ETH so randomized sequence crosses cleanly from Phase 1 into Phase 2
+    await contract.setLiquidityConfig(ethers.parseEther("0.08"), ethers.parseEther("10000000"), lpVault.address);
+
+    const researchWallets = [research0, research1, research2, research3];
+    const rStart = await Promise.all(researchWallets.map((w) => ethers.provider.getBalance(w.address)));
+    const devStart = await ethers.provider.getBalance(devWallet.address);
+    const lpStart = await ethers.provider.getBalance(lpVault.address);
+
+    let totalPaid = 0n;
+    let seed = 1337n;
+    const nextRand = (mod) => {
+      seed = (seed * 1103515245n + 12345n) & 0x7fffffffn;
+      return Number(seed % BigInt(mod));
+    };
+
+    for (let step = 0; step < 25; step++) {
+      const caller = step % 2 === 0 ? minter : other;
+      const causeId = nextRand(4);
+      const qty = 1 + nextRand(4);
+      // Deliberately odd wei remainder (+1..+997 wei) to stress-test integer division rounding
+      const oddWei = BigInt(1 + nextRand(997));
+      const mult = BigInt(1 + nextRand(40));
+      const pay = mintPrice * BigInt(qty) * mult + oddWei;
+
+      await contract.connect(caller).mint(qty, causeId, { value: pay });
+      totalPaid += pay;
+
+      // Interleave single-NFT upgrade on token #1
+      if (step % 3 === 1) {
+        const upPay = mintPrice * BigInt(1 + nextRand(10)) + BigInt(1 + nextRand(97));
+        await contract.connect(caller).upgradeVessel(1, { value: upPay });
+        totalPaid += upPay;
+      }
+
+      // Permissionlessly seed liquidity as soon as threshold is reached mid-sequence!
+      const seeded = await contract.liquiditySeeded();
+      const reserve = await contract.liquidityReserveWei();
+      if (!seeded && reserve >= ethers.parseEther("0.08")) {
+        await contract.connect(other).seedLiquidity();
+      }
+    }
+
+    expect(await contract.liquiditySeeded()).to.equal(true);
+    expect(await ethers.provider.getBalance(await contract.getAddress())).to.equal(0n);
+
+    const rEnd = await Promise.all(researchWallets.map((w) => ethers.provider.getBalance(w.address)));
+    const rDeltaSum = rEnd.reduce((acc, bal, i) => acc + (bal - rStart[i]), 0n);
+    const devDelta = (await ethers.provider.getBalance(devWallet.address)) - devStart;
+    const lpDelta = (await ethers.provider.getBalance(lpVault.address)) - lpStart;
+
+    // Exact 1-wei conservation invariant: zero dust lost, zero wei stuck!
+    expect(rDeltaSum + devDelta + lpDelta).to.equal(totalPaid);
+    expect(await contract.totalDonatedWei()).to.equal(rDeltaSum);
+    expect(await contract.totalDevWei()).to.equal(devDelta);
+  });
 });

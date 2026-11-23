@@ -31,7 +31,7 @@ import {
   downloadMMCIFFromSnapshot
 } from "../engine/structuralAnalysis";
 import { soundEngine } from "../engine/soundEngine";
-import { complexityTierFromUsd } from "../web3/config";
+import { complexityTierFromUsd, ethToUsd } from "../web3/config";
 import {
   buildAnimationUrl,
   type CollectionState,
@@ -467,6 +467,22 @@ export function ExploreView({
         <p className="subpage-sub">
           Open any lab to spin it in 3D, check its rooms, or download its live protein fold.
         </p>
+        {state.chainSynced !== false && (
+          <div className="gallery-meta-line">
+            <span>{state.totalSupply.toLocaleString()} {state.totalSupply === 1 ? "lab" : "labs"}</span>
+            <span>·</span>
+            <span>
+              {ethToUsd(state.globalDonatedEth).toLocaleString("en-US", {
+                style: "currency",
+                currency: "USD",
+                maximumFractionDigits: 2
+              })}{" "}
+              to research
+            </span>
+            <span>·</span>
+            <span>0% tax ALCH</span>
+          </div>
+        )}
       </header>
 
       <div className="gallery-toolbar">
