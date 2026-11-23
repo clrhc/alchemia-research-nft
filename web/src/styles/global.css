@@ -2031,6 +2031,35 @@ select:focus-visible,
   color: #ffffff;
 }
 
+.keyboard-hint {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--ink-muted);
+  margin-top: -2px;
+}
+
+.webgl-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 20px;
+  text-align: center;
+  background: radial-gradient(circle at 50% 42%, #ffffff 0%, #eef2f8 100%);
+  color: var(--ink-secondary);
+  font-size: 0.78rem;
+}
+
+@media (max-width: 900px) {
+  .keyboard-hint {
+    display: none;
+  }
+}
+
 @media (max-width: 900px) {
   .single-view-grid,
   .mylabs-grid {

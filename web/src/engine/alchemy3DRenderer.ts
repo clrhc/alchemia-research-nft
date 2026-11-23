@@ -208,6 +208,8 @@ export class Alchemy3DRenderer {
   private showBestFold = false;
   private bursts: Burst3D[] = [];
   private shockwaveRing: THREE.Mesh | null = null;
+  private waterRipples: Array<{ mesh: THREE.Mesh; life: number }> = [];
+  private nextWaterRippleIdx = 0;
 
   private rafId = 0;
   private startTime = 0;
@@ -988,7 +990,16 @@ export class Alchemy3DRenderer {
   public triggerCatalyticPulse(intensity = 1.0) {
     this.excitement = Math.min(1.6, this.excitement + 0.92 * intensity);
     this.shockwaveLife = 1.0;
+    this.triggerWaterRipple();
     this.spawnBurst(new THREE.Vector3(0, 1.55, 0), Math.round(20 * intensity));
+  }
+
+  private triggerWaterRipple() {
+    if (this.waterRipples.length === 0) return;
+    const slot = this.waterRipples[this.nextWaterRippleIdx % this.waterRipples.length];
+    this.nextWaterRippleIdx = (this.nextWaterRippleIdx + 1) % this.waterRipples.length;
+    slot.life = 1.0;
+    slot.mesh.scale.setScalar(1.0);
   }
 
   /**
@@ -997,6 +1008,7 @@ export class Alchemy3DRenderer {
   public triggerTamagotchiReaction(action: "feed" | "pet" | "play") {
     this.excitement = Math.min(1.75, this.excitement + (action === "play" ? 1.35 : 1.05));
     this.discoveryFlash = Math.max(this.discoveryFlash, 0.85);
+    this.triggerWaterRipple();
     for (const c of this.companions) {
       c.petReaction = Math.min(1.8, c.petReaction + 1.25);
     }
@@ -1129,6 +1141,7 @@ export class Alchemy3DRenderer {
   private onResearchDiscovery() {
     this.discoveryFlash = 1.0;
     this.excitement = Math.min(1.3, this.excitement + 0.45);
+    this.triggerWaterRipple();
     this.spawnBurst(new THREE.Vector3(0, 3.05, 0), 10);
     if (this.companions.length > 0 && this.moodBubbles.length < 2) {
       this.spawnMoodBubble(
@@ -1289,6 +1302,7 @@ export class Alchemy3DRenderer {
     this.floatingAtoms = [];
     this.condenserDroplets = [];
     this.builtWingGroups = [];
+    this.waterRipples = [];
     this.highlightHalo = null;
     this.vialBubbles = [];
     this.residueMeshes = [];
@@ -1393,6 +1407,21 @@ export class Alchemy3DRenderer {
     this.shockwaveRing.rotation.x = Math.PI / 2;
     this.shockwaveRing.position.y = 0.52;
     this.dynamicGroup.add(this.shockwaveRing);
+
+    // Zero-GC recycled reflecting-pool porcelain water ripple rings
+    for (let w = 0; w < 3; w++) {
+      const rMat = new THREE.MeshBasicMaterial({
+        color: "#ffffff",
+        transparent: true,
+        opacity: 0,
+        depthWrite: false
+      });
+      const rMesh = new THREE.Mesh(new THREE.RingGeometry(1.68, 1.72, 64), rMat);
+      rMesh.rotation.x = -Math.PI / 2;
+      rMesh.position.y = 0.258;
+      this.dynamicGroup.add(rMesh);
+      this.waterRipples.push({ mesh: rMesh, life: 0 });
+    }
   }
 
   private addWingConduitPulse(startPos: THREE.Vector3, colorHex: string) {
@@ -3934,6 +3963,15 @@ export class Alchemy3DRenderer {
       this.shockwaveLife = Math.max(0, this.shockwaveLife - dt * 1.15);
       this.shockwaveRing.scale.setScalar(1 + (1 - this.shockwaveLife) * 4.2);
       (this.shockwaveRing.material as THREE.MeshBasicMaterial).opacity = this.shockwaveLife * 0.8;
+    }
+
+    for (const wr of this.waterRipples) {
+      if (wr.life > 0) {
+        wr.life = Math.max(0, wr.life - dt * 0.52);
+        const progress = 1 - wr.life;
+        wr.mesh.scale.setScalar(1 + progress * 0.28);
+        (wr.mesh.material as THREE.MeshBasicMaterial).opacity = Math.sin(wr.life * Math.PI) * 0.52;
+      }
     }
 
     // Subtle courtyard atmosphere particles (Silver Snow or Warm Light Motes)

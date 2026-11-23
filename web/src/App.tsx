@@ -36,6 +36,7 @@ import {
   executeOnChainClaimCoins,
   executeOnChainDonateCoins,
   executeOnChainMint,
+  executeOnChainSeedLiquidity,
   executeOnChainSubmitResearchProof,
   executeOnChainUpgradeVessel,
   fetchOnChainCollectionSnapshot,
@@ -763,6 +764,15 @@ export function App() {
             state={state}
             animationUrl={previewAnimationUrl}
             liveCompute={liveCompute}
+            onSeedLiquidity={async () => {
+              if (!state.contractAddress) return;
+              if (!state.walletAddress) {
+                setShowWalletModal(true);
+                return;
+              }
+              await executeOnChainSeedLiquidity(state.contractAddress);
+              setState((prev) => ({ ...prev, liquiditySeeded: true, liquidityReserveEth: 0 }));
+            }}
           />
         </Suspense>
       )}

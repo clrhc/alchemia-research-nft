@@ -8,8 +8,10 @@ import {
   type LightingMood
 } from "../engine/alchemy3DRenderer";
 import { type LiveImpactState } from "../engine/alchemyRenderer";
+import { deriveTraitsFromSeed } from "../engine/prng";
 import type { ComputeSnapshot } from "../engine/researchCompute";
 import type { TamagotchiAction } from "../engine/tamagotchi";
+import { LabThumbnailSvg } from "./LabThumbnailSvg";
 
 export interface ArtworkCanvasHandle {
   capturePhoto: () => string | null;
@@ -67,22 +69,29 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
   }));
 
   const [computeSnap, setComputeSnap] = useState<ComputeSnapshot | null>(null);
+  const [webglUnavailable, setWebglUnavailable] = useState(false);
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
 
-    const renderer = new Alchemy3DRenderer(
-      host,
-      impact,
-      (snap) => {
-        setComputeSnap(snap);
-        onComputeRef.current?.(snap);
-      },
-      (ev) => {
-        onInteractRef.current?.(ev);
-      }
-    );
+    let renderer: Alchemy3DRenderer;
+    try {
+      renderer = new Alchemy3DRenderer(
+        host,
+        impact,
+        (snap) => {
+          setComputeSnap(snap);
+          onComputeRef.current?.(snap);
+        },
+        (ev) => {
+          onInteractRef.current?.(ev);
+        }
+      );
+    } catch {
+      setWebglUnavailable(true);
+      return;
+    }
     rendererRef.current = renderer;
     renderer.setLightingMood(lightingMood);
     renderer.setAtmosphereMode(atmosphereMode);
@@ -188,7 +197,18 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
         onPulseClick?.();
       }}
     >
-      <div ref={hostRef} className="artwork-canvas" />
+      {webglUnavailable ? (
+        <div className="webgl-fallback">
+          <LabThumbnailSvg
+            traits={deriveTraitsFromSeed(impact.seed)}
+            tier={impact.complexityTier}
+            sectorsMask={impact.sectorsMask ?? 0}
+          />
+          <span>3D WebGL is off in this browser — showing live 2D lab blueprint</span>
+        </div>
+      ) : (
+        <div ref={hostRef} className="artwork-canvas" />
+      )}
 
       {showHud && (
         <>

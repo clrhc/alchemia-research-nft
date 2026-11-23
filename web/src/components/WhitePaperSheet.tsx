@@ -15,6 +15,7 @@ interface WhitePaperSheetProps {
   state: CollectionState;
   animationUrl: string;
   liveCompute: ComputeSnapshot | null;
+  onSeedLiquidity?: () => Promise<void>;
 }
 
 export function WhitePaperSheet({
@@ -22,7 +23,8 @@ export function WhitePaperSheet({
   onClose,
   state,
   animationUrl,
-  liveCompute
+  liveCompute,
+  onSeedLiquidity
 }: WhitePaperSheetProps) {
   useEffect(() => {
     if (!open) return;
@@ -114,6 +116,18 @@ export function WhitePaperSheet({
               <div className="mini-track" style={{ height: 7 }}>
                 <div className="mini-fill" style={{ width: `${lpPct}%`, background: "#5b8def" }} />
               </div>
+              {!state.liquiditySeeded &&
+                state.liquidityReserveEth >= state.liquidityThresholdEth &&
+                onSeedLiquidity && (
+                  <button
+                    type="button"
+                    className="btn-mint-minimal clickable"
+                    style={{ marginTop: 10, padding: "8px 18px", fontSize: "0.78rem" }}
+                    onClick={() => void onSeedLiquidity()}
+                  >
+                    Seed liquidity now
+                  </button>
+                )}
             </div>
           </div>
 

@@ -665,6 +665,7 @@ export function MyLabsView({
               {soundOn ? <Volume2 size={12} /> : <VolumeX size={12} />}
             </button>
           </div>
+          <div className="keyboard-hint">Keys: 1–4 views · Space toss ball · M sound</div>
 
           {/* Pet Care Card */}
           <div className="glass-panel tama-card">
@@ -1131,7 +1132,12 @@ export function MyLabsView({
                   <button
                     type="button"
                     className="subtle-pill-btn clickable"
-                    onClick={() => downloadPDBFromSnapshot(liveSnap)}
+                    onClick={() => {
+                      downloadPDBFromSnapshot(liveSnap);
+                      setFeedback(
+                        `Downloaded ${liveSnap.pdbBenchmarkId}.pdb — open in PyMOL, ChimeraX, or drag into rcsb.org/3d-view.`
+                      );
+                    }}
                   >
                     <Download size={13} />
                     .PDB
@@ -1139,7 +1145,12 @@ export function MyLabsView({
                   <button
                     type="button"
                     className="subtle-pill-btn clickable"
-                    onClick={() => downloadMMCIFFromSnapshot(liveSnap)}
+                    onClick={() => {
+                      downloadMMCIFFromSnapshot(liveSnap);
+                      setFeedback(
+                        `Downloaded ${liveSnap.pdbBenchmarkId}.cif — compatible with RCSB Mol*, PyMOL, and ChimeraX.`
+                      );
+                    }}
                   >
                     <Download size={13} />
                     .CIF

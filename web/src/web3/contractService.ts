@@ -931,4 +931,16 @@ export async function executeOnChainSubmitResearchProof(params: {
   return tx.hash;
 }
 
+export async function executeOnChainSeedLiquidity(contractAddress: string): Promise<string> {
+  const eth = getSelectedProvider();
+  if (!eth) throw new Error("Ethereum wallet not connected");
+
+  const provider = new BrowserProvider(eth);
+  const signer = await provider.getSigner();
+  const contract = new Contract(contractAddress, ALCHEMIA_ABI, signer);
+  const tx = await contract.seedLiquidity();
+  await tx.wait();
+  return tx.hash;
+}
+
 export { complexityTierFromUsd, ethToUsd, usdToEth };
