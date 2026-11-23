@@ -26,6 +26,7 @@ import {
   Sparkles,
   Sun,
   Tag,
+  Timer,
   Trophy,
   Volume2,
   VolumeX,
@@ -226,6 +227,27 @@ export function MyLabsView({
     null
   );
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [miniGame, setMiniGame] = useState<{ endsAtMs: number; popped: number; goal: number } | null>(
+    null
+  );
+
+  // 20-second cozy Proton Catch mini-game timer
+  useEffect(() => {
+    if (!miniGame) return;
+    if (miniGame.popped >= miniGame.goal) {
+      setMiniGame(null);
+      onAwardPlayBonus(12);
+      soundEngine.playBuildRoom();
+      setTamaSignal((prev) => ({ action: "play", seq: (prev?.seq || 0) + 1 }));
+      setFeedback(`Proton Catch cleared (${miniGame.goal}/${miniGame.goal}). +12 bonus sparks.`);
+      return;
+    }
+    if (nowTick >= miniGame.endsAtMs) {
+      const score = miniGame.popped;
+      setMiniGame(null);
+      setFeedback(`Proton Catch finished: popped ${score} of ${miniGame.goal}. Try again anytime.`);
+    }
+  }, [miniGame, nowTick, onAwardPlayBonus]);
 
   const markGoalDone = (key: GoalKey) => {
     setGoals((prev) => {
@@ -558,6 +580,9 @@ export function MyLabsView({
                 } else {
                   onAwardPlayBonus(ev.bonusCoins);
                   markGoalDone("proton");
+                  setMiniGame((prev) =>
+                    prev ? { ...prev, popped: prev.popped + 1 } : null
+                  );
                   setFeedback(
                     ev.combo && ev.combo > 1
                       ? `Proton combo x${ev.combo}. +${ev.bonusCoins} sparks.`
@@ -755,6 +780,28 @@ export function MyLabsView({
               >
                 <Tag size={13} />
                 {PET_ACCESSORY_LABELS[vitals.accessory || "auto"]}
+              </button>
+              <button
+                type="button"
+                className="subtle-pill-btn clickable"
+                onClick={() => {
+                  if (miniGame) {
+                    setMiniGame(null);
+                    return;
+                  }
+                  soundEngine.playTap(1046.5);
+                  setCamPreset((prev) => ({ preset: "iso", seq: (prev?.seq || 0) + 1 }));
+                  setMiniGame({ endsAtMs: Date.now() + 20000, popped: 0, goal: 6 });
+                  setFeedback("Pop 6 floating protons in the 3D scene within 20 seconds for +12 sparks.");
+                }}
+              >
+                <Timer size={13} />
+                {miniGame
+                  ? `${miniGame.popped}/${miniGame.goal} · ${Math.max(
+                      0,
+                      Math.ceil((miniGame.endsAtMs - nowTick) / 1000)
+                    )}s`
+                  : "Proton Catch"}
               </button>
             </div>
 

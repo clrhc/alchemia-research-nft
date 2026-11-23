@@ -13,6 +13,7 @@ import {
 import { SeededRNG, deriveTraitsFromSeed } from "./prng";
 import type { ComputeSnapshot, ResidueNode } from "./researchCompute";
 import { ResearchComputeRunner } from "./researchRunner";
+import { assignSecondaryStructurePSEA } from "./structuralAnalysis";
 import { soundEngine } from "./soundEngine";
 import { hasSector } from "../web3/sectors";
 import { stageFromEth, type AlchemyTraits } from "./traits";
@@ -2408,19 +2409,24 @@ export class Alchemy3DRenderer {
       this.bondCylinders.push(cyl);
     }
 
-    // Smooth Mol*-inspired translucent silver-opal 3D backbone spline ribbon
+    // Smooth Mol*-inspired translucent secondary-structure colored 3D backbone spline ribbon
     if (residues.length >= 4) {
       const initPts = residues.map((_, idx) => new THREE.Vector3(idx * 0.02, 0, 0));
       const ribbonGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(initPts), Math.min(72, residues.length * 3), 0.022, 6, false);
+      const count = ribbonGeo.attributes.position.count;
+      const initCols = new Float32Array(count * 3);
+      initCols.fill(0.84);
+      ribbonGeo.setAttribute("color", new THREE.BufferAttribute(initCols, 3));
       const ribbonMat = new THREE.MeshPhysicalMaterial({
-        color: pal.liquidTop,
-        emissive: pal.liquidMid,
-        emissiveIntensity: 0.34,
+        color: "#ffffff",
+        vertexColors: true,
+        emissive: pal.liquidTop,
+        emissiveIntensity: 0.22,
         roughness: 0.16,
-        metalness: 0.45,
+        metalness: 0.35,
         clearcoat: 1.0,
         transparent: true,
-        opacity: 0.62
+        opacity: 0.72
       });
       this.proteinRibbonMesh = new THREE.Mesh(ribbonGeo, ribbonMat);
       this.proteinGroup.add(this.proteinRibbonMesh);
@@ -3600,7 +3606,7 @@ export class Alchemy3DRenderer {
         }
       }
 
-      // Leak-free smooth CatmullRom spline ribbon update (~7 Hz, disposes previous buffer!)
+      // Leak-free smooth CatmullRom spline ribbon with live Mol* P-SEA secondary-structure vertex colors!
       if (
         this.proteinRibbonMesh &&
         this.proteinRibbonCurvePts.length >= 4 &&
@@ -3608,13 +3614,33 @@ export class Alchemy3DRenderer {
       ) {
         this.lastRibbonUpdateMs = now;
         const curve = new THREE.CatmullRomCurve3(this.proteinRibbonCurvePts);
-        const nextGeo = new THREE.TubeGeometry(
-          curve,
-          Math.min(72, this.proteinRibbonCurvePts.length * 3),
-          0.022,
-          6,
-          false
-        );
+        const tubularSegs = Math.min(72, this.proteinRibbonCurvePts.length * 3);
+        const radialSegs = 6;
+        const nextGeo = new THREE.TubeGeometry(curve, tubularSegs, 0.023, radialSegs, false);
+        const ssCodes = assignSecondaryStructurePSEA(snap.residues).codes;
+        const posCount = nextGeo.attributes.position.count;
+        const colArr = new Float32Array(posCount * 3);
+        const ringStride = radialSegs + 1;
+        for (let s = 0; s <= tubularSegs; s++) {
+          const rIdx = Math.min(
+            ssCodes.length - 1,
+            Math.round((s / Math.max(1, tubularSegs)) * (ssCodes.length - 1))
+          );
+          const code = ssCodes[rIdx];
+          // Mol* standard secondary structure palette: Helix = Rose Pink, Sheet = Warm Amber, Coil = Silver
+          const cr = code === "H" ? 0.96 : code === "E" ? 0.98 : 0.78;
+          const cg = code === "H" ? 0.45 : code === "E" ? 0.74 : 0.83;
+          const cb = code === "H" ? 0.71 : code === "E" ? 0.18 : 0.9;
+          for (let r = 0; r < ringStride; r++) {
+            const vi = (s * ringStride + r) * 3;
+            if (vi + 2 < colArr.length) {
+              colArr[vi] = cr;
+              colArr[vi + 1] = cg;
+              colArr[vi + 2] = cb;
+            }
+          }
+        }
+        nextGeo.setAttribute("color", new THREE.BufferAttribute(colArr, 3));
         this.proteinRibbonMesh.geometry.dispose();
         this.proteinRibbonMesh.geometry = nextGeo;
       }

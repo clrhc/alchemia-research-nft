@@ -10,6 +10,7 @@ coverage/
 web/.env
 web/.env.local
 *.log
+*.tsbuildinfo
 .DS_Store
 
 # wrangler files
