@@ -49,6 +49,7 @@ export interface ResearchDiscoveryLog {
 
 export interface CollectionState {
   connectedMode: "mainnet" | "sepolia" | "local" | "simulation";
+  chainSynced?: boolean;
   chainId: number;
   contractAddress: string;
   coinAddress: string;
@@ -72,7 +73,39 @@ export interface CollectionState {
 }
 
 const DEMO_STORAGE_KEY = "alchemia_ecosystem_v2";
+const CHAIN_CACHE_PREFIX = "alchemia_chain_cache_v1_";
 const COIN_ADDRESS = COIN_CONTRACT_ADDRESS;
+
+function chainCacheKey(chainId: number, contractAddress: string): string {
+  return `${CHAIN_CACHE_PREFIX}${chainId}_${contractAddress.toLowerCase()}`;
+}
+
+export function saveChainCache(state: CollectionState) {
+  if (!state.contractAddress || typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      chainCacheKey(state.chainId, state.contractAddress),
+      JSON.stringify({
+        totalSupply: state.totalSupply,
+        maxSupply: state.maxSupply,
+        supplyLocked: state.supplyLocked,
+        mintPriceEth: state.mintPriceEth,
+        globalDonatedEth: state.globalDonatedEth,
+        liquidityReserveEth: state.liquidityReserveEth,
+        liquidityThresholdEth: state.liquidityThresholdEth,
+        liquiditySeeded: state.liquiditySeeded,
+        coinTotalSupply: state.coinTotalSupply,
+        totalCoinsDonatedToResearch: state.totalCoinsDonatedToResearch,
+        reactionStage: state.reactionStage,
+        causes: state.causes,
+        vessels: state.vessels.slice(0, 24),
+        recentDiscoveries: state.recentDiscoveries.slice(0, 8)
+      })
+    );
+  } catch {
+    // ignore storage errors
+  }
+}
 
 function createInitialDemoVessels(): MintedVessel[] {
   const nowSec = Math.floor(Date.now() / 1000);
@@ -153,37 +186,50 @@ function createInitialDemoVessels(): MintedVessel[] {
 
 export function loadInitialCollectionState(): CollectionState {
   const defaultTotal = DEFAULT_CAUSES.reduce((sum, c) => sum + c.raisedEth, 0);
+  const isLiveChain = Boolean(CONTRACT_ADDRESS);
+
   const base: CollectionState = {
-    connectedMode: CONTRACT_ADDRESS ? modeFromChainId(TARGET_CHAIN_ID) : "simulation",
+    connectedMode: isLiveChain ? modeFromChainId(TARGET_CHAIN_ID) : "simulation",
+    chainSynced: !isLiveChain,
     chainId: TARGET_CHAIN_ID,
     contractAddress: CONTRACT_ADDRESS,
     coinAddress: COIN_ADDRESS,
     walletAddress: null,
-    totalSupply: 159,
+    totalSupply: isLiveChain ? 0 : 159,
     maxSupply: 0,
     supplyLocked: false,
     mintPriceEth: BASE_MINT_PRICE_ETH,
     impactPct: IMPACT_SPLIT_PCT,
-    globalDonatedEth: Number(defaultTotal.toFixed(4)),
-    liquidityReserveEth: 0.64,
+    globalDonatedEth: isLiveChain ? 0 : Number(defaultTotal.toFixed(4)),
+    liquidityReserveEth: isLiveChain ? 0 : 0.64,
     liquidityThresholdEth: 1.0,
     liquiditySeeded: false,
-    userCoinBalance: 320,
-    coinTotalSupply: 48200,
-    totalCoinsDonatedToResearch: 4820,
-    reactionStage: stageFromEth(defaultTotal),
-    causes: DEFAULT_CAUSES.map((c) => ({ ...c })),
-    vessels: createInitialDemoVessels(),
+    userCoinBalance: isLiveChain ? 0 : 320,
+    coinTotalSupply: isLiveChain ? 0 : 48200,
+    totalCoinsDonatedToResearch: isLiveChain ? 0 : 4820,
+    reactionStage: isLiveChain ? 1 : stageFromEth(defaultTotal),
+    causes: DEFAULT_CAUSES.map((c) => ({ ...c, raisedEth: isLiveChain ? 0 : c.raisedEth })),
+    vessels: isLiveChain ? [] : createInitialDemoVessels(),
     recentDiscoveries: []
   };
 
-  if (!CONTRACT_ADDRESS && typeof window !== "undefined") {
+  if (typeof window !== "undefined") {
     try {
-      const saved = window.localStorage.getItem(DEMO_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && Array.isArray(parsed.vessels)) {
-          return { ...base, ...parsed, walletAddress: null };
+      if (isLiveChain) {
+        const cached = window.localStorage.getItem(chainCacheKey(TARGET_CHAIN_ID, CONTRACT_ADDRESS));
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed && typeof parsed.globalDonatedEth === "number") {
+            return { ...base, ...parsed, chainSynced: true, walletAddress: null };
+          }
+        }
+      } else {
+        const saved = window.localStorage.getItem(DEMO_STORAGE_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && Array.isArray(parsed.vessels)) {
+            return { ...base, ...parsed, chainSynced: true, walletAddress: null };
+          }
         }
       }
     } catch {
@@ -666,6 +712,7 @@ async function fetchCollectionWithProvider(
 
   return {
     connectedMode: modeFromChainId(chainId),
+    chainSynced: true,
     chainId,
     contractAddress,
     coinAddress: String(coinAddr),

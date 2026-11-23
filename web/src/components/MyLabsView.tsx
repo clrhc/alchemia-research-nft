@@ -338,15 +338,20 @@ export function MyLabsView({
   if (!selected) {
     return (
       <section className="subpage-shell" style={{ textAlign: "center", paddingTop: 60 }}>
-        <h2 className="subpage-title">No labs yet</h2>
+        <h2 className="subpage-title">
+          {state.chainSynced === false ? "Loading your labs…" : "No labs yet"}
+        </h2>
         <p className="subpage-sub" style={{ margin: "10px auto 24px" }}>
-          Mint your first 3D lab starting at $1 to build rooms, mine ALCH coins, and care for your
-          pet.
+          {state.chainSynced === false
+            ? "Syncing live labs and ALCH balances from Base Sepolia."
+            : "Mint your first 3D lab starting at $1 to build rooms, mine ALCH coins, and care for your pet."}
         </p>
-        <button type="button" className="btn-mint-minimal clickable" onClick={onGoMint}>
-          <Sparkles size={16} />
-          Mint your first lab
-        </button>
+        {state.chainSynced !== false && (
+          <button type="button" className="btn-mint-minimal clickable" onClick={onGoMint}>
+            <Sparkles size={16} />
+            Mint your first lab
+          </button>
+        )}
       </section>
     );
   }

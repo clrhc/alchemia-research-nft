@@ -508,7 +508,11 @@ export function ExploreView({
 
       {filteredVessels.length === 0 ? (
         <div className="glass-panel" style={{ padding: 28, textAlign: "center" }}>
-          <p className="single-desc">No labs match that filter.</p>
+          <p className="single-desc">
+            {state.chainSynced === false
+              ? "Loading live labs from the blockchain…"
+              : "No labs match that filter."}
+          </p>
         </div>
       ) : (
         <div className="explore-grid">

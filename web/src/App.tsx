@@ -40,6 +40,7 @@ import {
   executeOnChainUpgradeVessel,
   fetchOnChainCollectionSnapshot,
   loadInitialCollectionState,
+  saveChainCache,
   saveDemoState,
   type CollectionState,
   type MintedVessel
@@ -117,13 +118,16 @@ export function App() {
         if (!active || !snap) return;
         setState((prev) => {
           const grew =
+            prev.chainSynced &&
             typeof snap.globalDonatedEth === "number" &&
             snap.globalDonatedEth > prev.globalDonatedEth + 1e-7;
           if (grew) {
             setLastPulseAt(Date.now());
             setBgPulseSignal((n) => n + 1);
           }
-          return { ...prev, ...snap };
+          const next = { ...prev, ...snap, chainSynced: true };
+          saveChainCache(next);
+          return next;
         });
       } catch {
         // Keep current view smoothly if public RPC throttles
@@ -638,7 +642,11 @@ export function App() {
             <header className="open-hero">
               <div className="running-total-line" aria-live="polite">
                 <span className="live-dot" />
-                <span>{formattedResearchTotal} sent to research</span>
+                <span>
+                  {state.chainSynced === false
+                    ? "Syncing live research total…"
+                    : `${formattedResearchTotal} sent to research`}
+                </span>
               </div>
 
               <h1 className="open-hero-title">
