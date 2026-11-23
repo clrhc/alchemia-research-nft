@@ -3,24 +3,82 @@ import { Cpu, Move3d, Pause, Play } from "lucide-react";
 import {
   Alchemy3DRenderer,
   type AtmosphereMode,
+  type CameraMode,
   type CameraPreset,
+  type CreatorFocusZone,
   type InteractiveEvent,
-  type LightingMood
+  type LightingMood,
+  type SimsActionRequest,
+  type WalkFrameTelemetry
 } from "../engine/alchemy3DRenderer";
 import { type LiveImpactState } from "../engine/alchemyRenderer";
+import type { MoodBubbleKind } from "../engine/architectTextures";
+import type { CharacterEmote } from "../engine/character3D";
+import type { CharacterProfile } from "../engine/characterConfig";
+import type { DiegeticMonitorTelemetry } from "../engine/diegeticPanels3D";
+import type { LabStationId } from "../engine/labStations";
+import type { NeighborLabSummary } from "../engine/neighborhoodLayout";
 import { deriveTraitsFromSeed } from "../engine/prng";
 import type { ComputeSnapshot } from "../engine/researchCompute";
+import type { LabDecorConfig, SimsObjectTarget } from "../engine/simsState";
 import type { TamagotchiAction } from "../engine/tamagotchi";
 import { LabThumbnailSvg } from "./LabThumbnailSvg";
 
 export interface ArtworkCanvasHandle {
   capturePhoto: () => string | null;
+  walkToStation: (stationId: LabStationId) => void;
+  walkToNeighbor: (tokenId: number) => void;
+  returnHome: () => void;
+  setMoveInput: (dx: number, dz: number, sprint?: boolean) => void;
+  triggerEmote: (emote: CharacterEmote) => void;
+  setComputeActive: (active: boolean) => void;
+  updateMonitorTelemetry: (data: DiegeticMonitorTelemetry) => void;
+  flipCreatorView: (back: boolean) => void;
+  performSimsAction: (req: SimsActionRequest) => void;
+  getSimsFurnitureAnchor: (kind: "bench" | "espresso" | "microscope" | "harvester") => {
+    x: number;
+    z: number;
+    yaw: number;
+  };
+  fireSocialBeamToNeighbor: (tokenId: number, colorHex?: string) => void;
+  triggerCatalyticPulse: (intensity?: number) => void;
+  arriveAtFrontDoor: () => void;
+  triggerHostReaction: (emote: CharacterEmote, bubble?: MoodBubbleKind) => void;
+  syncNeighborNpcStatus: (
+    tokenId: number,
+    moodName: string,
+    plumbobHex: string,
+    tierLabel?: string,
+    emote?: CharacterEmote,
+    bubble?: MoodBubbleKind
+  ) => void;
 }
 
 interface ArtworkCanvasProps {
   impact: LiveImpactState;
   showHud?: boolean;
   compact?: boolean;
+  fillContainer?: boolean;
+  walkMode?: boolean;
+  characterProfile?: CharacterProfile | null;
+  visitingHost?: {
+    profile: CharacterProfile;
+    tokenId: number;
+    moodName?: string;
+    plumbobHex?: string;
+    tierLabel?: string;
+  } | null;
+  characterEmoteSignal?: { emote: CharacterEmote; seq: number } | null;
+  creatorCameraMode?: boolean;
+  creatorFocusZone?: CreatorFocusZone;
+  creatorTurntable?: boolean;
+  cameraMode?: CameraMode;
+  activeStationHighlight?: LabStationId | null;
+  neighbors?: NeighborLabSummary[];
+  labDecor?: LabDecorConfig;
+  plumbobColor?: string;
+  playerMoodName?: string;
+  controlsEnabled?: boolean;
   cameraPreset?: { preset: CameraPreset; seq: number } | null;
   tamagotchiSignal?: { action: TamagotchiAction; seq: number } | null;
   previewSectorId?: number | null;
@@ -33,6 +91,10 @@ interface ArtworkCanvasProps {
   foldSignal?: { action: "wiggle" | "shake" | "bury"; seq: number } | null;
   onComputeSnapshot?: (snap: ComputeSnapshot) => void;
   onInteractiveEvent?: (ev: InteractiveEvent) => void;
+  onWalkTelemetry?: (telemetry: WalkFrameTelemetry) => void;
+  onNearStationChange?: (stationId: LabStationId | null) => void;
+  onStationArrived?: (stationId: LabStationId) => void;
+  onSimsObjectClick?: (target: SimsObjectTarget, screenX: number, screenY: number) => void;
   onPulseClick?: () => void;
 }
 
@@ -41,6 +103,21 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
     impact,
     showHud = false,
     compact = false,
+    fillContainer = false,
+    walkMode = false,
+    characterProfile = null,
+    visitingHost = null,
+    characterEmoteSignal = null,
+    creatorCameraMode = false,
+    creatorFocusZone = "full",
+    creatorTurntable = false,
+    cameraMode = "follow",
+    activeStationHighlight = null,
+    neighbors,
+    labDecor,
+    plumbobColor = "#10b981",
+    playerMoodName = "Inspired",
+    controlsEnabled = true,
     cameraPreset = null,
     tamagotchiSignal = null,
     previewSectorId = null,
@@ -53,6 +130,10 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
     foldSignal = null,
     onComputeSnapshot,
     onInteractiveEvent,
+    onWalkTelemetry,
+    onNearStationChange,
+    onStationArrived,
+    onSimsObjectClick,
     onPulseClick
   },
   ref
@@ -63,9 +144,43 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
   onComputeRef.current = onComputeSnapshot;
   const onInteractRef = useRef(onInteractiveEvent);
   onInteractRef.current = onInteractiveEvent;
+  const onTelemetryRef = useRef(onWalkTelemetry);
+  onTelemetryRef.current = onWalkTelemetry;
+  const onNearStationRef = useRef(onNearStationChange);
+  onNearStationRef.current = onNearStationChange;
+  const onStationArrivedRef = useRef(onStationArrived);
+  onStationArrivedRef.current = onStationArrived;
+  const onSimsObjectClickRef = useRef(onSimsObjectClick);
+  onSimsObjectClickRef.current = onSimsObjectClick;
 
   useImperativeHandle(ref, () => ({
-    capturePhoto: () => rendererRef.current?.captureSnapshotDataUrl() ?? null
+    capturePhoto: () => rendererRef.current?.captureSnapshotDataUrl() ?? null,
+    walkToStation: (stationId) => rendererRef.current?.walkToStation(stationId),
+    walkToNeighbor: (tokenId) => rendererRef.current?.walkToNeighbor(tokenId),
+    returnHome: () => rendererRef.current?.returnHome(),
+    setMoveInput: (dx, dz, sprint = false) => rendererRef.current?.setMoveInput(dx, dz, sprint),
+    triggerEmote: (emote) => rendererRef.current?.triggerCharacterEmote(emote),
+    setComputeActive: (active) => rendererRef.current?.setComputeActive(active),
+    updateMonitorTelemetry: (data) => rendererRef.current?.updateMonitorTelemetry(data),
+    flipCreatorView: (back) => rendererRef.current?.flipCreatorView(back),
+    performSimsAction: (req) => rendererRef.current?.performSimsAction(req),
+    getSimsFurnitureAnchor: (kind) =>
+      rendererRef.current?.getSimsFurnitureAnchor(kind) ?? { x: 0, z: 1.38, yaw: 0 },
+    fireSocialBeamToNeighbor: (tokenId, colorHex) =>
+      rendererRef.current?.fireSocialBeamToNeighbor(tokenId, colorHex),
+    triggerCatalyticPulse: (intensity = 1.0) =>
+      rendererRef.current?.triggerCatalyticPulse(intensity),
+    arriveAtFrontDoor: () => rendererRef.current?.arriveAtFrontDoor(),
+    triggerHostReaction: (emote, bubble) => rendererRef.current?.triggerHostReaction(emote, bubble),
+    syncNeighborNpcStatus: (tokenId, moodName, plumbobHex, tierLabel, emote, bubble) =>
+      rendererRef.current?.syncNeighborNpcStatus(
+        tokenId,
+        moodName,
+        plumbobHex,
+        tierLabel,
+        emote,
+        bubble
+      )
   }));
 
   const [computeSnap, setComputeSnap] = useState<ComputeSnapshot | null>(null);
@@ -95,6 +210,28 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
     rendererRef.current = renderer;
     renderer.setLightingMood(lightingMood);
     renderer.setAtmosphereMode(atmosphereMode);
+    renderer.setWalkCallbacks({
+      onTelemetry: (telemetry) => onTelemetryRef.current?.(telemetry),
+      onNearStationChange: (stationId) => onNearStationRef.current?.(stationId),
+      onStationArrived: (stationId) => onStationArrivedRef.current?.(stationId),
+      onSimsObjectClick: (target, sx, sy) => onSimsObjectClickRef.current?.(target, sx, sy)
+    });
+    if (walkMode) {
+      if (labDecor) renderer.setLabDecor(labDecor);
+      if (neighbors) renderer.setNeighbors(neighbors);
+      renderer.setWalkMode(true);
+      renderer.setCameraMode(cameraMode);
+      if (characterProfile) {
+        renderer.setCharacterProfile(characterProfile);
+      }
+      renderer.setPlumbobColor(plumbobColor, playerMoodName);
+      if (visitingHost) {
+        renderer.setVisitingHost(visitingHost);
+      }
+      if (creatorCameraMode) {
+        renderer.setCreatorCameraMode(true);
+      }
+    }
     renderer.start();
 
     const observer = new ResizeObserver(() => renderer.resize());
@@ -182,6 +319,80 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
     }
   }, [foldSignal]);
 
+  useEffect(() => {
+    rendererRef.current?.setWalkMode(walkMode);
+  }, [walkMode]);
+
+  useEffect(() => {
+    rendererRef.current?.setCharacterProfile(characterProfile ?? null);
+  }, [
+    characterProfile?.skinTone,
+    characterProfile?.eyeColor,
+    characterProfile?.expression,
+    characterProfile?.buildScale,
+    characterProfile?.hairStyle,
+    characterProfile?.hairColor,
+    characterProfile?.outfitStyle,
+    characterProfile?.outfitAccent,
+    characterProfile?.eyewear,
+    characterProfile?.headwear,
+    characterProfile?.backpack,
+    Boolean(characterProfile)
+  ]);
+
+  useEffect(() => {
+    if (characterEmoteSignal && characterEmoteSignal.seq > 0) {
+      rendererRef.current?.triggerCharacterEmote(characterEmoteSignal.emote);
+    }
+  }, [characterEmoteSignal]);
+
+  useEffect(() => {
+    rendererRef.current?.setCreatorCameraMode(creatorCameraMode);
+  }, [creatorCameraMode]);
+
+  useEffect(() => {
+    rendererRef.current?.setCreatorFocusZone(creatorFocusZone);
+  }, [creatorFocusZone]);
+
+  useEffect(() => {
+    rendererRef.current?.setCreatorTurntable(creatorTurntable);
+  }, [creatorTurntable]);
+
+  useEffect(() => {
+    rendererRef.current?.setCameraMode(cameraMode);
+  }, [cameraMode]);
+
+  useEffect(() => {
+    rendererRef.current?.setActiveStationHighlight(activeStationHighlight ?? null);
+  }, [activeStationHighlight]);
+
+  useEffect(() => {
+    if (neighbors) rendererRef.current?.setNeighbors(neighbors);
+  }, [neighbors]);
+
+  useEffect(() => {
+    if (labDecor) rendererRef.current?.setLabDecor(labDecor);
+  }, [labDecor?.floorStyle, labDecor?.patioDecor]);
+
+  useEffect(() => {
+    rendererRef.current?.setPlumbobColor(plumbobColor, playerMoodName);
+  }, [plumbobColor, playerMoodName, characterProfile?.name]);
+
+  useEffect(() => {
+    rendererRef.current?.setControlsEnabled(controlsEnabled);
+  }, [controlsEnabled]);
+
+  useEffect(() => {
+    rendererRef.current?.setVisitingHost(visitingHost ?? null);
+  }, [
+    visitingHost?.tokenId,
+    visitingHost?.profile.name,
+    visitingHost?.moodName,
+    visitingHost?.plumbobHex,
+    visitingHost?.tierLabel,
+    Boolean(visitingHost)
+  ]);
+
   const toggleCompute = (e: React.MouseEvent) => {
     e.stopPropagation();
     const nextActive = !(computeSnap?.active ?? true);
@@ -190,9 +401,11 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
 
   return (
     <div
-      className="artwork-frame"
+      className={`artwork-frame ${fillContainer ? "is-fill" : ""}`}
       onDoubleClick={() => {
-        rendererRef.current?.resetCamera();
+        if (!walkMode) {
+          rendererRef.current?.resetCamera();
+        }
         rendererRef.current?.triggerCatalyticPulse(0.95);
         onPulseClick?.();
       }}

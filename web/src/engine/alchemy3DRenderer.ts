@@ -5,12 +5,38 @@ import {
   createAlabasterTerrazzoTexture,
   createArchitecturalBlueprintFloorTexture,
   createBrushedTitaniumTexture,
+  createFloorFinishTexture,
   createMoodBubbleTexture,
   createRadialGlowTexture,
   createSoftAOTexture,
   type MoodBubbleKind
 } from "./architectTextures";
+import { ResearcherAvatar3D, type CharacterEmote, type CharacterPosture } from "./character3D";
+import type { CharacterProfile } from "./characterConfig";
+import { DiegeticLabMonitors3D, type DiegeticMonitorTelemetry } from "./diegeticPanels3D";
+import {
+  LAB_STATIONS,
+  LAB_STATION_BY_ID,
+  findNearestTriggeredStation,
+  stationForSector,
+  type LabStationId,
+  type ProjectedStationAnchor
+} from "./labStations";
+import {
+  NEIGHBORHOOD_WALK_LIMIT,
+  type NeighborLabSummary,
+  type NeighborhoodPlotPlacement
+} from "./neighborhoodLayout";
+import { NeighborhoodWorld3D } from "./neighborhoodWorld3D";
 import { SeededRNG, deriveTraitsFromSeed } from "./prng";
+import { SimsFurniture3D } from "./simsFurniture3D";
+import {
+  FLOOR_STYLES,
+  defaultLabDecor,
+  type FloorStyleId,
+  type LabDecorConfig,
+  type SimsObjectTarget
+} from "./simsState";
 import type { ComputeSnapshot, ResidueNode } from "./researchCompute";
 import { ResearchComputeRunner } from "./researchRunner";
 import { assignSecondaryStructurePSEA, type SecondaryCode } from "./structuralAnalysis";
@@ -88,15 +114,42 @@ interface WingConduitPulse {
 }
 
 export type CameraPreset = "iso" | "top" | "pet" | "molecule";
-export type LightingMood = "daylight" | "silver" | "moonlit";
+export type CameraMode = "follow" | "orbit" | "neighborhood";
+export type CreatorFocusZone = "face" | "hair" | "outfit" | "back" | "full";
+export type LightingMood = "daylight" | "golden" | "silver" | "moonlit";
 export type AtmosphereMode = "clear" | "snow" | "motes";
 
+export interface SimsActionRequest {
+  x: number;
+  z: number;
+  yaw?: number;
+  posture?: CharacterPosture;
+  emote?: CharacterEmote;
+  bubble?: MoodBubbleKind;
+  burstColor?: string;
+  onArrive?: () => void;
+}
+
 export interface InteractiveEvent {
-  kind: "pet-clicked" | "atom-popped" | "room-clicked";
+  kind: "pet-clicked" | "atom-popped" | "room-clicked" | "floor-walk" | "monitor-clicked";
   bonusCoins: number;
   combo?: number;
   sectorId?: number;
   roomName?: string;
+  stationId?: LabStationId;
+}
+
+export interface WalkFrameTelemetry {
+  anchors: Record<LabStationId, ProjectedStationAnchor>;
+  charX: number;
+  charZ: number;
+  charYaw: number;
+  petX: number | null;
+  petZ: number | null;
+  moving: boolean;
+  nearStation: LabStationId | null;
+  width: number;
+  height: number;
 }
 
 const UP_AXIS = new THREE.Vector3(0, 1, 0);
@@ -153,12 +206,74 @@ export class Alchemy3DRenderer {
   private causticLight: THREE.PointLight | null = null;
   private lightingMood: LightingMood = "daylight";
   private atmosphereMode: AtmosphereMode = "clear";
-  private atmosphereGroup = new THREE.Group();
   private atmosphereMotes: Array<{ mesh: THREE.Mesh; baseX: number; baseZ: number; y: number; speed: number; phase: number }> = [];
 
   private rootGroup = new THREE.Group();
   private dynamicGroup = new THREE.Group();
   private previewGhostGroup = new THREE.Group();
+  private atmosphereGroup = new THREE.Group();
+  private walkCampusGroup = new THREE.Group();
+  private walkFloorPlane: THREE.Mesh | null = null;
+  private diegeticMonitors: DiegeticLabMonitors3D | null = null;
+  private simsFurniture: SimsFurniture3D | null = null;
+  private neighborhoodWorld: NeighborhoodWorld3D | null = null;
+  private floorTextures: Partial<Record<FloorStyleId, THREE.CanvasTexture>> = {};
+  private pavilionFloorMat: THREE.MeshStandardMaterial | null = null;
+  private heroVesselGroup: THREE.Group | null = null;
+  private labDecor: LabDecorConfig = defaultLabDecor();
+  private pendingNeighbors: NeighborLabSummary[] = [];
+  private plumbobHex = "#10b981";
+  private stationBeacons: Map<
+    LabStationId,
+    { ring: THREE.Mesh; disc: THREE.Mesh; pillar: THREE.Mesh; baseY: number }
+  > = new Map();
+  private walkWaypointMesh: THREE.Mesh | null = null;
+  private walkWaypointLife = 0;
+  private walkHoverRing: THREE.Mesh | null = null;
+  private walkBreadcrumbs: THREE.Mesh[] = [];
+  private footPuffs: Array<{ mesh: THREE.Mesh; life: number; vx: number; vy: number; vz: number }> = [];
+  private nextFootPuffIdx = 0;
+
+  // Walkable 3D Researcher Character & Spatial Camera State
+  private walkMode = false;
+  private creatorCameraMode = false;
+  private creatorFocusZone: CreatorFocusZone = "full";
+  private creatorTurntable = false;
+  private creatorTargetYaw = 0.24;
+  private cameraMode: CameraMode = "follow";
+  private characterAvatar: ResearcherAvatar3D | null = null;
+  private characterProfile: CharacterProfile | null = null;
+  private visitingHostAvatar: ResearcherAvatar3D | null = null;
+  private visitingHostTokenId = 0;
+  private visitingHostX = -0.68;
+  private visitingHostZ = 1.24;
+  private visitingHostYaw = 0.45;
+  private visitingHostWaveCooldown = 0;
+  private charX = 0;
+  private charY = 0.39;
+  private charZ = 1.38;
+  private charVx = 0;
+  private charVz = 0;
+  private charYaw = 0.24;
+  private charMoving = false;
+  private walkTarget: {
+    x: number;
+    z: number;
+    arriveStation?: LabStationId | null;
+    arriveAction?: SimsActionRequest;
+  } | null = null;
+  private moveInput = { dx: 0, dz: 0, sprint: false };
+  private activeStationHighlight: LabStationId | null = null;
+  private lastNearStation: LabStationId | null = null;
+  private onWalkTelemetry?: (telemetry: WalkFrameTelemetry) => void;
+  private onNearStationChange?: (stationId: LabStationId | null) => void;
+  private onStationArrived?: (stationId: LabStationId) => void;
+  private onSimsObjectClick?: (target: SimsObjectTarget, screenX: number, screenY: number) => void;
+  private followCameraInitialized = false;
+  private tmpProj = new THREE.Vector3();
+  private tmpCamFwd = new THREE.Vector3();
+  private tmpCamRight = new THREE.Vector3();
+  private tmpMoveVec = new THREE.Vector3();
   private previewSectorId: number | null = null;
   private buildPopScale = 1;
   private proteinChainLength = -1;
@@ -234,6 +349,7 @@ export class Alchemy3DRenderer {
   private builtSectorsMask = -1;
   private builtAccessoryRank = -1;
   private userDragging = false;
+  private autoRotateDesired = true;
 
   // Scratch vectors for zero-GC bond cylinder alignment & smooth protein damping
   private tmpMid = new THREE.Vector3();
@@ -299,7 +415,7 @@ export class Alchemy3DRenderer {
 
     const w = Math.max(260, container.clientWidth || 540);
     const h = Math.max(260, container.clientHeight || 540);
-    this.camera = new THREE.PerspectiveCamera(32, w / h, 0.1, 80);
+    this.camera = new THREE.PerspectiveCamera(34, w / h, 0.1, 220);
     this.camera.position.set(5.45, 4.3, 6.25);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -335,8 +451,10 @@ export class Alchemy3DRenderer {
     this.rootGroup.add(this.dynamicGroup);
     this.rootGroup.add(this.previewGhostGroup);
     this.rootGroup.add(this.atmosphereGroup);
+    this.rootGroup.add(this.walkCampusGroup);
 
     this.syncFillTarget();
+    this.neighborhoodWorld?.setGlobalImpactScale(this.impact.globalImpactEth);
     this.displayFill = this.targetFill;
     this.rebuild3DModel();
     this.resize();
@@ -429,7 +547,859 @@ export class Alchemy3DRenderer {
   }
 
   public setAutoRotate(enabled: boolean) {
-    this.controls.autoRotate = enabled;
+    this.autoRotateDesired = enabled;
+    this.controls.autoRotate = enabled && !this.walkMode && !this.creatorCameraMode;
+  }
+
+  public setWalkCallbacks(callbacks: {
+    onTelemetry?: (telemetry: WalkFrameTelemetry) => void;
+    onNearStationChange?: (stationId: LabStationId | null) => void;
+    onStationArrived?: (stationId: LabStationId) => void;
+    onSimsObjectClick?: (target: SimsObjectTarget, screenX: number, screenY: number) => void;
+  }) {
+    this.onWalkTelemetry = callbacks.onTelemetry;
+    this.onNearStationChange = callbacks.onNearStationChange;
+    this.onStationArrived = callbacks.onStationArrived;
+    this.onSimsObjectClick = callbacks.onSimsObjectClick;
+  }
+
+  public setControlsEnabled(enabled: boolean) {
+    this.controls.enabled = enabled;
+  }
+
+  public setNeighbors(neighbors: NeighborLabSummary[]): NeighborhoodPlotPlacement[] {
+    const prevCount = this.pendingNeighbors.length + 1;
+    this.pendingNeighbors = neighbors;
+    if (this.neighborhoodWorld) {
+      const placements = this.neighborhoodWorld.syncNeighbors(neighbors);
+      const nextCount = placements.length + 1;
+      const crossedBand =
+        (prevCount < 10 && nextCount >= 10) || (prevCount < 25 && nextCount >= 25);
+      if (this.cameraMode === "neighborhood" && crossedBand && !this.userDragging) {
+        this.frameWalkCamera();
+      }
+      return placements;
+    }
+    return [];
+  }
+
+  public setLabDecor(decor: LabDecorConfig) {
+    this.labDecor = { ...decor };
+    this.applyFloorFinish();
+    this.simsFurniture?.setPatioDecor(
+      decor.patioDecor,
+      this.traits.palette.liquidMid,
+      this.terrazzoTex,
+      this.titaniumTex
+    );
+  }
+
+  public setPlumbobColor(hex: string, moodName?: string) {
+    this.plumbobHex = hex;
+    this.characterAvatar?.setPlumbobColor(hex);
+    if (this.characterAvatar && this.characterProfile && moodName) {
+      this.characterAvatar.setStatusTag(this.characterProfile.name, moodName, hex);
+    }
+  }
+
+  public syncNeighborNpcStatus(
+    tokenId: number,
+    moodName: string,
+    plumbobHex: string,
+    tierLabel?: string,
+    emote?: CharacterEmote,
+    bubble?: MoodBubbleKind
+  ) {
+    this.neighborhoodWorld?.updateNpcStatusVisual(tokenId, moodName, plumbobHex, tierLabel);
+    if (emote) {
+      this.neighborhoodWorld?.triggerNpcWave(tokenId, emote, bubble || "heart");
+    }
+    if (this.visitingHostAvatar && this.visitingHostTokenId === tokenId) {
+      this.visitingHostAvatar.setPlumbobColor(plumbobHex);
+      const hostTarget = this.visitingHostAvatar.root.userData.simsTarget as
+        | { hostName?: string }
+        | undefined;
+      const sub = tierLabel && tierLabel !== "Stranger" ? `${moodName} · ${tierLabel}` : moodName;
+      this.visitingHostAvatar.setStatusTag(hostTarget?.hostName || "Host", sub, plumbobHex);
+    }
+  }
+
+  public getSimsFurnitureAnchor(kind: "bench" | "espresso" | "microscope" | "harvester") {
+    if (!this.simsFurniture) return { x: 0, z: 1.38, yaw: 0 };
+    if (kind === "bench") {
+      return {
+        x: this.simsFurniture.benchSitPos.x,
+        z: this.simsFurniture.benchSitPos.z,
+        yaw: this.simsFurniture.benchSitYaw
+      };
+    }
+    if (kind === "espresso") {
+      return {
+        x: this.simsFurniture.espressoStandPos.x,
+        z: this.simsFurniture.espressoStandPos.z,
+        yaw: this.simsFurniture.espressoStandYaw
+      };
+    }
+    if (kind === "microscope") {
+      return {
+        x: this.simsFurniture.microscopeStandPos.x,
+        z: this.simsFurniture.microscopeStandPos.z,
+        yaw: this.simsFurniture.microscopeStandYaw
+      };
+    }
+    return {
+      x: this.simsFurniture.harvesterStandPos.x,
+      z: this.simsFurniture.harvesterStandPos.z,
+      yaw: this.simsFurniture.harvesterStandYaw
+    };
+  }
+
+  public performSimsAction(req: SimsActionRequest) {
+    if (!this.walkMode || this.creatorCameraMode) return;
+    this.characterAvatar?.setPosture("stand");
+    const dist = Math.hypot(req.x - this.charX, req.z - this.charZ);
+    if (dist <= 0.22) {
+      this.executeArrivalSimsAction(req);
+      return;
+    }
+    const clamped = this.resolveWalkObstacles(req.x, req.z);
+    this.walkTarget = { x: clamped.x, z: clamped.z, arriveStation: null, arriveAction: req };
+    if (this.walkWaypointMesh) {
+      const gy = this.getWalkGroundY(clamped.x, clamped.z);
+      this.walkWaypointMesh.position.set(clamped.x, gy + 0.015, clamped.z);
+      this.walkWaypointMesh.visible = true;
+      this.walkWaypointMesh.scale.setScalar(0.45);
+      this.walkWaypointLife = 1.0;
+    }
+  }
+
+  private executeArrivalSimsAction(req: SimsActionRequest) {
+    if (typeof req.yaw === "number") this.charYaw = req.yaw;
+    if (req.posture) this.characterAvatar?.setPosture(req.posture);
+    if (req.emote) this.characterAvatar?.triggerEmote(req.emote);
+    if (req.bubble) {
+      this.spawnMoodBubble(new THREE.Vector3(this.charX, this.charY + 0.95, this.charZ), req.bubble);
+    }
+    if (req.burstColor) {
+      this.spawnColoredBurst(
+        new THREE.Vector3(this.charX, this.charY + 0.72, this.charZ),
+        12,
+        [req.burstColor, "#ffffff", this.traits.palette.electron]
+      );
+    }
+    req.onArrive?.();
+  }
+
+  public fireSocialBeamToNeighbor(tokenId: number, colorHex = "#38bdf8") {
+    if (!this.neighborhoodWorld) return;
+    const pl = this.neighborhoodWorld.getPlacements().find((p) => p.lab.tokenId === tokenId);
+    if (!pl) return;
+    this.neighborhoodWorld.fireSocialBeam(this.charX, this.charZ, pl.x, pl.z, colorHex);
+    this.neighborhoodWorld.triggerNpcWave(tokenId);
+    this.characterAvatar?.triggerEmote("wave");
+    this.spawnMoodBubble(new THREE.Vector3(this.charX, this.charY + 0.96, this.charZ), "sparkle");
+    soundEngine.playBuildRoom();
+  }
+
+  public walkToNeighbor(tokenId: number) {
+    if (!this.neighborhoodWorld) return;
+    const pl = this.neighborhoodWorld.getPlacements().find((p) => p.lab.tokenId === tokenId);
+    if (!pl) return;
+    this.performSimsAction({
+      x: pl.visitX,
+      z: pl.visitZ,
+      yaw: Math.atan2(pl.x - pl.visitX, pl.z - pl.visitZ),
+      emote: "wave",
+      bubble: "wave",
+      onArrive: () => this.neighborhoodWorld?.triggerNpcWave(tokenId)
+    });
+  }
+
+  public returnHome() {
+    this.performSimsAction({
+      x: 0,
+      z: 1.4,
+      yaw: 0.24,
+      posture: "stand",
+      emote: "hop"
+    });
+    if (this.cameraMode === "neighborhood") {
+      this.setCameraMode("follow");
+    }
+  }
+
+  private applyFloorFinish() {
+    if (!this.pavilionFloorMat) return;
+    const style = this.labDecor.floorStyle;
+    const def = FLOOR_STYLES.find((f) => f.id === style) || FLOOR_STYLES[0];
+    let tex: THREE.Texture = this.terrazzoTex;
+    if (style !== "terrazzo") {
+      if (!this.floorTextures[style]) {
+        this.floorTextures[style] = createFloorFinishTexture(style);
+      }
+      tex = this.floorTextures[style]!;
+    }
+    this.pavilionFloorMat.map = tex;
+    this.pavilionFloorMat.color.set(def.tint);
+    this.pavilionFloorMat.needsUpdate = true;
+  }
+
+  public setWalkMode(enabled: boolean) {
+    if (this.walkMode === enabled) return;
+    this.walkMode = enabled;
+    if (this.keyLight) {
+      const d = enabled ? 5.8 : 4.8;
+      this.keyLight.shadow.camera.left = -d;
+      this.keyLight.shadow.camera.right = d;
+      this.keyLight.shadow.camera.top = d;
+      this.keyLight.shadow.camera.bottom = -d;
+      this.keyLight.shadow.camera.updateProjectionMatrix();
+    }
+    if (enabled) {
+      this.controls.autoRotate = false;
+      this.controls.minDistance = 1.65;
+      this.controls.maxDistance = 62.0;
+      this.controls.maxPolarAngle = Math.PI * 0.486;
+      this.buildWalkCampus3D();
+      this.applyLightingMood();
+      this.followCameraInitialized = false;
+      if (!this.creatorCameraMode) {
+        this.frameWalkCamera();
+      }
+    } else {
+      this.controls.minDistance = 4.0;
+      this.controls.maxDistance = 12.2;
+      this.controls.autoRotate = this.autoRotateDesired;
+      this.disposeWalkCampus3D();
+      this.disposeCharacterAvatar();
+      this.applyLightingMood();
+      this.walkTarget = null;
+      this.lastNearStation = null;
+      this.charVx = 0;
+      this.charVz = 0;
+    }
+  }
+
+  public updateMonitorTelemetry(data: DiegeticMonitorTelemetry) {
+    this.diegeticMonitors?.updateTelemetry(data, performance.now());
+  }
+
+  public setCreatorFocusZone(zone: CreatorFocusZone) {
+    this.creatorFocusZone = zone;
+    if (this.creatorCameraMode) {
+      this.applyCreatorFocusCamera();
+    }
+  }
+
+  public setCreatorTurntable(enabled: boolean) {
+    this.creatorTurntable = enabled;
+  }
+
+  public flipCreatorView(back: boolean) {
+    this.creatorTurntable = false;
+    this.creatorTargetYaw = back ? Math.PI + 0.22 : 0.24;
+    if (this.creatorCameraMode) {
+      this.applyCreatorFocusCamera();
+    }
+  }
+
+  private applyCreatorFocusCamera() {
+    const isNarrow = (this.container.clientWidth || 800) < 760;
+    const headY = this.charY + (this.characterAvatar?.getHeadHeight() ?? 0.84);
+    const torsoY = this.charY + (this.characterAvatar?.getTorsoHeight() ?? 0.54);
+
+    if (this.creatorFocusZone === "face" || this.creatorFocusZone === "hair") {
+      // Intimate head & shoulders studio close-up cleanly offset left of the creator panel
+      this.creatorTargetYaw = 0.2;
+      this.desiredCamTarget = new THREE.Vector3(isNarrow ? 0 : 0.34, headY - 0.02, this.charZ);
+      this.desiredCamPos = new THREE.Vector3(
+        isNarrow ? 0.46 : 0.92,
+        headY + 0.14,
+        this.charZ + (isNarrow ? 1.72 : 1.56)
+      );
+    } else if (this.creatorFocusZone === "back") {
+      // Smooth 3/4 rear showcase so the user sees backpacks & floating holo-drones directly!
+      this.creatorTargetYaw = Math.PI - 0.36;
+      this.desiredCamTarget = new THREE.Vector3(isNarrow ? 0 : 0.42, torsoY + 0.08, this.charZ);
+      this.desiredCamPos = new THREE.Vector3(
+        isNarrow ? 0.68 : 1.32,
+        torsoY + 0.48,
+        this.charZ + (isNarrow ? 2.25 : 2.08)
+      );
+    } else {
+      // Full-body architectural studio framing
+      this.desiredCamTarget = new THREE.Vector3(isNarrow ? 0 : 0.46, torsoY + 0.04, this.charZ);
+      this.desiredCamPos = new THREE.Vector3(
+        isNarrow ? 0.82 : 1.48,
+        torsoY + 0.5,
+        this.charZ + (isNarrow ? 2.6 : 2.38)
+      );
+    }
+  }
+
+  public setCharacterProfile(profile: CharacterProfile | null, emote?: CharacterEmote) {
+    this.characterProfile = profile;
+    if (!profile) {
+      this.disposeCharacterAvatar();
+      return;
+    }
+    if (!this.characterAvatar) {
+      this.characterAvatar = new ResearcherAvatar3D(profile, { enablePlumbob: true });
+      this.characterAvatar.setPlumbobColor(this.plumbobHex);
+      this.charY = this.getWalkGroundY(this.charX, this.charZ);
+      this.characterAvatar.root.position.set(this.charX, this.charY, this.charZ);
+      this.characterAvatar.root.rotation.y = this.charYaw;
+      this.rootGroup.add(this.characterAvatar.root);
+    } else {
+      this.characterAvatar.rebuild(profile);
+      this.characterAvatar.setPlumbobColor(this.plumbobHex);
+      if (this.creatorCameraMode) {
+        this.applyCreatorFocusCamera();
+      }
+    }
+    if (emote) {
+      this.characterAvatar.triggerEmote(emote);
+      this.spawnColoredBurst(
+        new THREE.Vector3(this.charX, this.charY + 0.72, this.charZ),
+        10,
+        [profile.outfitAccent, this.traits.palette.electron, "#ffffff"]
+      );
+    }
+  }
+
+  public triggerCharacterEmote(emote: CharacterEmote) {
+    this.characterAvatar?.triggerEmote(emote);
+  }
+
+  /**
+   * Spawns or clears the hospitable 3D Host Researcher NPC inside a visited user's home!
+   */
+  public setVisitingHost(
+    host: {
+      profile: CharacterProfile;
+      tokenId: number;
+      moodName?: string;
+      plumbobHex?: string;
+      tierLabel?: string;
+    } | null
+  ) {
+    if (!host) {
+      this.disposeVisitingHostAvatar();
+      return;
+    }
+    const hostColor = host.plumbobHex || "#38bdf8";
+    const hostSub =
+      host.tierLabel && host.tierLabel !== "Stranger"
+        ? `${host.moodName || "Social"} · ${host.tierLabel}`
+        : host.moodName || "Welcoming";
+
+    if (this.visitingHostAvatar && this.visitingHostTokenId === host.tokenId) {
+      this.visitingHostAvatar.setPlumbobColor(hostColor);
+      this.visitingHostAvatar.setStatusTag(host.profile.name, hostSub, hostColor);
+      return;
+    }
+    this.disposeVisitingHostAvatar();
+    this.visitingHostTokenId = host.tokenId;
+    const avatar = new ResearcherAvatar3D(host.profile, {
+      enablePlumbob: true,
+      plumbobScale: 0.82,
+      initialPlumbobHex: hostColor
+    });
+    avatar.setStatusTag(host.profile.name, hostSub, hostColor);
+    const hy = this.getWalkGroundY(this.visitingHostX, this.visitingHostZ);
+    avatar.root.position.set(this.visitingHostX, hy, this.visitingHostZ);
+    avatar.root.rotation.y = this.visitingHostYaw;
+
+    const hostTarget: SimsObjectTarget = {
+      kind: "visiting-host",
+      label: `${host.profile.name} (Host)`,
+      tokenId: host.tokenId,
+      hostName: host.profile.name,
+      worldX: this.visitingHostX,
+      worldZ: this.visitingHostZ + 0.55
+    };
+    avatar.root.traverse((obj) => {
+      obj.userData.simsTarget = hostTarget;
+    });
+
+    avatar.triggerEmote("wave");
+    this.rootGroup.add(avatar.root);
+    this.visitingHostAvatar = avatar;
+    this.visitingHostWaveCooldown = 5.0;
+    this.spawnMoodBubble(
+      new THREE.Vector3(this.visitingHostX, hy + 1.38, this.visitingHostZ),
+      "wave"
+    );
+  }
+
+  public triggerHostReaction(emote: CharacterEmote, bubble?: MoodBubbleKind) {
+    if (!this.visitingHostAvatar) return;
+    this.visitingHostAvatar.triggerEmote(emote);
+    const hy = this.getWalkGroundY(this.visitingHostX, this.visitingHostZ);
+    if (bubble) {
+      this.spawnMoodBubble(
+        new THREE.Vector3(this.visitingHostX, hy + 1.38, this.visitingHostZ),
+        bubble
+      );
+    }
+    this.spawnColoredBurst(new THREE.Vector3(this.visitingHostX, hy + 0.85, this.visitingHostZ), 12, [
+      "#38bdf8",
+      "#f472b6",
+      "#ffffff"
+    ]);
+  }
+
+  /**
+   * Smoothly places the player at the welcoming front entrance steps when entering
+   * another user's home or returning to their own lab!
+   */
+  public arriveAtFrontDoor() {
+    this.walkTarget = null;
+    this.charVx = 0;
+    this.charVz = 0;
+    this.characterAvatar?.setPosture("stand");
+    this.charX = 0.24;
+    this.charZ = 2.02;
+    this.charY = this.getWalkGroundY(this.charX, this.charZ);
+    this.charYaw = Math.PI - 0.14;
+    if (this.characterAvatar) {
+      this.characterAvatar.root.position.set(this.charX, this.charY, this.charZ);
+      this.characterAvatar.root.rotation.y = this.charYaw;
+      this.characterAvatar.triggerEmote("wave");
+    }
+    this.cameraMode = "follow";
+    this.followCameraInitialized = false;
+    this.frameWalkCamera();
+    this.spawnColoredBurst(
+      new THREE.Vector3(this.charX, this.charY + 0.72, this.charZ),
+      18,
+      [this.characterProfile?.outfitAccent || "#5b8def", "#10b981", "#ffffff"]
+    );
+    this.triggerCatalyticPulse(0.85);
+  }
+
+  private disposeVisitingHostAvatar() {
+    if (this.visitingHostAvatar) {
+      this.rootGroup.remove(this.visitingHostAvatar.root);
+      this.visitingHostAvatar.disposeRig();
+      this.visitingHostAvatar = null;
+      this.visitingHostTokenId = 0;
+    }
+  }
+
+  public setCreatorCameraMode(active: boolean) {
+    if (this.creatorCameraMode === active) return;
+    this.creatorCameraMode = active;
+    if (active) {
+      this.walkTarget = null;
+      this.charVx = 0;
+      this.charVz = 0;
+      this.controls.autoRotate = false;
+      this.charX = 0;
+      this.charZ = 1.36;
+      this.charY = this.getWalkGroundY(this.charX, this.charZ);
+      this.charYaw = 0.24;
+      this.creatorTargetYaw = 0.24;
+      if (this.characterAvatar) {
+        this.characterAvatar.root.position.set(this.charX, this.charY, this.charZ);
+        this.characterAvatar.root.rotation.y = this.charYaw;
+        this.characterAvatar.triggerEmote("wave");
+      }
+      this.applyCreatorFocusCamera();
+    } else if (this.walkMode) {
+      this.creatorTurntable = false;
+      this.characterAvatar?.triggerEmote("hop");
+      this.spawnColoredBurst(
+        new THREE.Vector3(this.charX, this.charY + 0.65, this.charZ),
+        16,
+        [this.characterProfile?.outfitAccent || "#5b8def", "#38bdf8", "#ffffff"]
+      );
+      this.followCameraInitialized = false;
+      this.frameWalkCamera();
+    }
+  }
+
+  private getNeighborhoodAerialFraming(): { pos: THREE.Vector3; target: THREE.Vector3 } {
+    const count = (this.neighborhoodWorld?.getPlacements().length ?? this.pendingNeighbors.length) + 1;
+    if (count >= 25) {
+      return {
+        pos: new THREE.Vector3(30.5, 25.5, 38.0),
+        target: new THREE.Vector3(0, 1.2, 1.5)
+      };
+    }
+    if (count >= 10) {
+      return {
+        pos: new THREE.Vector3(21.5, 18.2, 27.2),
+        target: new THREE.Vector3(0, 1.0, 1.8)
+      };
+    }
+    return {
+      pos: new THREE.Vector3(14.0, 12.2, 18.5),
+      target: new THREE.Vector3(0, 1.0, 2.0)
+    };
+  }
+
+  public setCameraMode(mode: CameraMode) {
+    this.cameraMode = mode;
+    if (!this.walkMode || this.creatorCameraMode) return;
+    if (mode === "neighborhood") {
+      // Sweeping Sims-town aerial masterplan vista that pulls back dynamically as the town grows!
+      const framing = this.getNeighborhoodAerialFraming();
+      this.desiredCamPos = framing.pos;
+      this.desiredCamTarget = framing.target;
+    } else if (mode === "orbit") {
+      this.desiredCamPos = new THREE.Vector3(5.5, 4.4, 6.3);
+      this.desiredCamTarget = new THREE.Vector3(0, 1.35, 0);
+    } else {
+      this.followCameraInitialized = false;
+      this.frameWalkCamera();
+    }
+  }
+
+  private frameWalkCamera() {
+    if (this.cameraMode === "neighborhood") {
+      const framing = this.getNeighborhoodAerialFraming();
+      this.desiredCamPos = framing.pos;
+      this.desiredCamTarget = framing.target;
+      return;
+    }
+    if (this.cameraMode === "orbit" || !this.characterAvatar) {
+      this.desiredCamPos = new THREE.Vector3(5.5, 4.4, 6.3);
+      this.desiredCamTarget = new THREE.Vector3(0, 1.35, 0);
+      return;
+    }
+    this.desiredCamTarget = new THREE.Vector3(this.charX, this.charY + 0.68, this.charZ);
+    this.desiredCamPos = new THREE.Vector3(
+      this.charX + 2.95,
+      this.charY + 3.05,
+      this.charZ + 4.05
+    );
+  }
+
+  public setMoveInput(dx: number, dz: number, sprint = false) {
+    this.moveInput.dx = dx;
+    this.moveInput.dz = dz;
+    this.moveInput.sprint = sprint;
+    if (Math.hypot(dx, dz) > 0.05) {
+      this.walkTarget = null;
+      this.characterAvatar?.setPosture("stand");
+    }
+  }
+
+  public walkToPoint(x: number, z: number, arriveStation: LabStationId | null = null) {
+    if (!this.walkMode || this.creatorCameraMode) return;
+    this.characterAvatar?.setPosture("stand");
+    const clamped = this.resolveWalkObstacles(x, z);
+    this.walkTarget = { x: clamped.x, z: clamped.z, arriveStation };
+    if (this.walkWaypointMesh) {
+      const gy = this.getWalkGroundY(clamped.x, clamped.z);
+      this.walkWaypointMesh.position.set(clamped.x, gy + 0.015, clamped.z);
+      this.walkWaypointMesh.visible = true;
+      this.walkWaypointMesh.scale.setScalar(0.45);
+      this.walkWaypointLife = 1.0;
+    }
+  }
+
+  public walkToStation(stationId: LabStationId) {
+    const st = LAB_STATION_BY_ID[stationId];
+    if (!st) return;
+    this.walkToPoint(st.padX, st.padZ, stationId);
+  }
+
+  public setActiveStationHighlight(stationId: LabStationId | null) {
+    this.activeStationHighlight = stationId;
+  }
+
+  private getWalkGroundY(x: number, z: number): number {
+    const r = Math.hypot(x, z);
+    if (r <= 1.84) return 0.39;
+    if (r < 2.2) {
+      const u = (r - 1.84) / (2.2 - 1.84);
+      return 0.39 * (1 - u) + 0.23 * u;
+    }
+    if (Math.abs(x) <= 2.32 && Math.abs(z) <= 2.32) return 0.23;
+    if (Math.abs(x) <= 3.45 && Math.abs(z) <= 3.45) return 0.12;
+
+    // Gentle parabolic arch elevation when walking across any of the 4 Grand Canal Bridges!
+    const onNSBridge = Math.abs(x) <= 1.35 && Math.abs(z) >= 12.2 && Math.abs(z) <= 15.5;
+    const onEWBridge = Math.abs(z) <= 1.35 && Math.abs(x) >= 12.2 && Math.abs(x) <= 15.5;
+    if (onNSBridge || onEWBridge) {
+      const spanCoord = onNSBridge ? Math.abs(z) : Math.abs(x);
+      const u = Math.max(0, Math.min(1, (spanCoord - 12.2) / (15.5 - 12.2)));
+      return 0.05 + Math.sin(u * Math.PI) * 0.44;
+    }
+
+    return 0.03;
+  }
+
+  private resolveWalkObstacles(x: number, z: number): { x: number; z: number } {
+    const limit = this.neighborhoodWorld ? NEIGHBORHOOD_WALK_LIMIT : 3.12;
+    let nx = Math.max(-limit, Math.min(limit, x));
+    let nz = Math.max(-limit, Math.min(limit, z));
+
+    // Keep smoothly within circular canal ring when exploring the boulevard
+    const distFromOrigin = Math.hypot(nx, nz);
+    if (this.neighborhoodWorld && distFromOrigin > limit) {
+      nx = (nx / distFromOrigin) * limit;
+      nz = (nz / distFromOrigin) * limit;
+    }
+
+    // Keep smoothly outside the central borosilicate glass reactor pedestal
+    const centerR = Math.hypot(nx, nz);
+    const minCenterR = 0.88;
+    if (centerR < minCenterR) {
+      const ang = centerR > 0.001 ? Math.atan2(nz, nx) : Math.PI * 0.5;
+      nx = Math.cos(ang) * minCenterR;
+      nz = Math.sin(ang) * minCenterR;
+    }
+
+    // Soft circular colliders around solid centers of built wings & neighbor pavilions
+    const mask = this.impact.sectorsMask ?? 0;
+    const obstacles: Array<[number, number, number]> = [];
+    if (hasSector(mask, 0)) obstacles.push([-2.35, -1.45, 0.7]);
+    if (hasSector(mask, 1)) obstacles.push([2.42, 0.2, 0.72]);
+    if (hasSector(mask, 2)) obstacles.push([-2.22, 1.62, 0.78]);
+    if (hasSector(mask, 4)) obstacles.push([2.12, -1.62, 0.58]);
+    if (this.neighborhoodWorld) {
+      obstacles.push(...this.neighborhoodWorld.getNeighborObstacles());
+    }
+
+    for (const [ox, oz, rad] of obstacles) {
+      const dx = nx - ox;
+      const dz = nz - oz;
+      const d = Math.hypot(dx, dz);
+      if (d < rad) {
+        const pushAng = d > 0.001 ? Math.atan2(dz, dx) : 0;
+        nx = ox + Math.cos(pushAng) * rad;
+        nz = oz + Math.sin(pushAng) * rad;
+      }
+    }
+
+    return {
+      x: Math.max(-limit, Math.min(limit, nx)),
+      z: Math.max(-limit, Math.min(limit, nz))
+    };
+  }
+
+  private buildWalkCampus3D() {
+    this.disposeWalkCampus3D();
+
+    const alabasterMat = new THREE.MeshStandardMaterial({
+      map: this.terrazzoTex,
+      color: "#f6f8fc",
+      roughness: 0.48,
+      metalness: 0.04
+    });
+    const bridgeEdgeMat = new THREE.LineBasicMaterial({
+      color: "#94a3b8",
+      transparent: true,
+      opacity: 0.55
+    });
+
+    // Subtle extended outer architectural promenade deck so walking to all 6 rooms feels grounded
+    const deckGeo = new THREE.BoxGeometry(6.8, 0.06, 6.8);
+    const outerDeck = new THREE.Mesh(deckGeo, alabasterMat);
+    outerDeck.position.y = 0.09;
+    outerDeck.receiveShadow = true;
+    this.walkCampusGroup.add(outerDeck);
+
+    const deckEdges = new THREE.LineSegments(new THREE.EdgesGeometry(deckGeo), bridgeEdgeMat);
+    deckEdges.position.copy(outerDeck.position);
+    this.walkCampusGroup.add(deckEdges);
+
+    // Three minimalist alabaster footbridges (East, West, North) over the reflecting pool to match South steps
+    const bridgeDefs: Array<[number, number, number]> = [
+      [1.96, 0.14, 0],
+      [-1.96, 0.0, 0],
+      [0, -1.96, Math.PI / 2]
+    ];
+    for (const [bx, bz, rotY] of bridgeDefs) {
+      const bGeo = new THREE.BoxGeometry(0.58, 0.08, 0.72);
+      const bMesh = new THREE.Mesh(bGeo, alabasterMat);
+      bMesh.position.set(bx, 0.3, bz);
+      bMesh.rotation.y = rotY;
+      bMesh.castShadow = true;
+      bMesh.receiveShadow = true;
+      this.walkCampusGroup.add(bMesh);
+    }
+
+    // Invisible smooth floor plane covering the entire walkable neighborhood & canal-side suburbs!
+    const floorHit = new THREE.Mesh(
+      new THREE.PlaneGeometry(58, 58),
+      new THREE.MeshBasicMaterial({ visible: false })
+    );
+    floorHit.rotation.x = -Math.PI / 2;
+    floorHit.position.y = 0.06;
+    this.walkFloorPlane = floorHit;
+    this.walkCampusGroup.add(floorHit);
+
+    // 5 Delicate Architectural Floor Beacons marking each interactive Lab Station
+    for (const st of LAB_STATIONS) {
+      const baseY = this.getWalkGroundY(st.padX, st.padZ) + 0.008;
+
+      const disc = new THREE.Mesh(
+        new THREE.CircleGeometry(0.32, 32),
+        new THREE.MeshBasicMaterial({
+          color: st.accent,
+          transparent: true,
+          opacity: 0.14,
+          depthWrite: false
+        })
+      );
+      disc.rotation.x = -Math.PI / 2;
+      disc.position.set(st.padX, baseY, st.padZ);
+      this.walkCampusGroup.add(disc);
+
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(0.34, 0.014, 8, 40),
+        new THREE.MeshStandardMaterial({
+          color: st.accent,
+          emissive: st.accent,
+          emissiveIntensity: 0.85,
+          transparent: true,
+          opacity: 0.85,
+          roughness: 0.2
+        })
+      );
+      ring.rotation.x = Math.PI / 2;
+      ring.position.set(st.padX, baseY + 0.008, st.padZ);
+      this.walkCampusGroup.add(ring);
+
+      // Hair-thin luminous vertical hologram filament rising toward the floating panel
+      const pillarH = Math.max(0.4, st.panelPos[1] - baseY - 0.3);
+      const pillar = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.005, 0.012, pillarH, 8),
+        new THREE.MeshBasicMaterial({
+          color: st.accent,
+          transparent: true,
+          opacity: 0.24,
+          depthWrite: false
+        })
+      );
+      pillar.position.set(st.padX, baseY + pillarH * 0.5, st.padZ);
+      this.walkCampusGroup.add(pillar);
+
+      this.stationBeacons.set(st.id, { ring, disc, pillar, baseY });
+    }
+
+    // Expanding architectural floor click-to-walk waypoint ring
+    const wp = new THREE.Mesh(
+      new THREE.RingGeometry(0.14, 0.2, 32),
+      new THREE.MeshBasicMaterial({
+        color: this.traits.palette.electron,
+        transparent: true,
+        opacity: 0,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      })
+    );
+    wp.rotation.x = -Math.PI / 2;
+    wp.visible = false;
+    this.walkWaypointMesh = wp;
+    this.walkCampusGroup.add(wp);
+
+    // Subtle floor cursor preview ring showing exactly where click-to-walk lands
+    const hoverRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.12, 0.155, 28),
+      new THREE.MeshBasicMaterial({
+        color: "#64748b",
+        transparent: true,
+        opacity: 0.42,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      })
+    );
+    hoverRing.rotation.x = -Math.PI / 2;
+    hoverRing.visible = false;
+    this.walkHoverRing = hoverRing;
+    this.walkCampusGroup.add(hoverRing);
+
+    // Subtle pearl breadcrumb path dots while auto-walking to a destination
+    const crumbGeo = new THREE.SphereGeometry(0.026, 8, 8);
+    const crumbMat = new THREE.MeshBasicMaterial({
+      color: this.traits.palette.electron,
+      transparent: true,
+      opacity: 0.65
+    });
+    for (let i = 0; i < 6; i++) {
+      const dot = new THREE.Mesh(crumbGeo, crumbMat);
+      dot.visible = false;
+      this.walkCampusGroup.add(dot);
+      this.walkBreadcrumbs.push(dot);
+    }
+
+    // Zero-GC pooled porcelain footstep dust puffs
+    const puffGeo = new THREE.SphereGeometry(0.042, 8, 8);
+    for (let i = 0; i < 14; i++) {
+      const pMat = new THREE.MeshBasicMaterial({
+        color: "#ffffff",
+        transparent: true,
+        opacity: 0,
+        depthWrite: false
+      });
+      const puff = new THREE.Mesh(puffGeo, pMat);
+      puff.visible = false;
+      this.walkCampusGroup.add(puff);
+      this.footPuffs.push({ mesh: puff, life: 0, vx: 0, vy: 0, vz: 0 });
+    }
+
+    // 5 Diegetic Physical Frosted-Glass Floating 3D Holographic Monitors inside WebGL!
+    this.diegeticMonitors = new DiegeticLabMonitors3D();
+    this.walkCampusGroup.add(this.diegeticMonitors.group);
+
+    // Interactive Sims-Style Lab Furniture & Swappable Patio Decor
+    this.simsFurniture = new SimsFurniture3D(
+      this.terrazzoTex,
+      this.titaniumTex,
+      this.traits.palette.liquidMid,
+      this.labDecor.patioDecor
+    );
+    this.walkCampusGroup.add(this.simsFurniture.group);
+
+    // Living Minted NFT Neighborhood World (Sky Dome, Trees, Canal, Fountain, Neighbor Labs & NPCs!)
+    this.neighborhoodWorld = new NeighborhoodWorld3D(this.terrazzoTex, this.titaniumTex);
+    this.neighborhoodWorld.setSkyMood(this.lightingMood);
+    this.neighborhoodWorld.setGlobalImpactScale(this.impact.globalImpactEth);
+    if (this.pendingNeighbors.length > 0) {
+      this.neighborhoodWorld.syncNeighbors(this.pendingNeighbors);
+    }
+    this.walkCampusGroup.add(this.neighborhoodWorld.group);
+    this.applyFloorFinish();
+  }
+
+  private disposeWalkCampus3D() {
+    if (this.diegeticMonitors) {
+      this.walkCampusGroup.remove(this.diegeticMonitors.group);
+      this.diegeticMonitors.dispose();
+      this.diegeticMonitors = null;
+    }
+    if (this.simsFurniture) {
+      this.walkCampusGroup.remove(this.simsFurniture.group);
+      this.simsFurniture.dispose();
+      this.simsFurniture = null;
+    }
+    if (this.neighborhoodWorld) {
+      this.walkCampusGroup.remove(this.neighborhoodWorld.group);
+      this.neighborhoodWorld.dispose();
+      this.neighborhoodWorld = null;
+    }
+    this.disposeObjectChildren(this.walkCampusGroup);
+    this.stationBeacons.clear();
+    this.walkFloorPlane = null;
+    this.walkWaypointMesh = null;
+    this.walkHoverRing = null;
+    this.walkBreadcrumbs = [];
+    this.footPuffs = [];
+    this.walkWaypointLife = 0;
+  }
+
+  private disposeCharacterAvatar() {
+    if (this.characterAvatar) {
+      this.rootGroup.remove(this.characterAvatar.root);
+      this.characterAvatar.disposeRig();
+      this.characterAvatar = null;
+    }
+    this.disposeVisitingHostAvatar();
   }
 
   public selectBenchmark(benchmarkIndex: number) {
@@ -533,6 +1503,7 @@ export class Alchemy3DRenderer {
     }
 
     this.syncFillTarget();
+    this.neighborhoodWorld?.setGlobalImpactScale(this.impact.globalImpactEth);
     this.displayFill = this.targetFill;
     this.buildPopScale = 1;
     this.dynamicGroup.scale.setScalar(1);
@@ -584,9 +1555,26 @@ export class Alchemy3DRenderer {
 
   private applyLightingMood() {
     const pal = this.traits.palette;
-    if (this.lightingMood === "silver") {
+    const fogDensity = this.walkMode ? 0.0062 : 0.032;
+    this.neighborhoodWorld?.setSkyMood(this.lightingMood);
+
+    if (this.lightingMood === "golden") {
+      this.scene.background = new THREE.Color("#fbf1e4");
+      this.scene.fog = new THREE.FogExp2("#f9ead8", fogDensity);
+      this.renderer.toneMappingExposure = 1.04;
+      if (this.hemiLight) this.hemiLight.intensity = 1.05;
+      if (this.keyLight) {
+        this.keyLight.color.set("#ffdbb5");
+        this.keyLight.intensity = 2.05;
+      }
+      if (this.rimLight) {
+        this.rimLight.color.set("#fbcfe8");
+        this.rimLight.intensity = 1.05;
+      }
+      if (this.causticLight) this.causticLight.intensity = 2.15;
+    } else if (this.lightingMood === "silver") {
       this.scene.background = new THREE.Color("#edf1f7");
-      this.scene.fog = new THREE.FogExp2("#edf1f7", 0.036);
+      this.scene.fog = new THREE.FogExp2("#edf1f7", fogDensity * 1.1);
       this.renderer.toneMappingExposure = 1.03;
       if (this.hemiLight) this.hemiLight.intensity = 1.32;
       if (this.keyLight) {
@@ -599,23 +1587,23 @@ export class Alchemy3DRenderer {
       }
       if (this.causticLight) this.causticLight.intensity = 1.95;
     } else if (this.lightingMood === "moonlit") {
-      // Ethereal pearl-slate twilight — still light, airy, pure frosted glass!
-      this.scene.background = new THREE.Color("#dfe6f2");
-      this.scene.fog = new THREE.FogExp2("#dfe6f2", 0.04);
+      // Ethereal pearl-slate twilight — glowing dusk streetlamps & softly illuminated neighbor labs!
+      this.scene.background = new THREE.Color("#cfd9ea");
+      this.scene.fog = new THREE.FogExp2("#cbd6e8", fogDensity * 1.18);
       this.renderer.toneMappingExposure = 1.12;
-      if (this.hemiLight) this.hemiLight.intensity = 0.92;
+      if (this.hemiLight) this.hemiLight.intensity = 0.88;
       if (this.keyLight) {
-        this.keyLight.color.set("#e2ecff");
-        this.keyLight.intensity = 1.2;
+        this.keyLight.color.set("#dbeafe");
+        this.keyLight.intensity = 1.15;
       }
       if (this.rimLight) {
         this.rimLight.color.set("#93c5fd");
-        this.rimLight.intensity = 1.35;
+        this.rimLight.intensity = 1.38;
       }
       if (this.causticLight) this.causticLight.intensity = 2.65;
     } else {
       this.scene.background = new THREE.Color(pal.bgBottom);
-      this.scene.fog = new THREE.FogExp2(pal.bgBottom, 0.03);
+      this.scene.fog = new THREE.FogExp2(pal.bgBottom, fogDensity);
       this.renderer.toneMappingExposure = 0.98;
       if (this.hemiLight) this.hemiLight.intensity = 0.96;
       if (this.keyLight) {
@@ -766,7 +1754,48 @@ export class Alchemy3DRenderer {
     }
     const wingTargets = this.builtWingGroups.map((w) => w.group);
     const wingHits = wingTargets.length > 0 ? this.raycaster.intersectObjects(wingTargets, true) : [];
-    this.renderer.domElement.style.cursor = wingHits.length > 0 ? "pointer" : "grab";
+    if (wingHits.length > 0) {
+      if (this.walkHoverRing) this.walkHoverRing.visible = false;
+      this.renderer.domElement.style.cursor = "pointer";
+      return;
+    }
+    // Check physical 3D diegetic holographic monitors
+    if (this.walkMode && !this.creatorCameraMode && this.diegeticMonitors) {
+      const monHits = this.raycaster.intersectObjects(this.diegeticMonitors.getRaycastTargets(), true);
+      if (monHits.length > 0) {
+        if (this.walkHoverRing) this.walkHoverRing.visible = false;
+        this.renderer.domElement.style.cursor = "pointer";
+        return;
+      }
+    }
+    // Check Sims interactive furniture, own character, visiting host NPC, neighbor labs, NPCs, and central flask for hover pointer
+    if (this.walkMode && !this.creatorCameraMode) {
+      const extraTargets: THREE.Object3D[] = [];
+      if (this.characterAvatar) extraTargets.push(this.characterAvatar.root);
+      if (this.visitingHostAvatar) extraTargets.push(this.visitingHostAvatar.root);
+      if (this.simsFurniture) extraTargets.push(...this.simsFurniture.getRaycastTargets());
+      if (this.neighborhoodWorld) extraTargets.push(...this.neighborhoodWorld.getRaycastTargets());
+      if (this.heroVesselGroup) extraTargets.push(this.heroVesselGroup);
+      if (extraTargets.length > 0 && this.raycaster.intersectObjects(extraTargets, true).length > 0) {
+        if (this.walkHoverRing) this.walkHoverRing.visible = false;
+        this.renderer.domElement.style.cursor = "pointer";
+        return;
+      }
+    }
+    // Show subtle architectural floor walk-target cursor ring on hover
+    if (this.walkMode && !this.creatorCameraMode && this.walkFloorPlane && this.walkHoverRing) {
+      const fHits = this.raycaster.intersectObject(this.walkFloorPlane, false);
+      if (fHits.length > 0) {
+        const pt = this.resolveWalkObstacles(fHits[0].point.x, fHits[0].point.z);
+        const gy = this.getWalkGroundY(pt.x, pt.z);
+        this.walkHoverRing.position.set(pt.x, gy + 0.014, pt.z);
+        this.walkHoverRing.visible = true;
+        this.renderer.domElement.style.cursor = "pointer";
+        return;
+      }
+      this.walkHoverRing.visible = false;
+    }
+    this.renderer.domElement.style.cursor = "grab";
   };
 
   private handlePointerUp = (e: PointerEvent) => {
@@ -780,15 +1809,103 @@ export class Alchemy3DRenderer {
     );
     this.raycaster.setFromCamera(ndc, this.camera);
 
-    // 1. Did the user click directly on the 3D Cat or Dog? -> Instant joyful pet!
+    // 1. Did the user click directly on the 3D Cat or Dog?
     const petTargets = this.companions.map((c) => c.group);
     if (petTargets.length > 0 && this.raycaster.intersectObjects(petTargets, true).length > 0) {
+      if (this.walkMode && !this.creatorCameraMode && this.onSimsObjectClick) {
+        const cPos = this.companions[0].group.position;
+        this.onSimsObjectClick(
+          { kind: "pet", label: "Lab Companion", worldX: cPos.x, worldZ: cPos.z + 0.55 },
+          e.clientX - rect.left,
+          e.clientY - rect.top
+        );
+        soundEngine.playTap(1046.5);
+        return;
+      }
       this.triggerTamagotchiReaction("pet");
       this.onInteractiveEvent?.({ kind: "pet-clicked", bonusCoins: 1 });
       return;
     }
 
+    // 1b. In Walk Mode: check Sims clickable objects (Player, Furniture, Central Flask, Fountain, Neighbor Labs & NPCs)
+    if (this.walkMode && !this.creatorCameraMode && this.onSimsObjectClick) {
+      const screenX = e.clientX - rect.left;
+      const screenY = e.clientY - rect.top;
+
+      // Own character clicked -> Sims self pie menu!
+      if (this.characterAvatar) {
+        const selfHits = this.raycaster.intersectObject(this.characterAvatar.root, true);
+        if (selfHits.length > 0) {
+          this.onSimsObjectClick(
+            {
+              kind: "player",
+              label: this.characterProfile?.name || "My Researcher",
+              worldX: this.charX,
+              worldZ: this.charZ
+            },
+            screenX,
+            screenY
+          );
+          soundEngine.playTap(987.77);
+          return;
+        }
+      }
+
+      // Visiting Host Researcher NPC standing inside another user's home!
+      if (this.visitingHostAvatar) {
+        const hostHits = this.raycaster.intersectObject(this.visitingHostAvatar.root, true);
+        if (hostHits.length > 0) {
+          let cur: THREE.Object3D | null = hostHits[0].object;
+          let target: SimsObjectTarget | undefined;
+          while (cur && !target) {
+            if (cur.userData?.simsTarget) target = cur.userData.simsTarget as SimsObjectTarget;
+            cur = cur.parent;
+          }
+          if (target) {
+            this.onSimsObjectClick(target, screenX, screenY);
+            soundEngine.playTap(1046.5);
+            return;
+          }
+        }
+      }
+
+      // Sims Furniture (Lounge Bench, Espresso Bar, Microscope, Harvester)
+      if (this.simsFurniture) {
+        const fHits = this.raycaster.intersectObjects(this.simsFurniture.getRaycastTargets(), true);
+        if (fHits.length > 0) {
+          const target = fHits[0].object.userData?.simsTarget as SimsObjectTarget | undefined;
+          if (target) {
+            this.onSimsObjectClick(target, screenX, screenY);
+            soundEngine.playTap(1046.5);
+            return;
+          }
+        }
+      }
+
+      // Neighborhood Fountain, Neighbor NFT Labs & Neighbor NPC Researchers!
+      if (this.neighborhoodWorld) {
+        const nHits = this.raycaster.intersectObjects(
+          this.neighborhoodWorld.getRaycastTargets(),
+          true
+        );
+        if (nHits.length > 0) {
+          let cur: THREE.Object3D | null = nHits[0].object;
+          let target: SimsObjectTarget | undefined;
+          while (cur && !target) {
+            if (cur.userData?.simsTarget) target = cur.userData.simsTarget as SimsObjectTarget;
+            cur = cur.parent;
+          }
+          if (target) {
+            this.onSimsObjectClick(target, screenX, screenY);
+            soundEngine.playTap(1046.5);
+            return;
+          }
+        }
+      }
+    }
+
     // 2. Did the user tap a floating 3D Proton / Atom? -> Pop it with combo chime!
+    // (Checked before central glass vessel so Proton Catch clicks never get intercepted behind!)
     const atomTargets = this.floatingAtoms.map((a) => a.group);
     const hits = this.raycaster.intersectObjects(atomTargets, true);
     if (hits.length > 0) {
@@ -808,6 +1925,23 @@ export class Alchemy3DRenderer {
         bonusCoins: 1 + this.protonCombo,
         combo: this.protonCombo
       });
+      return;
+    }
+
+    // 2b. Central Hero Borosilicate Glass Vessel -> Protein Folding Pie Menu!
+    if (
+      this.walkMode &&
+      !this.creatorCameraMode &&
+      this.onSimsObjectClick &&
+      this.heroVesselGroup &&
+      this.raycaster.intersectObject(this.heroVesselGroup, true).length > 0
+    ) {
+      this.onSimsObjectClick(
+        { kind: "flask", label: "Central Glass Reactor", worldX: 0, worldZ: 1.15 },
+        e.clientX - rect.left,
+        e.clientY - rect.top
+      );
+      soundEngine.playTap(1046.5);
       return;
     }
 
@@ -844,11 +1978,56 @@ export class Alchemy3DRenderer {
           soundEngine.playBuildRoom();
           this.spawnColoredBurst(hitPt, 18, ["#f59e0b", "#fde68a", "#5b8def", "#ffffff"]);
         }
+        const linkedStation = stationForSector(matched.sectorId);
+        if (this.walkMode && !this.creatorCameraMode) {
+          this.walkToStation(linkedStation);
+        }
         this.onInteractiveEvent?.({
           kind: "room-clicked",
           sectorId: matched.sectorId,
           roomName: matched.name,
+          stationId: linkedStation,
           bonusCoins: 1
+        });
+        return;
+      }
+    }
+
+    // 3b. Did the user click directly on one of the 5 physical 3D floating holographic monitors?
+    if (this.walkMode && !this.creatorCameraMode && this.diegeticMonitors) {
+      const monHits = this.raycaster.intersectObjects(this.diegeticMonitors.getRaycastTargets(), true);
+      if (monHits.length > 0) {
+        let cur: THREE.Object3D | null = monHits[0].object;
+        let hitStation: LabStationId | undefined;
+        while (cur && !hitStation) {
+          if (cur.userData?.stationId) hitStation = cur.userData.stationId as LabStationId;
+          cur = cur.parent;
+        }
+        if (hitStation) {
+          this.walkToStation(hitStation);
+          soundEngine.playTap(1046.5);
+          this.onInteractiveEvent?.({
+            kind: "monitor-clicked",
+            stationId: hitStation,
+            bonusCoins: 0
+          });
+          return;
+        }
+      }
+    }
+
+    // 4. In Walk Mode: clicking any floor/terrace point walks your character smoothly there!
+    if (this.walkMode && !this.creatorCameraMode && this.walkFloorPlane) {
+      const floorHits = this.raycaster.intersectObject(this.walkFloorPlane, false);
+      if (floorHits.length > 0) {
+        const pt = floorHits[0].point;
+        const nearSt = findNearestTriggeredStation(pt.x, pt.z);
+        this.walkToPoint(pt.x, pt.z, nearSt);
+        soundEngine.playTap(784);
+        this.onInteractiveEvent?.({
+          kind: "floor-walk",
+          stationId: nearSt || undefined,
+          bonusCoins: 0
         });
       }
     }
@@ -1033,6 +2212,7 @@ export class Alchemy3DRenderer {
     }
 
     this.syncFillTarget();
+    this.neighborhoodWorld?.setGlobalImpactScale(this.impact.globalImpactEth);
 
     const nextSectors = this.impact.sectorsMask ?? 0;
     const nextAccRank = this.getAccessoryRank();
@@ -1308,6 +2488,10 @@ export class Alchemy3DRenderer {
       this.lastTime = now;
       this.step(dt, elapsedSec, now);
       this.controls.update();
+      this.camera.updateMatrixWorld();
+      if (this.walkMode) {
+        this.emitWalkTelemetry();
+      }
       this.renderer.render(this.scene, this.camera);
       this.rafId = requestAnimationFrame(loop);
     };
@@ -1320,6 +2504,8 @@ export class Alchemy3DRenderer {
     this.renderer.domElement.removeEventListener("pointerdown", this.handlePointerDown);
     this.renderer.domElement.removeEventListener("pointerup", this.handlePointerUp);
     this.renderer.domElement.removeEventListener("pointermove", this.handlePointerMove);
+    this.disposeWalkCampus3D();
+    this.disposeCharacterAvatar();
     this.disposeObjectChildren(this.previewGhostGroup);
     this.disposeObjectChildren(this.atmosphereGroup);
     this.atmosphereMotes = [];
@@ -1328,6 +2514,8 @@ export class Alchemy3DRenderer {
     this.titaniumTex.dispose();
     this.blueprintTex.dispose();
     this.aoTex.dispose();
+    Object.values(this.floorTextures).forEach((t) => t?.dispose());
+    this.floorTextures = {};
     Object.values(this.moodTextures).forEach((t) => t?.dispose());
     this.moodTextures = {};
     this.controls.dispose();
@@ -1367,6 +2555,7 @@ export class Alchemy3DRenderer {
       this.titaniumTex,
       this.blueprintTex,
       this.aoTex,
+      ...(Object.values(this.floorTextures).filter(Boolean) as THREE.Texture[]),
       ...(Object.values(this.moodTextures).filter(Boolean) as THREE.Texture[])
     ]);
     parent.traverse((obj) => {
@@ -1429,6 +2618,8 @@ export class Alchemy3DRenderer {
     this.liquidMesh = null;
     this.liquidTopMesh = null;
     this.liquidTopBasePos = null;
+    this.pavilionFloorMat = null;
+    this.heroVesselGroup = null;
     this.waterPoolMesh = null;
     this.causticShaderMat = null;
     this.causticLight = null;
@@ -1561,6 +2752,8 @@ export class Alchemy3DRenderer {
       roughness: 0.44,
       metalness: 0.05
     });
+    this.pavilionFloorMat = alabasterMat;
+    this.applyFloorFinish();
     const titaniumMat = new THREE.MeshStandardMaterial({
       map: this.titaniumTex,
       color: "#cfd9e6",
@@ -1963,6 +3156,7 @@ export class Alchemy3DRenderer {
     const vesselGroup = new THREE.Group();
     vesselGroup.position.y = 0.52;
     vesselGroup.scale.setScalar(this.traits.sub.vesselScale);
+    this.heroVesselGroup = vesselGroup;
 
     const glassMat = new THREE.MeshPhysicalMaterial({
       color: "#ffffff",
@@ -3576,7 +4770,15 @@ export class Alchemy3DRenderer {
       this.rebuildProteinChainMeshes(snap.residues);
     }
 
-    if (!this.userDragging) this.controls.autoRotate = true;
+    if (!this.userDragging) {
+      this.controls.autoRotate =
+        this.autoRotateDesired && (!this.walkMode || !this.characterAvatar) && !this.creatorCameraMode;
+    }
+
+    // Update Walkable Researcher Avatar, Floor Beacons & Third-Person Follow Camera
+    if (this.walkMode) {
+      this.stepWalkableCharacter(dt, t);
+    }
 
     // Smooth architect-app camera fly-to animation when switching view presets
     if (this.desiredCamPos && this.desiredCamTarget) {
@@ -4043,10 +5245,19 @@ export class Alchemy3DRenderer {
         while (diffYaw < -Math.PI) diffYaw += Math.PI * 2;
         c.group.rotation.y += diffYaw * Math.min(1, dt * 8);
       } else if (!chasing) {
-        let diffYaw = c.homeRotY - c.group.rotation.y;
+        // When the player's researcher stands nearby, the pet turns warmly to look at them!
+        const playerDist =
+          this.walkMode && this.characterAvatar
+            ? Math.hypot(this.charX - c.group.position.x, this.charZ - c.group.position.z)
+            : 99;
+        const idleTargetYaw =
+          playerDist < 1.35
+            ? Math.atan2(this.charX - c.group.position.x, this.charZ - c.group.position.z)
+            : c.homeRotY;
+        let diffYaw = idleTargetYaw - c.group.rotation.y;
         while (diffYaw > Math.PI) diffYaw -= Math.PI * 2;
         while (diffYaw < -Math.PI) diffYaw += Math.PI * 2;
-        c.group.rotation.y += diffYaw * Math.min(1, dt * 4);
+        c.group.rotation.y += diffYaw * Math.min(1, dt * 4.8);
       }
 
       // If pet reaches the toy ball, give it a playful playful boop!
@@ -4219,5 +5430,344 @@ export class Alchemy3DRenderer {
         this.bursts.splice(i, 1);
       }
     }
+  }
+
+  private spawnFootstepPuff() {
+    if (this.footPuffs.length === 0) return;
+    const slot = this.footPuffs[this.nextFootPuffIdx % this.footPuffs.length];
+    this.nextFootPuffIdx = (this.nextFootPuffIdx + 1) % this.footPuffs.length;
+    slot.life = 1.0;
+    slot.mesh.visible = true;
+    slot.mesh.position.set(
+      this.charX + (Math.random() - 0.5) * 0.14,
+      this.charY + 0.035,
+      this.charZ + (Math.random() - 0.5) * 0.14
+    );
+    slot.mesh.scale.setScalar(0.55);
+    slot.vx = -this.charVx * 0.12 + (Math.random() - 0.5) * 0.18;
+    slot.vy = 0.24 + Math.random() * 0.16;
+    slot.vz = -this.charVz * 0.12 + (Math.random() - 0.5) * 0.18;
+
+    const r = Math.hypot(this.charX, this.charZ);
+    const surface: "rotunda" | "terrace" | "courtyard" =
+      r <= 1.86 ? "rotunda" : Math.abs(this.charX) <= 2.32 && Math.abs(this.charZ) <= 2.32 ? "terrace" : "courtyard";
+    soundEngine.playFootstep(surface, this.moveInput.sprint);
+  }
+
+  private stepWalkableCharacter(dt: number, t: number) {
+    const prevX = this.charX;
+    const prevZ = this.charZ;
+    let targetVx = 0;
+    let targetVz = 0;
+    let turnBank = 0;
+
+    if (this.creatorCameraMode && this.characterAvatar) {
+      if (this.creatorTurntable && !this.userDragging) {
+        this.charYaw += dt * 0.72;
+        this.creatorTargetYaw = this.charYaw;
+      } else {
+        let diff = this.creatorTargetYaw - this.charYaw;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        this.charYaw += diff * (1 - Math.exp(-8.5 * dt));
+      }
+    } else if (!this.creatorCameraMode && this.characterAvatar) {
+      const inMag = Math.hypot(this.moveInput.dx, this.moveInput.dz);
+      if (inMag > 0.05) {
+        // Camera-relative horizontal walking vector (WASD / Arrows / D-Pad)
+        this.camera.getWorldDirection(this.tmpCamFwd);
+        this.tmpCamFwd.y = 0;
+        if (this.tmpCamFwd.lengthSq() < 1e-6) this.tmpCamFwd.set(0, 0, -1);
+        this.tmpCamFwd.normalize();
+        this.tmpCamRight.crossVectors(this.tmpCamFwd, UP_AXIS).normalize();
+
+        this.tmpMoveVec
+          .set(0, 0, 0)
+          .addScaledVector(this.tmpCamRight, this.moveInput.dx)
+          .addScaledVector(this.tmpCamFwd, this.moveInput.dz);
+        if (this.tmpMoveVec.lengthSq() > 1) this.tmpMoveVec.normalize();
+
+        const maxSpeed = this.moveInput.sprint ? 3.2 : 2.2;
+        targetVx = this.tmpMoveVec.x * maxSpeed;
+        targetVz = this.tmpMoveVec.z * maxSpeed;
+      } else if (this.walkTarget) {
+        // Smooth point-and-click / station walk autopilot with central flask tangent steering
+        const dx = this.walkTarget.x - this.charX;
+        const dz = this.walkTarget.z - this.charZ;
+        const dist = Math.hypot(dx, dz);
+        if (dist <= 0.14) {
+          const arrived = this.walkTarget.arriveStation ?? null;
+          const arriveAction = this.walkTarget.arriveAction;
+          this.walkTarget = null;
+          if (arriveAction) {
+            this.executeArrivalSimsAction(arriveAction);
+          } else if (arrived) {
+            const st = LAB_STATION_BY_ID[arrived];
+            if (st) this.charYaw = st.facingYaw;
+            this.characterAvatar.triggerEmote("wave");
+            this.onStationArrived?.(arrived);
+          }
+        } else {
+          let dirX = dx / dist;
+          let dirZ = dz / dist;
+
+          // Steer gracefully around central glass reactor if path cuts across origin
+          const nextProbeX = this.charX + dirX * 0.3;
+          const nextProbeZ = this.charZ + dirZ * 0.3;
+          if (Math.hypot(nextProbeX, nextProbeZ) < 0.96) {
+            const cross = this.charX * dirZ - this.charZ * dirX;
+            const sign = cross >= 0 ? 1 : -1;
+            const tx = -dirZ * sign;
+            const tz = dirX * sign;
+            dirX = dirX * 0.35 + tx * 0.94;
+            dirZ = dirZ * 0.35 + tz * 0.94;
+            const len = Math.hypot(dirX, dirZ) || 1;
+            dirX /= len;
+            dirZ /= len;
+          }
+
+          // Smooth approach ease-out near destination (brisker cruise speed on long suburb avenues!)
+          const autoSpeed = Math.min(dist > 8 ? 3.6 : 2.6, Math.max(0.85, dist * 3.2));
+          targetVx = dirX * autoSpeed;
+          targetVz = dirZ * autoSpeed;
+        }
+      }
+
+      // Frame-rate-independent exponential velocity inertia (acceleration & braking!)
+      const hasInput = Math.hypot(targetVx, targetVz) > 0.05;
+      const velRate = hasInput ? 11.5 : 15.0;
+      const velAlpha = 1 - Math.exp(-velRate * dt);
+      this.charVx += (targetVx - this.charVx) * velAlpha;
+      this.charVz += (targetVz - this.charVz) * velAlpha;
+
+      const curSpeed = Math.hypot(this.charVx, this.charVz);
+      if (curSpeed > 0.04) {
+        const resolved = this.resolveWalkObstacles(
+          this.charX + this.charVx * dt,
+          this.charZ + this.charVz * dt
+        );
+        this.charX = resolved.x;
+        this.charZ = resolved.z;
+
+        const targetYaw = Math.atan2(this.charVx, this.charVz);
+        let diffYaw = targetYaw - this.charYaw;
+        while (diffYaw > Math.PI) diffYaw -= Math.PI * 2;
+        while (diffYaw < -Math.PI) diffYaw += Math.PI * 2;
+        this.charYaw += diffYaw * (1 - Math.exp(-13.5 * dt));
+        turnBank = -diffYaw * Math.min(1, curSpeed / 2.4) * 0.28;
+      } else {
+        this.charVx = 0;
+        this.charVz = 0;
+      }
+    }
+
+    const curSpeed = Math.hypot(this.charVx, this.charVz);
+    const speedNorm = Math.min(1, curSpeed / 3.0);
+    this.charMoving = !this.creatorCameraMode && curSpeed > 0.14;
+
+    // Frame-rate-independent elevation smoothing across steps, bridges & rotunda
+    const targetGroundY = this.getWalkGroundY(this.charX, this.charZ);
+    this.charY += (targetGroundY - this.charY) * (1 - Math.exp(-15 * dt));
+
+    if (this.characterAvatar) {
+      this.characterAvatar.root.position.set(this.charX, this.charY, this.charZ);
+      this.characterAvatar.root.rotation.y = this.charYaw;
+      this.characterAvatar.update(
+        dt,
+        t,
+        speedNorm,
+        this.charMoving,
+        turnBank,
+        () => this.spawnFootstepPuff()
+      );
+    }
+
+    // Proximity station detection (avoid hijacking panel while auto-walking past intermediate pads)
+    const nearStation =
+      this.creatorCameraMode || !this.characterAvatar
+        ? null
+        : findNearestTriggeredStation(this.charX, this.charZ);
+    const enRouteToSpecificStation = Boolean(
+      (this.walkTarget?.arriveStation && this.walkTarget.arriveStation !== nearStation) ||
+      this.walkTarget?.arriveAction
+    );
+    if (!enRouteToSpecificStation && nearStation !== this.lastNearStation) {
+      this.lastNearStation = nearStation;
+      this.onNearStationChange?.(nearStation);
+    }
+
+    // Frame-rate-independent third-person follow camera (preserves OrbitControls angle & zoom!)
+    if (
+      !this.creatorCameraMode &&
+      this.characterAvatar &&
+      this.cameraMode === "follow" &&
+      !this.desiredCamPos
+    ) {
+      const movedX = this.charX - prevX;
+      const movedZ = this.charZ - prevZ;
+      if (!this.followCameraInitialized) {
+        this.followCameraInitialized = true;
+      } else if (Math.abs(movedX) > 1e-5 || Math.abs(movedZ) > 1e-5) {
+        this.camera.position.x += movedX;
+        this.camera.position.z += movedZ;
+        this.controls.target.x += movedX;
+        this.controls.target.z += movedZ;
+      }
+      if (!this.userDragging) {
+        const desiredTargetX = this.charX;
+        const desiredTargetY = this.charY + 0.68;
+        const desiredTargetZ = this.charZ;
+        const followAlpha = 1 - Math.exp(-5.6 * dt);
+        const shiftX = (desiredTargetX - this.controls.target.x) * followAlpha;
+        const shiftY = (desiredTargetY - this.controls.target.y) * followAlpha;
+        const shiftZ = (desiredTargetZ - this.controls.target.z) * followAlpha;
+        this.controls.target.x += shiftX;
+        this.controls.target.y += shiftY;
+        this.controls.target.z += shiftZ;
+        this.camera.position.x += shiftX;
+        this.camera.position.y += shiftY;
+        this.camera.position.z += shiftZ;
+      }
+    }
+
+    // Animate 5 physical 3D frosted-glass holographic monitors inside WebGL!
+    this.diegeticMonitors?.animate(
+      dt,
+      t,
+      this.camera,
+      nearStation,
+      this.activeStationHighlight,
+      !this.creatorCameraMode
+    );
+
+    // Animate Sims Interactive Furniture, Visiting Host NPC & Living Minted NFT Neighborhood!
+    this.simsFurniture?.update(dt, t);
+    this.neighborhoodWorld?.update(dt, t, this.charX, this.charZ);
+
+    if (this.visitingHostAvatar) {
+      this.visitingHostWaveCooldown = Math.max(0, this.visitingHostWaveCooldown - dt);
+      const hy = this.getWalkGroundY(this.visitingHostX, this.visitingHostZ);
+      const dx = this.charX - this.visitingHostX;
+      const dz = this.charZ - this.visitingHostZ;
+      const dist = Math.hypot(dx, dz);
+      const desiredYaw = dist < 3.6 ? Math.atan2(dx, dz) : 0.45;
+      let diff = desiredYaw - this.visitingHostYaw;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      this.visitingHostYaw += diff * (1 - Math.exp(-7.5 * dt));
+      this.visitingHostAvatar.root.position.set(this.visitingHostX, hy, this.visitingHostZ);
+      this.visitingHostAvatar.root.rotation.y = this.visitingHostYaw;
+      this.visitingHostAvatar.update(dt, t + 1.1, 0, false);
+
+      if (dist < 1.6 && this.visitingHostWaveCooldown <= 0) {
+        this.visitingHostWaveCooldown = 10.0;
+        this.visitingHostAvatar.triggerEmote("wave");
+        this.spawnMoodBubble(
+          new THREE.Vector3(this.visitingHostX, hy + 1.38, this.visitingHostZ),
+          "heart"
+        );
+      }
+    }
+
+    // Animate glowing architectural station floor beacons
+    for (const st of LAB_STATIONS) {
+      const b = this.stationBeacons.get(st.id);
+      if (!b) continue;
+      const isNear = nearStation === st.id;
+      const isHighlighted = this.activeStationHighlight === st.id;
+      const pulse = 1 + Math.sin(t * (isNear || isHighlighted ? 5.2 : 2.4)) * (isNear || isHighlighted ? 0.09 : 0.035);
+      b.ring.scale.setScalar(isNear || isHighlighted ? 1.16 * pulse : pulse);
+      (b.disc.material as THREE.MeshBasicMaterial).opacity = isNear || isHighlighted ? 0.3 : 0.12;
+      (b.pillar.material as THREE.MeshBasicMaterial).opacity = isNear || isHighlighted ? 0.44 : 0.14;
+      b.ring.visible = !this.creatorCameraMode;
+      b.disc.visible = !this.creatorCameraMode;
+      b.pillar.visible = !this.creatorCameraMode;
+    }
+
+    // Animate subtle pearl breadcrumb trail while click-to-walking
+    if (this.walkBreadcrumbs.length > 0) {
+      const showCrumbs = Boolean(this.walkTarget) && !this.creatorCameraMode;
+      for (let i = 0; i < this.walkBreadcrumbs.length; i++) {
+        const dot = this.walkBreadcrumbs[i];
+        dot.visible = showCrumbs;
+        if (showCrumbs && this.walkTarget) {
+          const frac = (i + 1) / (this.walkBreadcrumbs.length + 1);
+          const bx = this.charX + (this.walkTarget.x - this.charX) * frac;
+          const bz = this.charZ + (this.walkTarget.z - this.charZ) * frac;
+          const by = this.getWalkGroundY(bx, bz) + 0.045 + Math.sin(t * 6 - i * 0.8) * 0.015;
+          dot.position.set(bx, by, bz);
+        }
+      }
+    }
+
+    // Animate pooled zero-GC footstep dust puffs
+    for (const pf of this.footPuffs) {
+      if (pf.life > 0) {
+        pf.life = Math.max(0, pf.life - dt * 2.4);
+        pf.mesh.position.x += pf.vx * dt;
+        pf.mesh.position.y += pf.vy * dt;
+        pf.mesh.position.z += pf.vz * dt;
+        const prog = 1 - pf.life;
+        pf.mesh.scale.setScalar(0.55 + prog * 1.15);
+        (pf.mesh.material as THREE.MeshBasicMaterial).opacity = pf.life * 0.45;
+        if (pf.life <= 0) pf.mesh.visible = false;
+      }
+    }
+
+    // Animate floor click-to-walk waypoint ring
+    if (this.walkWaypointMesh && this.walkWaypointLife > 0) {
+      this.walkWaypointLife = Math.max(0, this.walkWaypointLife - dt * 1.45);
+      const prog = 1 - this.walkWaypointLife;
+      this.walkWaypointMesh.scale.setScalar(0.5 + prog * 1.35);
+      (this.walkWaypointMesh.material as THREE.MeshBasicMaterial).opacity =
+        Math.sin(this.walkWaypointLife * Math.PI) * 0.78;
+      if (this.walkWaypointLife <= 0) {
+        this.walkWaypointMesh.visible = false;
+      }
+    }
+  }
+
+  private emitWalkTelemetry() {
+    if (!this.onWalkTelemetry) return;
+    const w = this.container.clientWidth || 1;
+    const h = this.container.clientHeight || 1;
+    const anchors = {} as Record<LabStationId, ProjectedStationAnchor>;
+
+    for (const st of LAB_STATIONS) {
+      // Project just above the top rail of each physical 3D holographic monitor
+      this.tmpProj.set(st.panelPos[0], st.panelPos[1] + 0.06, st.panelPos[2]);
+      const distToCam = this.camera.position.distanceTo(this.tmpProj);
+      this.tmpProj.project(this.camera);
+      const visible =
+        !this.creatorCameraMode &&
+        this.tmpProj.z > -1 &&
+        this.tmpProj.z < 1 &&
+        this.tmpProj.x >= -1.25 &&
+        this.tmpProj.x <= 1.25 &&
+        this.tmpProj.y >= -1.25 &&
+        this.tmpProj.y <= 1.25;
+      anchors[st.id] = {
+        id: st.id,
+        x: (this.tmpProj.x * 0.5 + 0.5) * w,
+        y: (-this.tmpProj.y * 0.5 + 0.5) * h,
+        visible,
+        distToChar: Math.hypot(this.charX - st.padX, this.charZ - st.padZ),
+        distToCam
+      };
+    }
+
+    const leadPet = this.companions[0];
+    this.onWalkTelemetry({
+      anchors,
+      charX: this.charX,
+      charZ: this.charZ,
+      charYaw: this.charYaw,
+      petX: leadPet ? leadPet.group.position.x : null,
+      petZ: leadPet ? leadPet.group.position.z : null,
+      moving: this.charMoving,
+      nearStation: this.lastNearStation,
+      width: w,
+      height: h
+    });
   }
 }

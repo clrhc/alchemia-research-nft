@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { ethers } from "ethers";
-import { Sparkles } from "lucide-react";
+import { Compass, Footprints, Home, Sparkles, Users, Wallet } from "lucide-react";
 import { ArtworkCanvas } from "./components/ArtworkCanvas";
 import { BackgroundCanvas } from "./components/BackgroundCanvas";
 import { CustomCursor } from "./components/CustomCursor";
@@ -18,6 +18,7 @@ const WhitePaperSheet = lazy(() =>
   import("./components/WhitePaperSheet").then((m) => ({ default: m.WhitePaperSheet }))
 );
 import { type LiveImpactState } from "./engine/alchemyRenderer";
+import type { NeighborLabSummary } from "./engine/neighborhoodLayout";
 import { randomSeedHex } from "./engine/prng";
 import type { ComputeSnapshot } from "./engine/researchCompute";
 import { loadLabSparks, saveLabSparks } from "./engine/tamagotchi";
@@ -72,6 +73,7 @@ export function App() {
   const [currentCauseId, setCurrentCauseId] = useState<number>(0);
   const [exploreSelected, setExploreSelected] = useState<MintedVessel | null>(null);
   const [myLabTokenId, setMyLabTokenId] = useState<number | null>(1);
+  const [visitHomeLab, setVisitHomeLab] = useState<NeighborLabSummary | null>(null);
   const [liveCompute, setLiveCompute] = useState<ComputeSnapshot | null>(null);
 
   const [showWhitePaper, setShowWhitePaper] = useState(false);
@@ -225,6 +227,7 @@ export function App() {
     complexityTier,
     sectorsMask: 0,
     tokenValueUsd: amountUsd,
+    totalSupply: state.totalSupply,
     contractAddress: state.contractAddress || undefined,
     chainId: state.chainId,
     tokenImpactEth: previewImpact.tokenImpactEth,
@@ -242,6 +245,7 @@ export function App() {
       globalDonatedEth: next.globalDonatedEth,
       totalSupply: next.totalSupply,
       maxSupply: next.maxSupply,
+      vessels: next.vessels.slice(0, 28),
       tokenId,
       tokenValueUsd,
       complexityTier: tokenValueUsd ? complexityTierFromUsd(tokenValueUsd) : undefined,
@@ -623,29 +627,39 @@ export function App() {
       <BackgroundCanvas impactPulseSignal={bgPulseSignal} />
       <CustomCursor />
 
-      <div className="open-stage">
-        {/* Whisper-Quiet Floating Navigation Links (Zero Panel Box) */}
+      <div className={`open-stage ${page === "mylabs" ? "is-mylabs-world" : ""}`}>
+        {/* Floating Cutesy Silver-White Glassmorphism Navigation Capsule */}
         <nav className="quiet-nav" aria-label="Site navigation">
           <button
             type="button"
             className={`nav-link clickable ${page === "mint" ? "active" : ""}`}
             onClick={() => navigateTab("mint")}
           >
-            Home
+            <span className="cute-icon-bubble is-xs">
+              <Sparkles size={11} />
+            </span>
+            <span>Home</span>
           </button>
           <button
             type="button"
             className={`nav-link clickable ${page === "explore" ? "active" : ""}`}
             onClick={() => navigateTab("explore")}
           >
-            Gallery
+            <span className="cute-icon-bubble is-xs">
+              <Compass size={11} />
+            </span>
+            <span>Gallery</span>
           </button>
           <button
             type="button"
             className={`nav-link clickable ${page === "mylabs" ? "active" : ""}`}
             onClick={() => navigateTab("mylabs")}
           >
-            My Labs
+            <span className="cute-icon-bubble is-xs">
+              <Home size={11} />
+            </span>
+            <span>My Labs</span>
+            <span className="nav-world-badge">3D Town</span>
           </button>
           <button
             type="button"
@@ -655,9 +669,14 @@ export function App() {
               setShowWalletModal(true);
             }}
           >
-            {state.walletAddress
-              ? `${state.walletAddress.slice(0, 6)}…${state.walletAddress.slice(-4)}`
-              : "Connect"}
+            <span className="cute-icon-bubble is-xs">
+              <Wallet size={11} />
+            </span>
+            <span>
+              {state.walletAddress
+                ? `${state.walletAddress.slice(0, 6)}…${state.walletAddress.slice(-4)}`
+                : "Connect"}
+            </span>
           </button>
         </nav>
 
@@ -683,7 +702,7 @@ export function App() {
               />
             </div>
 
-            {/* 2. Running Total + Hero + Plain Human Explainer (No Panels) */}
+            {/* 2. Running Total + Hero + Plain Human Explainer */}
             <header className="open-hero">
               <div className="running-total-line" aria-live="polite">
                 <span className="live-dot" />
@@ -692,6 +711,10 @@ export function App() {
                     ? "Syncing live research total…"
                     : `${formattedResearchTotal} sent to research`}
                 </span>
+                <span className="running-total-sep" aria-hidden="true" />
+                <span className="running-total-town">
+                  <Users size={11} /> {state.totalSupply} labs in town
+                </span>
               </div>
 
               <h1 className="open-hero-title">
@@ -699,12 +722,12 @@ export function App() {
               </h1>
 
               <p className="open-explainer">
-                Start at $1. Slide up to add detail to one 3D lab. Each piece comes with a pet to
-                care for, rooms to build, and live protein folding inside.
+                Start at $1. Design your researcher, walk around your 3D glass lab, care for your
+                pet, fold real proteins, and visit neighbors as every new mint grows the town.
               </p>
             </header>
 
-            {/* 3. Pure Silvery Slider ($1 -> $500) + Mint Button Underneath */}
+            {/* 3. Pure Silvery Slider ($1 -> $500) + Mint & Enter 3D World Actions */}
             <div className="open-mint-area">
               <div className="slider-wrap">
                 <div className="slider-readout">
@@ -727,15 +750,25 @@ export function App() {
                 </div>
               </div>
 
-              <button
-                type="button"
-                className="btn-mint-minimal clickable"
-                disabled={busy}
-                onClick={handleMint}
-              >
-                <Sparkles size={16} />
-                {busy ? "Minting…" : "Mint"}
-              </button>
+              <div className="open-cta-row">
+                <button
+                  type="button"
+                  className="btn-mint-minimal clickable"
+                  disabled={busy}
+                  onClick={handleMint}
+                >
+                  <Sparkles size={16} />
+                  {busy ? "Minting…" : "Mint Lab"}
+                </button>
+                <button
+                  type="button"
+                  className="btn-silver-glass clickable"
+                  onClick={() => navigateTab("mylabs")}
+                >
+                  <Footprints size={15} />
+                  Enter 3D Town
+                </button>
+              </div>
 
               {notice && <p className="minimal-note">{notice}</p>}
             </div>
@@ -750,7 +783,23 @@ export function App() {
               selectedVessel={exploreSelected}
               onSelectVessel={selectGalleryVessel}
               onOpenInMyLabs={(v) => {
+                setVisitHomeLab(null);
                 setMyLabTokenId(v.tokenId);
+                navigateTab("mylabs");
+              }}
+              onVisitHomeInMyLabs={(v) => {
+                setVisitHomeLab({
+                  tokenId: v.tokenId,
+                  seed: v.seed,
+                  causeId: v.causeId,
+                  causeName: v.causeName,
+                  minter: v.minter,
+                  valueUsd: v.valueUsd,
+                  complexityTier: complexityTierFromUsd(v.valueUsd),
+                  sectorsMask: v.sectorsMask,
+                  workUnits: v.workUnits,
+                  ownedByUser: v.ownedByUser
+                });
                 navigateTab("mylabs");
               }}
             />
@@ -764,6 +813,8 @@ export function App() {
               labSparks={labSparks}
               lastPulseAt={lastPulseAt}
               activeTokenId={myLabTokenId}
+              initialVisitLab={visitHomeLab}
+              onClearInitialVisit={() => setVisitHomeLab(null)}
               onSelectTokenId={setMyLabTokenId}
               onBuildSector={handleBuildSector}
               onUpgradeVessel={handleUpgradeVessel}

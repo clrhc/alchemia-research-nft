@@ -1,0 +1,4444 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ArrowUpCircle,
+  ArrowUpRight,
+  Award,
+  BookOpen,
+  Brain,
+  Building2,
+  Camera,
+  Check,
+  CloudSnow,
+  Coins,
+  Compass,
+  Cookie,
+  Cpu,
+  DoorOpen,
+  Download,
+  Eye,
+  FileJson,
+  Flame,
+  FlaskConical,
+  Footprints,
+  Gamepad2,
+  Grid2x2,
+  Heart,
+  HeartHandshake,
+  Home,
+  ListChecks,
+  MapPin,
+  Maximize2,
+  MessageCircle,
+  Minimize2,
+  Moon,
+  Palette,
+  Pause,
+  PawPrint,
+  Pencil,
+  Pickaxe,
+  Play,
+  Plus,
+  Send,
+  ShieldCheck,
+  Smile,
+  Sparkles,
+  Sun,
+  Sunset,
+  Tag,
+  Timer,
+  Trophy,
+  UserRound,
+  Users,
+  Volume2,
+  VolumeX,
+  Wallet,
+  X,
+  Zap
+} from "lucide-react";
+import { ArtworkCanvas, type ArtworkCanvasHandle } from "./ArtworkCanvas";
+import { CharacterCreatorOverlay } from "./CharacterCreatorOverlay";
+import { ContactMapSvg } from "./ContactMapSvg";
+import { SequenceRibbonBar } from "./SequenceRibbonBar";
+import { SimsPieMenu } from "./SimsPieMenu";
+import type {
+  AtmosphereMode,
+  CameraMode,
+  CameraPreset,
+  CreatorFocusZone,
+  LightingMood,
+  WalkFrameTelemetry
+} from "../engine/alchemy3DRenderer";
+import type { LiveImpactState } from "../engine/alchemyRenderer";
+import type { CharacterEmote } from "../engine/character3D";
+import {
+  PERSONALITY_TRAITS,
+  createDefaultCharacterProfile,
+  encodeCharacterCode,
+  loadCharacterProfile,
+  saveCharacterProfile,
+  type CharacterProfile,
+  type PersonalityTraitId
+} from "../engine/characterConfig";
+import { LAB_STATIONS, LAB_STATION_BY_ID, type LabStationId } from "../engine/labStations";
+import {
+  COMMUNITY_FOUNTAIN_POS,
+  buildNeighborhoodRoster,
+  computeNeighborhoodPlacements,
+  computeUpcomingBlueprintLots,
+  deriveNeighborCharacterProfile,
+  getNeighborhoodGrowthStage,
+  type NeighborLabSummary
+} from "../engine/neighborhoodLayout";
+import { declutterFloatingLabels, type DeclutterInput } from "../engine/spatialDeclutter";
+import { deriveTraitsFromSeed } from "../engine/prng";
+import {
+  FLOOR_STYLES,
+  MOOD_SHIFT_ACTIONS,
+  PATIO_DECORS,
+  SIMS_MOOD_VISUALS,
+  addGuestbookEntry,
+  applyNeighborSocialAction,
+  applySimsVibeDelta,
+  computeSimsMood,
+  getNeighborSimsStatus,
+  getSimsPieActions,
+  initialSimsVibes,
+  loadGuestbookEntries,
+  loadLabDecor,
+  loadRelationshipsMap,
+  saveLabDecor,
+  type LabDecorConfig,
+  type LabGuestbookEntry,
+  type MoodShiftAction,
+  type NeighborSocialAction,
+  type SimsMoodName,
+  type SimsMoodlet,
+  type SimsObjectTarget,
+  type SimsVibes,
+  type StoredNeighborRelation
+} from "../engine/simsState";
+import {
+  PROTEIN_BENCHMARKS,
+  downloadPDBFromSnapshot,
+  downloadScienceCertificateFromSnapshot,
+  getDailyFoldingChallenge,
+  type ComputeSnapshot
+} from "../engine/researchCompute";
+import {
+  assignSecondaryStructurePSEA,
+  computeContactMap,
+  computeNativeContactFractionQ,
+  computeStructureGeometryQuality,
+  downloadMMCIFFromSnapshot
+} from "../engine/structuralAnalysis";
+import { soundEngine } from "../engine/soundEngine";
+import {
+  PET_ACCESSORY_LABELS,
+  applyTamagotchiAction,
+  companionBoostMultiplier,
+  companionMoodLabel,
+  cycleCompanionAccessory,
+  loadCompanionVitals,
+  saveCompanionVitals,
+  setCompanionPetName,
+  toggleCompanionSleep,
+  type CompanionVitals,
+  type TamagotchiAction
+} from "../engine/tamagotchi";
+import { complexityTierFromUsd, usdToEth } from "../web3/config";
+import {
+  LAB_SECTORS,
+  computeMiningRatePerHour,
+  countSectors,
+  hasSector
+} from "../web3/sectors";
+import { buildAnimationUrl, type MintedVessel } from "../web3/contractService";
+
+export interface LabWorldExperienceProps {
+  /** Active lab vessel metadata */
+  vessel: MintedVessel;
+  /** Optional list of switchable labs in My Labs */
+  switchableVessels?: MintedVessel[];
+  /** All known minted labs in the collection used to build the living neighborhood */
+  allVessels?: MintedVessel[];
+  /** Total minted collection supply controlling neighborhood scale */
+  totalSupply?: number;
+  onSelectTokenId?: (tokenId: number) => void;
+  /** Optional demo callback in standalone mode to preview newly minted neighbors (+1 or +5 wave) */
+  onSimulateNewNeighbor?: (count?: number) => void;
+  /** Optional neighbor home to step directly inside (e.g., opened from Gallery "Visit Home") */
+  initialVisitLab?: NeighborLabSummary | null;
+  onClearInitialVisit?: () => void;
+  /** Live impact & collection context */
+  impact: LiveImpactState;
+  userCoinBalance: number;
+  totalCoinsDonatedToResearch: number;
+  labSparks: number;
+  walletAddress?: string | null;
+  isPreviewLab?: boolean;
+  standaloneMode?: boolean;
+  animationUrl?: string;
+  /** Whether to open Character Creator immediately on first visit or on first user interaction */
+  creatorTriggerMode: "immediate" | "on-first-interaction";
+  /** Optional full-app interactive mutations (omitted in standalone read-only NFT viewer) */
+  onBuildSector?: (vessel: MintedVessel, sectorId: number, payWithCoins: boolean) => Promise<void>;
+  onUpgradeVessel?: (vessel: MintedVessel, addedUsd: number) => Promise<void>;
+  onClaimCoins?: (vessel: MintedVessel, amount: number, researchTithePct: number) => Promise<void>;
+  onDonateCoins?: (vessel: MintedVessel, amount: number) => Promise<void>;
+  onAnchorProof?: (vessel: MintedVessel, snap: ComputeSnapshot) => Promise<void>;
+  onAwardPlayBonus?: (sparks: number) => void;
+  onConnectWallet?: () => Promise<void>;
+  onSpendCoinsForTreat?: (cost: number) => boolean;
+  onGoMint?: () => void;
+}
+
+const LIGHTING_ORDER: LightingMood[] = ["daylight", "golden", "silver", "moonlit"];
+const LIGHTING_LABELS: Record<LightingMood, string> = {
+  daylight: "Day",
+  golden: "Golden",
+  silver: "Silver",
+  moonlit: "Mist"
+};
+const ATMOSPHERE_ORDER: AtmosphereMode[] = ["clear", "snow", "motes"];
+const ATMOSPHERE_LABELS: Record<AtmosphereMode, string> = {
+  clear: "Clear",
+  snow: "Snow",
+  motes: "Motes"
+};
+
+type GoalKey = "pet" | "proton" | "fold" | "claim" | "room";
+const LAB_GOALS_KEY = "alchemia.lab.goals.v1";
+
+function loadGoals(): Record<GoalKey, boolean> {
+  const empty: Record<GoalKey, boolean> = {
+    pet: false,
+    proton: false,
+    fold: false,
+    claim: false,
+    room: false
+  };
+  if (typeof window === "undefined") return empty;
+  try {
+    const raw = window.localStorage.getItem(LAB_GOALS_KEY);
+    if (!raw) return empty;
+    return { ...empty, ...(JSON.parse(raw) as Partial<Record<GoalKey, boolean>>) };
+  } catch {
+    return empty;
+  }
+}
+
+function EnergySparkline({ history }: { history: number[] }) {
+  if (history.length < 3) return null;
+  const minE = Math.min(...history) - 0.5;
+  const maxE = Math.max(...history) + 0.5;
+  const span = Math.max(1, maxE - minE);
+  const w = 200;
+  const h = 34;
+  const pts = history
+    .map((val, i) => {
+      const x = (i / (history.length - 1)) * w;
+      const y = h - 4 - ((val - minE) / span) * (h - 8);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="energy-sparkline" aria-label="Live protein energy curve">
+      <polyline
+        fill="none"
+        stroke="#5b8def"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        points={pts}
+      />
+    </svg>
+  );
+}
+
+const STATION_ICONS: Record<LabStationId, typeof Cpu> = {
+  research: FlaskConical,
+  mining: Pickaxe,
+  pet: PawPrint,
+  builder: Building2,
+  console: Smile
+};
+
+export function LabWorldExperience({
+  vessel,
+  switchableVessels,
+  allVessels,
+  totalSupply,
+  onSelectTokenId,
+  onSimulateNewNeighbor,
+  initialVisitLab,
+  onClearInitialVisit,
+  impact,
+  userCoinBalance,
+  totalCoinsDonatedToResearch,
+  labSparks,
+  walletAddress,
+  isPreviewLab = false,
+  standaloneMode = false,
+  animationUrl,
+  creatorTriggerMode,
+  onBuildSector,
+  onUpgradeVessel,
+  onClaimCoins,
+  onDonateCoins,
+  onAnchorProof,
+  onAwardPlayBonus,
+  onConnectWallet,
+  onSpendCoinsForTreat,
+  onGoMint
+}: LabWorldExperienceProps) {
+  const stageRef = useRef<HTMLDivElement>(null);
+  const artworkRef = useRef<ArtworkCanvasHandle>(null);
+
+  // Direct DOM refs for 60fps zero-re-render 3D-to-2D projected floating panels, leader lines & mini-map!
+  const floatingNodeRefs = useRef<Partial<Record<LabStationId, HTMLButtonElement | null>>>({});
+  const leaderLineRefs = useRef<Partial<Record<LabStationId, SVGLineElement | null>>>({});
+  const leaderDotRefs = useRef<Partial<Record<LabStationId, SVGCircleElement | null>>>({});
+  const cachedPillSizesRef = useRef<Record<LabStationId, { width: number; height: number }>>({
+    research: { width: 156, height: 42 },
+    mining: { width: 146, height: 42 },
+    pet: { width: 144, height: 42 },
+    builder: { width: 142, height: 42 },
+    console: { width: 152, height: 42 }
+  });
+  const radarPlayerRef = useRef<SVGGElement | null>(null);
+  const radarPetRef = useRef<SVGCircleElement | null>(null);
+
+  // Character state & first-interaction creator flow
+  const [savedProfile, setSavedProfile] = useState<CharacterProfile | null>(() =>
+    loadCharacterProfile()
+  );
+  const [creatorDraft, setCreatorDraft] = useState<CharacterProfile>(
+    () => loadCharacterProfile() || createDefaultCharacterProfile()
+  );
+  const [creatorOpen, setCreatorOpen] = useState<boolean>(
+    () => creatorTriggerMode === "immediate" && loadCharacterProfile() === null
+  );
+  const [creatorFocusZone, setCreatorFocusZone] = useState<CreatorFocusZone>("full");
+  const [creatorTurntable, setCreatorTurntable] = useState<boolean>(false);
+  const [characterEmote, setCharacterEmote] = useState<{
+    emote: CharacterEmote;
+    seq: number;
+  } | null>(null);
+
+  // Spatial navigation, Sims interactivity & Minted Neighborhood state
+  const [nearStation, setNearStation] = useState<LabStationId | null>(null);
+  const [openStation, setOpenStation] = useState<LabStationId | null>(null);
+  const openStationRef = useRef<LabStationId | null>(null);
+  openStationRef.current = openStation;
+
+  const [cameraMode, setCameraMode] = useState<CameraMode>("follow");
+  const cameraModeRef = useRef<CameraMode>("follow");
+  cameraModeRef.current = cameraMode;
+
+  const [camPreset, setCamPreset] = useState<{ preset: CameraPreset; seq: number } | null>(null);
+  const [lightingMood, setLightingMood] = useState<LightingMood>("daylight");
+  const [atmosphereMode, setAtmosphereMode] = useState<AtmosphereMode>("clear");
+  const [soundOn, setSoundOn] = useState(() => soundEngine.isEnabled());
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showTouchPad, setShowTouchPad] = useState(false);
+
+  // Visit Other Users' Homes + Cozy Guestbook state
+  const [visitingHome, setVisitingHome] = useState<NeighborLabSummary | null>(
+    () => initialVisitLab || null
+  );
+  const [homeTransitionLabel, setHomeTransitionLabel] = useState<string | null>(null);
+  const [guestbookDraft, setGuestbookDraft] = useState("");
+  const [guestbookOpen, setGuestbookOpen] = useState(false);
+
+  const isVisiting = Boolean(visitingHome);
+
+  // Active 3D Lab Vessel currently loaded in the center (either your Home Lab or a Visited Neighbor's Home!)
+  const activeVessel = useMemo<MintedVessel>(() => {
+    if (!visitingHome) return vessel;
+    const realMatch = allVessels?.find((v) => v.tokenId === visitingHome.tokenId);
+    if (realMatch) return realMatch;
+    return {
+      tokenId: visitingHome.tokenId,
+      seed: visitingHome.seed as `0x${string}`,
+      causeId: visitingHome.causeId,
+      causeName: visitingHome.causeName,
+      minter: visitingHome.minter,
+      ownedByUser: false,
+      onChain: Boolean(vessel.onChain),
+      valueUsd: visitingHome.valueUsd,
+      impactEth: Number((usdToEth(visitingHome.valueUsd) * 0.6).toFixed(6)),
+      sectorsMask: visitingHome.sectorsMask,
+      workUnits: visitingHome.workUnits,
+      lastClaimMs: Date.now() - 1800000,
+      mintedAt: Math.floor(Date.now() / 1000) - 7200
+    };
+  }, [visitingHome, vessel, allVessels]);
+
+  const visitingHostProfile = useMemo(
+    () => (visitingHome ? deriveNeighborCharacterProfile(visitingHome) : null),
+    [visitingHome]
+  );
+
+  // Sims-style Needs, Dynamic Moods/Moodlets, Social Relationships, Quick Rename & Living Town
+  const [labDecor, setLabDecor] = useState<LabDecorConfig>(() =>
+    loadLabDecor(activeVessel.tokenId, isVisiting ? activeVessel.seed : undefined)
+  );
+  const [guestbookEntries, setGuestbookEntries] = useState<LabGuestbookEntry[]>(() =>
+    loadGuestbookEntries(activeVessel.tokenId, activeVessel.seed)
+  );
+  const [simsVibes, setSimsVibes] = useState<SimsVibes>(() => initialSimsVibes());
+  const [activeMoodlet, setActiveMoodlet] = useState<SimsMoodlet | null>(null);
+  const [relationsMap, setRelationsMap] = useState<Record<number, StoredNeighborRelation>>(() =>
+    loadRelationshipsMap()
+  );
+  const [consoleSubTab, setConsoleSubTab] = useState<"sims" | "friends" | "studio">("sims");
+  const [quickNameEditing, setQuickNameEditing] = useState(false);
+  const [quickNameDraft, setQuickNameDraft] = useState("");
+  const [currentActivity, setCurrentActivity] = useState<string | null>(null);
+  const [pieMenu, setPieMenu] = useState<{
+    target: SimsObjectTarget;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [builderSubTab, setBuilderSubTab] = useState<"rooms" | "decor">("rooms");
+  const [neighborhoodDrawerOpen, setNeighborhoodDrawerOpen] = useState(false);
+  const neighborhoodDrawerOpenRef = useRef(false);
+  neighborhoodDrawerOpenRef.current = neighborhoodDrawerOpen;
+  const [inspectedNeighbor, setInspectedNeighbor] = useState<NeighborLabSummary | null>(null);
+  const [extraDemoMints, setExtraDemoMints] = useState(0);
+  const [charOutInNeighborhood, setCharOutInNeighborhood] = useState(false);
+  const charOutRef = useRef(false);
+  const [radarManualMode, setRadarManualMode] = useState<"auto" | "lab" | "district">("auto");
+  const radarIsDistrict =
+    radarManualMode === "district" ||
+    (radarManualMode === "auto" &&
+      (charOutInNeighborhood || cameraMode === "neighborhood" || neighborhoodDrawerOpen));
+  const radarIsDistrictRef = useRef(false);
+  radarIsDistrictRef.current = radarIsDistrict;
+
+  const simsMood = useMemo(
+    () => computeSimsMood(simsVibes, activeMoodlet),
+    [simsVibes, activeMoodlet]
+  );
+
+  const visitingHostStatus = useMemo(
+    () =>
+      visitingHome
+        ? getNeighborSimsStatus(visitingHome.tokenId, visitingHome.seed, relationsMap)
+        : null,
+    [visitingHome, relationsMap]
+  );
+
+  const visitingHostProp = useMemo(
+    () =>
+      visitingHome && visitingHostProfile
+        ? {
+            profile: visitingHostProfile,
+            tokenId: visitingHome.tokenId,
+            moodName: visitingHostStatus?.mood,
+            plumbobHex: visitingHostStatus?.plumbobHex,
+            tierLabel: visitingHostStatus?.tier
+          }
+        : null,
+    [visitingHome, visitingHostProfile, visitingHostStatus]
+  );
+
+  // Living Minted NFT Neighborhood Roster & 3D Boulevard Placements
+  // Always include your own Home Lab in known summaries so when you visit a neighbor, your home sits across the street!
+  const knownNeighborSummaries = useMemo<NeighborLabSummary[]>(() => {
+    const source = allVessels && allVessels.length > 0 ? allVessels : switchableVessels || [];
+    const mapped: NeighborLabSummary[] = [];
+    const seen = new Set<number>();
+    const pushVessel = (v: MintedVessel) => {
+      if (seen.has(v.tokenId)) return;
+      seen.add(v.tokenId);
+      mapped.push({
+        tokenId: v.tokenId,
+        seed: v.seed,
+        causeId: v.causeId,
+        causeName: v.causeName,
+        minter: v.minter,
+        valueUsd: v.valueUsd,
+        complexityTier: complexityTierFromUsd(v.valueUsd),
+        sectorsMask: v.sectorsMask,
+        workUnits: v.workUnits,
+        ownedByUser: v.ownedByUser
+      });
+    };
+    pushVessel(vessel);
+    for (const v of source) pushVessel(v);
+    return mapped;
+  }, [allVessels, switchableVessels, vessel]);
+
+  const effectiveTotalSupply =
+    Math.max(
+      totalSupply ?? impact.totalSupply ?? 1,
+      knownNeighborSummaries.length,
+      1
+    ) + extraDemoMints;
+
+  const neighbors = useMemo(
+    () =>
+      buildNeighborhoodRoster(activeVessel.tokenId, knownNeighborSummaries, effectiveTotalSupply),
+    [activeVessel.tokenId, knownNeighborSummaries, effectiveTotalSupply]
+  );
+
+  const neighborPlacements = useMemo(
+    () => computeNeighborhoodPlacements(neighbors),
+    [neighbors]
+  );
+  const ring1Placements = useMemo(
+    () => neighborPlacements.filter((p) => p.ring === 1),
+    [neighborPlacements]
+  );
+  const ring2Placements = useMemo(
+    () => neighborPlacements.filter((p) => p.ring === 2),
+    [neighborPlacements]
+  );
+  const ring3Placements = useMemo(
+    () => neighborPlacements.filter((p) => p.ring === 3),
+    [neighborPlacements]
+  );
+  const upcomingBlueprintLots = useMemo(
+    () => computeUpcomingBlueprintLots(neighborPlacements.length, 4),
+    [neighborPlacements.length]
+  );
+  const townGrowth = useMemo(
+    () => getNeighborhoodGrowthStage(neighbors.length + 1),
+    [neighbors.length]
+  );
+
+  // Lab feature states (Protein Folding, Mining, Pet Care, Room Builder, Goals)
+  const [tithePct, setTithePct] = useState(20);
+  const [donateAmt, setDonateAmt] = useState(25);
+  const [liveSnap, setLiveSnap] = useState<ComputeSnapshot | null>(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  const [previewSectorId, setPreviewSectorId] = useState<number | null>(null);
+  const [selectedBenchmark, setSelectedBenchmark] = useState<number | null>(null);
+  const [foldSignal, setFoldSignal] = useState<{
+    action: "wiggle" | "shake" | "bury";
+    seq: number;
+  } | null>(null);
+  const dailyChallenge = useMemo(() => getDailyFoldingChallenge(), []);
+  const [dailyDone, setDailyDone] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem("alchemia.daily.fold.v1") === dailyChallenge.dateKey;
+    } catch {
+      return false;
+    }
+  });
+  const [showContactMap, setShowContactMap] = useState(false);
+  const [showBestFold, setShowBestFold] = useState(true);
+  const [highlightedResidueIdx, setHighlightedResidueIdx] = useState<number | null>(null);
+  const [goals, setGoals] = useState<Record<GoalKey, boolean>>(() => loadGoals());
+  const [editingPetName, setEditingPetName] = useState(false);
+  const [petNameDraft, setPetNameDraft] = useState("");
+  const [vitals, setVitals] = useState<CompanionVitals>(() => loadCompanionVitals(vessel.tokenId));
+  const [tamaSignal, setTamaSignal] = useState<{ action: TamagotchiAction; seq: number } | null>(
+    null
+  );
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [miniGame, setMiniGame] = useState<{
+    endsAtMs: number;
+    popped: number;
+    goal: number;
+  } | null>(null);
+
+  const pressedKeysRef = useRef<Set<string>>(new Set());
+  const touchDirRef = useRef<{ dx: number; dz: number }>({ dx: 0, dz: 0 });
+  const manualPanelPinRef = useRef<boolean>(false);
+
+  const activeProfile = creatorOpen ? creatorDraft : savedProfile;
+  const walkModeActive = true;
+
+  // Sync initialVisitLab when navigated from Gallery "Visit Home in 3D"
+  useEffect(() => {
+    if (!initialVisitLab) return;
+    if (initialVisitLab.tokenId === vessel.tokenId) {
+      setVisitingHome(null);
+    } else {
+      setVisitingHome(initialVisitLab);
+      const host = deriveNeighborCharacterProfile(initialVisitLab);
+      setCurrentActivity(`Visiting ${host.name}'s Home`);
+      setFeedback(`Stepped inside ${host.name}'s Home (Lab #${initialVisitLab.tokenId})!`);
+    }
+    onClearInitialVisit?.();
+  }, [initialVisitLab, vessel.tokenId, onClearInitialVisit]);
+
+  // Clear visit mode if user explicitly switches their own Home Lab selector
+  useEffect(() => {
+    if (visitingHome && visitingHome.tokenId === vessel.tokenId) {
+      setVisitingHome(null);
+    }
+  }, [vessel.tokenId, visitingHome]);
+
+  // Keep pet vitals, decor, guestbook & benchmark synced when switching homes or labs
+  useEffect(() => {
+    const loaded = loadCompanionVitals(activeVessel.tokenId);
+    setVitals(loaded);
+    setPetNameDraft(loaded.petName);
+    setEditingPetName(false);
+    setSelectedBenchmark(null);
+    setPreviewSectorId(null);
+    setLabDecor(loadLabDecor(activeVessel.tokenId, isVisiting ? activeVessel.seed : undefined));
+    setGuestbookEntries(loadGuestbookEntries(activeVessel.tokenId, activeVessel.seed));
+    setGuestbookDraft("");
+    setPieMenu(null);
+    setInspectedNeighbor(null);
+  }, [activeVessel.tokenId, activeVessel.seed, isVisiting]);
+
+  useEffect(() => {
+    if (!homeTransitionLabel) return;
+    const id = window.setTimeout(() => setHomeTransitionLabel(null), 520);
+    return () => window.clearTimeout(id);
+  }, [homeTransitionLabel]);
+
+  // Subtle cozy Sims needs drift (Energy, Focus, Social, Fun)
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setSimsVibes((prev) =>
+        applySimsVibeDelta(prev, { energy: -1, focus: -1, social: -1, fun: -1 })
+      );
+    }, 45000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    if (!feedback) return;
+    const id = window.setTimeout(() => setFeedback(null), 4200);
+    return () => window.clearTimeout(id);
+  }, [feedback]);
+
+  // Listen for browser Fullscreen changes
+  useEffect(() => {
+    const onFs = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+
+  // 20-second cozy Proton Catch mini-game timer
+  useEffect(() => {
+    if (!miniGame) return;
+    if (miniGame.popped >= miniGame.goal) {
+      setMiniGame(null);
+      onAwardPlayBonus?.(12);
+      soundEngine.playBuildRoom();
+      setTamaSignal((prev) => ({ action: "play", seq: (prev?.seq || 0) + 1 }));
+      setFeedback(`Proton Catch cleared (${miniGame.goal}/${miniGame.goal}). +12 bonus sparks.`);
+      return;
+    }
+    if (nowTick >= miniGame.endsAtMs) {
+      const score = miniGame.popped;
+      setMiniGame(null);
+      setFeedback(`Proton Catch finished: popped ${score} of ${miniGame.goal}. Try again anytime.`);
+    }
+  }, [miniGame, nowTick, onAwardPlayBonus]);
+
+  // Daily folding challenge auto-completion check
+  useEffect(() => {
+    if (
+      !dailyDone &&
+      liveSnap &&
+      liveSnap.benchmarkIndex === dailyChallenge.benchmarkIndex &&
+      liveSnap.bestEnergy <= dailyChallenge.targetEnergyKcal
+    ) {
+      setDailyDone(true);
+      try {
+        window.localStorage.setItem("alchemia.daily.fold.v1", dailyChallenge.dateKey);
+      } catch {
+        // ignore storage errors
+      }
+      onAwardPlayBonus?.(15);
+      soundEngine.playBuildRoom();
+      setFeedback(
+        `Finished today's ${dailyChallenge.shortName} folding goal (${liveSnap.bestEnergy.toFixed(1)} kcal/mol). +15 sparks.`
+      );
+    }
+  }, [dailyDone, liveSnap, dailyChallenge, onAwardPlayBonus]);
+
+  const markGoalDone = useCallback(
+    (key: GoalKey) => {
+      setGoals((prev) => {
+        if (prev[key]) return prev;
+        const next = { ...prev, [key]: true };
+        try {
+          window.localStorage.setItem(LAB_GOALS_KEY, JSON.stringify(next));
+        } catch {
+          // ignore
+        }
+        if (Object.values(next).every(Boolean)) {
+          onAwardPlayBonus?.(5);
+          setFeedback("All 5 lab goals finished. +5 bonus sparks.");
+        }
+        return next;
+      });
+    },
+    [onAwardPlayBonus]
+  );
+
+  // Sync combined keyboard + touch walk input into Three.js renderer
+  const pushMoveInput = useCallback(() => {
+    const keys = pressedKeysRef.current;
+    let dx = touchDirRef.current.dx;
+    let dz = touchDirRef.current.dz;
+    if (keys.has("KeyA") || keys.has("ArrowLeft")) dx -= 1;
+    if (keys.has("KeyD") || keys.has("ArrowRight")) dx += 1;
+    if (keys.has("KeyW") || keys.has("ArrowUp")) dz += 1;
+    if (keys.has("KeyS") || keys.has("ArrowDown")) dz -= 1;
+    const sprint = keys.has("ShiftLeft") || keys.has("ShiftRight");
+    artworkRef.current?.setMoveInput(dx, dz, sprint);
+  }, []);
+
+  // Open Character Creator on first interaction in standalone mode if not yet created
+  const openCharacterCreator = useCallback(() => {
+    setOpenStation(null);
+    setNeighborhoodDrawerOpen(false);
+    setPieMenu(null);
+    setCreatorDraft(savedProfile || createDefaultCharacterProfile());
+    setCreatorOpen(true);
+    soundEngine.playTap(1046.5);
+  }, [savedProfile]);
+
+  const updateLabDecor = useCallback(
+    (next: LabDecorConfig) => {
+      const saved = saveLabDecor(activeVessel.tokenId, next);
+      setLabDecor(saved);
+      soundEngine.playTap(1046.5);
+    },
+    [activeVessel.tokenId]
+  );
+
+  const triggerPlayerMoodlet = useCallback((mood: SimsMoodName, label: string, source: string) => {
+    setActiveMoodlet({
+      id: `${mood}-${Date.now()}`,
+      mood,
+      label,
+      source,
+      expiresAtMs: Date.now() + 180_000
+    });
+  }, []);
+
+  const handleShiftMood = useCallback(
+    (act: MoodShiftAction) => {
+      setSimsVibes((v) => applySimsVibeDelta(v, act.vibeDelta));
+      triggerPlayerMoodlet(act.mood, act.moodletLabel, act.label);
+      setCharacterEmote((prev) => ({ emote: act.emote, seq: (prev?.seq || 0) + 1 }));
+      setCurrentActivity(`${act.label} (${act.mood})`);
+      soundEngine.playTap(act.mood === "Playful" ? 1318.5 : 1046.5);
+      setFeedback(`Mood shifted to ${act.mood}! (${act.moodletLabel})`);
+    },
+    [triggerPlayerMoodlet]
+  );
+
+  const handleQuickRename = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!savedProfile) return;
+    const trimmed = quickNameDraft.trim().slice(0, 20);
+    if (!trimmed) {
+      setQuickNameEditing(false);
+      return;
+    }
+    const updated = saveCharacterProfile({ ...savedProfile, name: trimmed });
+    setSavedProfile(updated);
+    setCreatorDraft(updated);
+    setQuickNameEditing(false);
+    soundEngine.playTap(1174.66);
+    setFeedback(`Renamed your researcher to ${updated.name}!`);
+  };
+
+  const handleChangeTrait = (traitId: PersonalityTraitId) => {
+    if (!savedProfile) return;
+    const updated = saveCharacterProfile({ ...savedProfile, trait: traitId });
+    setSavedProfile(updated);
+    setCreatorDraft(updated);
+    const opt = PERSONALITY_TRAITS.find((t) => t.id === traitId);
+    soundEngine.playTap(1046.5);
+    setFeedback(`Trait updated to ${opt?.label || traitId} — ${opt?.desc || ""}`);
+  };
+
+  const performNeighborSocial = useCallback(
+    (
+      tokenId: number,
+      action: NeighborSocialAction,
+      options?: { fireBeam?: boolean; awardSparks?: number }
+    ) => {
+      const targetLab =
+        (visitingHome && visitingHome.tokenId === tokenId ? visitingHome : null) ||
+        neighbors.find((n) => n.tokenId === tokenId) ||
+        knownNeighborSummaries.find((n) => n.tokenId === tokenId);
+      if (!targetLab) return;
+
+      const npcProfile = deriveNeighborCharacterProfile(targetLab);
+      const outcome = applyNeighborSocialAction(
+        relationsMap,
+        tokenId,
+        targetLab.seed,
+        action,
+        savedProfile?.trait
+      );
+      setRelationsMap(outcome.nextMap);
+      setSimsVibes((v) => applySimsVibeDelta(v, outcome.playerVibeDelta));
+      triggerPlayerMoodlet(outcome.playerMood, outcome.moodletLabel, npcProfile.name);
+
+      const emote: CharacterEmote =
+        action === "joke" ? "hop" : action === "spark" ? "spin" : "wave";
+      const bubble =
+        action === "joke"
+          ? "sparkle"
+          : action === "collaborate"
+            ? "dna"
+            : action === "toast"
+              ? "coffee"
+              : "heart";
+
+      setCharacterEmote((prev) => ({ emote, seq: (prev?.seq || 0) + 1 }));
+      artworkRef.current?.syncNeighborNpcStatus(
+        tokenId,
+        outcome.status.mood,
+        outcome.status.plumbobHex,
+        outcome.status.tier,
+        emote,
+        bubble
+      );
+      if (visitingHome && visitingHome.tokenId === tokenId) {
+        artworkRef.current?.triggerHostReaction(emote, bubble);
+      }
+      if (options?.fireBeam) {
+        artworkRef.current?.fireSocialBeamToNeighbor(tokenId, outcome.status.plumbobHex);
+      }
+      if (options?.awardSparks) {
+        onAwardPlayBonus?.(options.awardSparks);
+      }
+      if (outcome.leveledUp) {
+        soundEngine.playBuildRoom();
+        setFeedback(
+          `Relationship Up! You & ${npcProfile.name} are now ${outcome.status.tier}s (${outcome.status.score}/100) · Both feeling ${outcome.status.mood}!`
+        );
+      } else {
+        soundEngine.playPet();
+        setFeedback(
+          `${npcProfile.name} (${outcome.status.mood}): +${outcome.delta} Friendship (${outcome.status.score}/100 · ${outcome.status.tier})${
+            options?.awardSparks && onAwardPlayBonus ? ` · +${options.awardSparks} sparks` : ""
+          }`
+        );
+      }
+    },
+    [
+      visitingHome,
+      neighbors,
+      knownNeighborSummaries,
+      relationsMap,
+      savedProfile?.trait,
+      triggerPlayerMoodlet,
+      onAwardPlayBonus
+    ]
+  );
+
+  const handleEnterNeighborHome = useCallback(
+    (lab: NeighborLabSummary) => {
+      if (!savedProfile) {
+        openCharacterCreator();
+        return;
+      }
+      setPieMenu(null);
+      setOpenStation(null);
+      setNeighborhoodDrawerOpen(false);
+      setInspectedNeighbor(null);
+      setGuestbookOpen(false);
+
+      // If clicking your own home lab while visiting someone else, return home seamlessly!
+      if (lab.tokenId === vessel.tokenId) {
+        setVisitingHome(null);
+        setHomeTransitionLabel(`Returning Home · Lab #${vessel.tokenId}`);
+        setCurrentActivity(null);
+        setCameraMode("follow");
+        soundEngine.playBuildRoom();
+        window.setTimeout(() => artworkRef.current?.arriveAtFrontDoor(), 60);
+        setFeedback(`Welcome back home to Lab #${vessel.tokenId}!`);
+        return;
+      }
+
+      const host = deriveNeighborCharacterProfile(lab);
+      const outcome = applyNeighborSocialAction(
+        relationsMap,
+        lab.tokenId,
+        lab.seed,
+        "visit",
+        savedProfile.trait
+      );
+      setRelationsMap(outcome.nextMap);
+      setVisitingHome(lab);
+      setHomeTransitionLabel(`Entering ${host.name}'s Home · Lab #${lab.tokenId}`);
+      setCurrentActivity(`Visiting ${host.name}'s Home`);
+      setCameraMode("follow");
+      setSimsVibes((prev) => applySimsVibeDelta(prev, outcome.playerVibeDelta));
+      triggerPlayerMoodlet("Social", "Warm Welcome", host.name);
+      soundEngine.playBuildRoom();
+      window.setTimeout(() => artworkRef.current?.arriveAtFrontDoor(), 60);
+      setFeedback(
+        outcome.leveledUp
+          ? `Entered ${host.name}'s home & became ${outcome.status.tier}s (${outcome.status.score}/100)!`
+          : `Stepped inside ${host.name}'s home (Lab #${lab.tokenId} · +${outcome.delta} Friendship)!`
+      );
+    },
+    [savedProfile, openCharacterCreator, vessel.tokenId, relationsMap, triggerPlayerMoodlet]
+  );
+
+  const handleSignGuestbook = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = guestbookDraft.trim();
+    if (!trimmed) return;
+    const author = savedProfile || creatorDraft;
+    const updated = addGuestbookEntry(activeVessel.tokenId, activeVessel.seed, {
+      authorName: author.name,
+      authorTitle: author.title,
+      message: trimmed,
+      accent: author.outfitAccent
+    });
+    setGuestbookEntries(updated);
+    setGuestbookDraft("");
+    if (isVisiting && visitingHome) {
+      performNeighborSocial(visitingHome.tokenId, "guestbook", { awardSparks: 2 });
+    } else {
+      soundEngine.playBuildRoom();
+      setCharacterEmote((prev) => ({ emote: "wave", seq: (prev?.seq || 0) + 1 }));
+      setFeedback(`Posted a welcome note in your Lab #${activeVessel.tokenId} guestbook!`);
+    }
+  };
+
+  // WASD / Arrow walking + E interact + Space play + C wardrobe + V camera + N neighborhood + H home + M sound + Esc close
+  useEffect(() => {
+    const moveCodes = new Set([
+      "KeyW",
+      "KeyA",
+      "KeyS",
+      "KeyD",
+      "ArrowUp",
+      "ArrowDown",
+      "ArrowLeft",
+      "ArrowRight",
+      "ShiftLeft",
+      "ShiftRight"
+    ]);
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      // First interaction trigger in standalone NFT viewer when user tries to walk!
+      if (!savedProfile && !creatorOpen && moveCodes.has(e.code)) {
+        e.preventDefault();
+        openCharacterCreator();
+        return;
+      }
+
+      if (creatorOpen) {
+        if (e.code === "Escape" && savedProfile) {
+          setCreatorOpen(false);
+        }
+        return;
+      }
+
+      if (moveCodes.has(e.code)) {
+        if (e.code.startsWith("Arrow")) e.preventDefault();
+        pressedKeysRef.current.add(e.code);
+        manualPanelPinRef.current = false;
+        setPieMenu(null);
+        setCurrentActivity(null);
+        if (cameraModeRef.current === "neighborhood") {
+          setCameraMode("follow");
+        }
+        pushMoveInput();
+        return;
+      }
+
+      if (e.code === "Escape") {
+        setPieMenu(null);
+        setOpenStation(null);
+        setNeighborhoodDrawerOpen(false);
+        setInspectedNeighbor(null);
+        setPreviewSectorId(null);
+        manualPanelPinRef.current = false;
+      } else if (e.code === "KeyE" || (e.code === "Enter" && tag !== "BUTTON" && tag !== "A")) {
+        if (openStation) {
+          setOpenStation(null);
+        } else if (nearStation) {
+          setNeighborhoodDrawerOpen(false);
+          setOpenStation(nearStation);
+          soundEngine.playTap(1046.5);
+        }
+      } else if (e.code === "Space" && tag !== "BUTTON" && tag !== "A") {
+        e.preventDefault();
+        setTamaSignal((prev) => ({ action: "play", seq: (prev?.seq || 0) + 1 }));
+        setCharacterEmote((prev) => ({ emote: "hop", seq: (prev?.seq || 0) + 1 }));
+      } else if (e.key.toLowerCase() === "m") {
+        setSoundOn(soundEngine.toggle());
+      } else if (e.key.toLowerCase() === "v") {
+        setCameraMode((prev) => {
+          const next: CameraMode =
+            prev === "follow" ? "orbit" : prev === "orbit" ? "neighborhood" : "follow";
+          soundEngine.playTap(880);
+          return next;
+        });
+      } else if (e.key.toLowerCase() === "n") {
+        setPieMenu(null);
+        setOpenStation(null);
+        setNeighborhoodDrawerOpen((open) => {
+          const next = !open;
+          if (next) setCameraMode("neighborhood");
+          else setCameraMode("follow");
+          soundEngine.playTap(next ? 1046.5 : 880);
+          return next;
+        });
+      } else if (e.key.toLowerCase() === "h") {
+        setPieMenu(null);
+        setNeighborhoodDrawerOpen(false);
+        setCameraMode("follow");
+        setCurrentActivity(null);
+        artworkRef.current?.returnHome();
+        soundEngine.playTap(987.77);
+      } else if (e.key.toLowerCase() === "c") {
+        openCharacterCreator();
+      } else if (e.key === "1") {
+        setCameraMode("orbit");
+        setCamPreset((p) => ({ preset: "iso", seq: (p?.seq || 0) + 1 }));
+      } else if (e.key === "2") {
+        setCameraMode("orbit");
+        setCamPreset((p) => ({ preset: "top", seq: (p?.seq || 0) + 1 }));
+      } else if (e.key === "3") {
+        setCameraMode("orbit");
+        setCamPreset((p) => ({ preset: "pet", seq: (p?.seq || 0) + 1 }));
+      } else if (e.key === "4") {
+        setCameraMode("orbit");
+        setCamPreset((p) => ({ preset: "molecule", seq: (p?.seq || 0) + 1 }));
+      }
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (pressedKeysRef.current.delete(e.code)) {
+        pushMoveInput();
+      }
+    };
+
+    const onBlur = () => {
+      if (pressedKeysRef.current.size > 0) {
+        pressedKeysRef.current.clear();
+        pushMoveInput();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [savedProfile, creatorOpen, nearStation, openStation, pushMoveInput, openCharacterCreator]);
+
+  // Measure floating pill sizes once on mount / resize (zero layout reads inside rAF!)
+  useEffect(() => {
+    const measure = () => {
+      for (const st of LAB_STATIONS) {
+        const el = floatingNodeRefs.current[st.id];
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.width > 40 && rect.height > 20) {
+          cachedPillSizesRef.current[st.id] = { width: rect.width, height: rect.height };
+        }
+      }
+    };
+    const id = window.setTimeout(measure, 120);
+    window.addEventListener("resize", measure);
+    return () => {
+      window.clearTimeout(id);
+      window.removeEventListener("resize", measure);
+    };
+  }, [creatorOpen]);
+
+  // 60fps direct-DOM decluttered spatial floating cards + SVG leader lines + live Mini-Map Radar!
+  const handleWalkTelemetry = useCallback((telemetry: WalkFrameTelemetry) => {
+    const drawerOpen = Boolean(openStationRef.current || neighborhoodDrawerOpenRef.current);
+    const isCompact = telemetry.width < 820;
+    const charDist = Math.hypot(telemetry.charX, telemetry.charZ);
+
+    // Smooth hysteresis switching between Home Lab & Boulevard Exploration mode
+    if (!charOutRef.current && charDist > 4.2) {
+      charOutRef.current = true;
+      setCharOutInNeighborhood(true);
+    } else if (charOutRef.current && charDist < 3.4) {
+      charOutRef.current = false;
+      setCharOutInNeighborhood(false);
+    }
+
+    const hideHomeFloats = charDist > 4.65 || cameraModeRef.current === "neighborhood";
+
+    const inputs: DeclutterInput[] = LAB_STATIONS.map((st) => {
+      const a = telemetry.anchors[st.id];
+      const sz = cachedPillSizesRef.current[st.id];
+      return {
+        id: st.id,
+        anchorX: a?.x ?? 0,
+        anchorY: a?.y ?? 0,
+        visible: !hideHomeFloats && Boolean(a?.visible),
+        distToCam: a?.distToCam ?? 10,
+        distToChar: a?.distToChar ?? 10,
+        width: sz.width,
+        height: sz.height
+      };
+    });
+
+    const placed = declutterFloatingLabels(inputs, {
+      width: telemetry.width,
+      height: telemetry.height,
+      padLeft: 14,
+      padRight: drawerOpen && !isCompact ? 444 : 14,
+      padTop: 98,
+      padBottom: isCompact ? 86 : 96
+    });
+
+    for (const st of LAB_STATIONS) {
+      const el = floatingNodeRefs.current[st.id];
+      const line = leaderLineRefs.current[st.id];
+      const dot = leaderDotRefs.current[st.id];
+      const res = placed[st.id];
+      const anchor = telemetry.anchors[st.id];
+
+      if (!el) continue;
+      if (!res || !res.visible) {
+        el.style.opacity = "0";
+        el.style.pointerEvents = "none";
+        if (line) line.style.opacity = "0";
+        if (dot) dot.style.opacity = "0";
+        continue;
+      }
+
+      const nearBoost = anchor && anchor.distToChar <= st.triggerRadius ? 1.04 : 1.0;
+      el.style.opacity = "1";
+      el.style.pointerEvents = "auto";
+      el.style.transform = `translate3d(${res.placedX.toFixed(1)}px, ${res.placedY.toFixed(
+        1
+      )}px, 0) translate(-50%, -100%) scale(${nearBoost.toFixed(3)})`;
+      el.style.zIndex = String(res.zIndex);
+
+      // Show delicate CAD hairline leader line whenever a floating card is nudged by decluttering/clamping
+      const showLeader = res.offsetDist > 16;
+      if (line && dot) {
+        if (showLeader) {
+          line.setAttribute("x1", res.anchorX.toFixed(1));
+          line.setAttribute("y1", res.anchorY.toFixed(1));
+          line.setAttribute("x2", res.placedX.toFixed(1));
+          line.setAttribute("y2", res.placedY.toFixed(1));
+          line.style.opacity = "0.55";
+          dot.setAttribute("cx", res.anchorX.toFixed(1));
+          dot.setAttribute("cy", res.anchorY.toFixed(1));
+          dot.style.opacity = "0.85";
+        } else {
+          line.style.opacity = "0";
+          dot.style.opacity = "0";
+        }
+      }
+    }
+
+    // Update live Architectural Blueprint Mini-Map Radar (dual-scale: Lab Close-Up or Full Growing Town!)
+    const radarSpan = radarIsDistrictRef.current ? 26.8 : 3.45;
+    const mapCoord = (v: number) => Math.max(8, Math.min(104, 56 + (v / radarSpan) * 44));
+    if (radarPlayerRef.current) {
+      const rx = mapCoord(telemetry.charX);
+      const ry = mapCoord(telemetry.charZ);
+      const deg = (Math.atan2(Math.sin(telemetry.charYaw), Math.cos(telemetry.charYaw)) * 180) / Math.PI;
+      radarPlayerRef.current.setAttribute(
+        "transform",
+        `translate(${rx.toFixed(1)} ${ry.toFixed(1)}) rotate(${(180 - deg).toFixed(1)})`
+      );
+    }
+    if (radarPetRef.current) {
+      if (telemetry.petX !== null && telemetry.petZ !== null) {
+        radarPetRef.current.setAttribute("cx", mapCoord(telemetry.petX).toFixed(1));
+        radarPetRef.current.setAttribute("cy", mapCoord(telemetry.petZ).toFixed(1));
+        radarPetRef.current.style.opacity = "1";
+      } else {
+        radarPetRef.current.style.opacity = "0";
+      }
+    }
+  }, []);
+
+  // Auto-open floating station panel gently when walking onto a glowing floor pad,
+  // and cleanly tuck away when walking away from it!
+  const handleNearStationChange = useCallback((stationId: LabStationId | null) => {
+    setNearStation(stationId);
+    if (stationId) {
+      manualPanelPinRef.current = false;
+      setNeighborhoodDrawerOpen(false);
+      setOpenStation(stationId);
+      soundEngine.playTap(987.77);
+    } else if (!manualPanelPinRef.current) {
+      setOpenStation(null);
+      setPreviewSectorId(null);
+    }
+  }, []);
+
+  const handleStationArrived = useCallback((stationId: LabStationId) => {
+    manualPanelPinRef.current = true;
+    setNeighborhoodDrawerOpen(false);
+    setOpenStation(stationId);
+    soundEngine.playTap(1174.66);
+  }, []);
+
+  const navigateToStation = (stationId: LabStationId) => {
+    if (!savedProfile) {
+      openCharacterCreator();
+      return;
+    }
+    soundEngine.playTap(987.77);
+    manualPanelPinRef.current = true;
+    setPieMenu(null);
+    setNeighborhoodDrawerOpen(false);
+    setCurrentActivity(null);
+    setCameraMode("follow");
+    setOpenStation(stationId);
+    artworkRef.current?.walkToStation(stationId);
+  };
+
+  const handleVisitNeighbor = (tokenId: number) => {
+    if (!savedProfile) {
+      openCharacterCreator();
+      return;
+    }
+    soundEngine.playTap(1046.5);
+    setPieMenu(null);
+    setOpenStation(null);
+    setNeighborhoodDrawerOpen(false);
+    setCameraMode("follow");
+    setCurrentActivity(`Visiting Lab #${tokenId}`);
+    setSimsVibes((prev) => applySimsVibeDelta(prev, { social: 10 }));
+    artworkRef.current?.walkToNeighbor(tokenId);
+    setFeedback(`Strolling down the boulevard to visit Lab #${tokenId}!`);
+  };
+
+  const handleSendNeighborSpark = (tokenId: number) => {
+    soundEngine.playProtonPop(3);
+    performNeighborSocial(tokenId, "spark", { fireBeam: true, awardSparks: 2 });
+  };
+
+  const handleReturnHome = () => {
+    setPieMenu(null);
+    setNeighborhoodDrawerOpen(false);
+    setGuestbookOpen(false);
+    setCurrentActivity(null);
+    setCameraMode("follow");
+    if (visitingHome) {
+      soundEngine.playBuildRoom();
+      setVisitingHome(null);
+      setHomeTransitionLabel(`Returning Home · Lab #${vessel.tokenId}`);
+      window.setTimeout(() => artworkRef.current?.arriveAtFrontDoor(), 60);
+      setFeedback(`Welcome back home to Lab #${vessel.tokenId}!`);
+      return;
+    }
+    soundEngine.playTap(987.77);
+    artworkRef.current?.returnHome();
+  };
+
+  const handleSpawnNeighborMint = (count = 1) => {
+    soundEngine.playBuildRoom();
+    if (onSimulateNewNeighbor) {
+      onSimulateNewNeighbor(count);
+    } else {
+      setExtraDemoMints((n) => n + count);
+    }
+    setCameraMode("neighborhood");
+    const nextTotal = neighbors.length + 1 + count;
+    const nextStage = getNeighborhoodGrowthStage(nextTotal);
+    setFeedback(
+      count > 1
+        ? `+${count} newly minted NFT Labs just rose across ${nextStage.title}! (${nextTotal} total labs in town)`
+        : `A newly minted NFT Lab just materialized on an open blueprint lot! (${nextTotal} labs · ${nextStage.title})`
+    );
+  };
+
+  const handleOpenNeighborhood = () => {
+    soundEngine.playTap(1046.5);
+    setPieMenu(null);
+    setOpenStation(null);
+    setInspectedNeighbor(null);
+    setNeighborhoodDrawerOpen((open) => {
+      const next = !open;
+      setCameraMode(next ? "neighborhood" : "follow");
+      return next;
+    });
+  };
+
+  const toggleFullscreen = async () => {
+    const el = stageRef.current;
+    if (!el) return;
+    try {
+      if (!document.fullscreenElement) {
+        await el.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+      soundEngine.playTap(1046.5);
+    } catch {
+      // Fall back to opening standalone animation.html if browser blocks fullscreen
+      if (animationUrl) window.open(animationUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  // Derived Lab Stats (follows whichever home you are currently standing inside!)
+  const traits = deriveTraitsFromSeed(activeVessel.seed);
+  const tier = isVisiting ? complexityTierFromUsd(activeVessel.valueUsd) : impact.complexityTier;
+  const tamaBoost = companionBoostMultiplier(vitals);
+  const baseRate = computeMiningRatePerHour(tier, activeVessel.sectorsMask, activeVessel.workUnits);
+  const effectiveMiningRate = Number((baseRate * tamaBoost).toFixed(1));
+  const builtCount = countSectors(activeVessel.sectorsMask);
+
+  let pendingCoins: number;
+  if (
+    activeVessel.onChain &&
+    typeof activeVessel.onChainPendingCoins === "number" &&
+    typeof activeVessel.syncedAtMs === "number"
+  ) {
+    const sinceSyncHours = Math.max(0, (nowTick - activeVessel.syncedAtMs) / 3600000);
+    const rate = activeVessel.onChainMiningRate ?? baseRate;
+    pendingCoins = Number((activeVessel.onChainPendingCoins + rate * sinceSyncHours).toFixed(4));
+  } else {
+    const elapsedHours = Math.max(0, (nowTick - activeVessel.lastClaimMs) / 3600000);
+    pendingCoins = Number((effectiveMiningRate * Math.max(0.05, elapsedHours * 6)).toFixed(2));
+  }
+
+  const defaultPetLabel =
+    tier >= 4 || hasSector(activeVessel.sectorsMask, 3) ? "Cat & Dog" : traits.familiar.name;
+  const petDisplayName = vitals.petName || defaultPetLabel;
+  const petMoodScore = Math.round((vitals.energy + vitals.mood + vitals.curiosity) / 3);
+
+  const structuralStats = useMemo(() => {
+    const coords = liveSnap?.bestResidues?.length ? liveSnap.bestResidues : liveSnap?.residues || [];
+    if (coords.length < 4 || !liveSnap) return null;
+    return {
+      ss: assignSecondaryStructurePSEA(coords),
+      contacts: computeContactMap(coords),
+      nativeQ: computeNativeContactFractionQ(liveSnap.pdbBenchmarkId, coords),
+      geometry: computeStructureGeometryQuality(coords)
+    };
+  }, [liveSnap]);
+
+  const effectiveGoals: Record<GoalKey, boolean> = {
+    ...goals,
+    room: goals.room || builtCount >= 1
+  };
+  const goalsDoneCount = Object.values(effectiveGoals).filter(Boolean).length;
+
+  const badges = [
+    { label: "First Room", earned: builtCount >= 1 },
+    { label: "Pet Keeper", earned: vitals.careStreak >= 3 },
+    { label: "Protein Folder", earned: vessel.workUnits >= 5 },
+    { label: "Coin Sharer", earned: totalCoinsDonatedToResearch > 0 },
+    { label: "Full Campus", earned: builtCount === 6 }
+  ];
+
+  // Tamagotchi / Studio action handlers
+  const handleTamagotchi = (action: TamagotchiAction) => {
+    if (action === "feed" && onSpendCoinsForTreat) {
+      const ok = onSpendCoinsForTreat(5);
+      if (!ok) {
+        setFeedback("You need 5 sparks for treats. Tap your pet or pop floating protons in 3D.");
+        return;
+      }
+      setFeedback("Treats dropped on the patio. Watch your pet trot over.");
+    } else if (action === "feed") {
+      setFeedback("Treats dropped on the patio.");
+    } else if (action === "pet") {
+      onAwardPlayBonus?.(1);
+      markGoalDone("pet");
+      setFeedback(`${petDisplayName} loved that.${onAwardPlayBonus ? " +1 spark." : ""}`);
+    } else {
+      onAwardPlayBonus?.(2);
+      markGoalDone("pet");
+      setFeedback(`Tossed a glowing ball onto the patio.${onAwardPlayBonus ? " +2 sparks." : ""}`);
+    }
+    const next = applyTamagotchiAction(vitals, action);
+    setVitals(next);
+    saveCompanionVitals(activeVessel.tokenId, next);
+    setTamaSignal((prev) => ({ action, seq: (prev?.seq || 0) + 1 }));
+    setCharacterEmote((prev) => ({ emote: "wave", seq: (prev?.seq || 0) + 1 }));
+  };
+
+  const handleSavePetName = () => {
+    const next = setCompanionPetName(vitals, petNameDraft);
+    setVitals(next);
+    saveCompanionVitals(activeVessel.tokenId, next);
+    setEditingPetName(false);
+    soundEngine.playTap(1046.5);
+  };
+
+  const handleToggleSleep = () => {
+    const next = toggleCompanionSleep(vitals);
+    setVitals(next);
+    saveCompanionVitals(activeVessel.tokenId, next);
+    soundEngine.playTap(next.sleeping ? 523.25 : 987.77);
+    setFeedback(
+      next.sleeping
+        ? `${petDisplayName} curled up for a nap. Care bars pause while resting.`
+        : `${petDisplayName} woke up refreshed and ready to help.`
+    );
+  };
+
+  const handleCycleStyle = () => {
+    const next = cycleCompanionAccessory(vitals);
+    setVitals(next);
+    saveCompanionVitals(activeVessel.tokenId, next);
+    soundEngine.playTap(1174.66);
+    setFeedback(`Switched ${petDisplayName}'s style to ${PET_ACCESSORY_LABELS[next.accessory]}.`);
+  };
+
+  // Complete Sims-Style Contextual Radial Pie Action Handler
+  const handleSimsPieAction = (actionId: string, target: SimsObjectTarget) => {
+    if (!savedProfile) {
+      openCharacterCreator();
+      return;
+    }
+
+    switch (actionId) {
+      case "pet-cuddle":
+        handleTamagotchi("pet");
+        setSimsVibes((v) => applySimsVibeDelta(v, { social: 14, energy: 4 }));
+        setCurrentActivity(`Cuddling ${petDisplayName}`);
+        break;
+      case "pet-feed":
+        handleTamagotchi("feed");
+        setSimsVibes((v) => applySimsVibeDelta(v, { social: 10 }));
+        setCurrentActivity(`Feeding ${petDisplayName}`);
+        break;
+      case "pet-play":
+        handleTamagotchi("play");
+        setSimsVibes((v) => applySimsVibeDelta(v, { social: 16, energy: -4 }));
+        setCurrentActivity(`Playing fetch with ${petDisplayName}`);
+        break;
+      case "pet-nap":
+        handleToggleSleep();
+        break;
+      case "pet-style":
+        handleCycleStyle();
+        break;
+      case "open-pet":
+        navigateToStation("pet");
+        break;
+
+      case "fold-wiggle":
+        setFoldSignal((prev) => ({ action: "wiggle", seq: (prev?.seq || 0) + 1 }));
+        onAwardPlayBonus?.(1);
+        markGoalDone("fold");
+        setSimsVibes((v) => applySimsVibeDelta(v, { focus: 16 }));
+        setCharacterEmote((prev) => ({ emote: "hop", seq: (prev?.seq || 0) + 1 }));
+        setFeedback("Wiggled live protein backbone to lower folding energy.");
+        break;
+      case "fold-shake":
+        setFoldSignal((prev) => ({ action: "shake", seq: (prev?.seq || 0) + 1 }));
+        onAwardPlayBonus?.(1);
+        markGoalDone("fold");
+        setSimsVibes((v) => applySimsVibeDelta(v, { focus: 14 }));
+        setFeedback("Shook protein chain to explore a fresh conformation.");
+        break;
+      case "fold-bury":
+        setFoldSignal((prev) => ({ action: "bury", seq: (prev?.seq || 0) + 1 }));
+        onAwardPlayBonus?.(1);
+        markGoalDone("fold");
+        setSimsVibes((v) => applySimsVibeDelta(v, { focus: 18 }));
+        setFeedback("Pulled hydrophobic residues inward into the folded core.");
+        break;
+      case "flask-pulse":
+        artworkRef.current?.triggerCatalyticPulse(1.25);
+        soundEngine.playBuildRoom();
+        setSimsVibes((v) => applySimsVibeDelta(v, { focus: 10, energy: 8 }));
+        setFeedback("Triggered a radiant catalytic pulse across the borosilicate vessel!");
+        break;
+      case "open-research":
+        navigateToStation("research");
+        break;
+
+      case "bench-sit": {
+        const a = artworkRef.current?.getSimsFurnitureAnchor("bench") ?? { x: 0, z: 2.02, yaw: 0 };
+        setCameraMode("follow");
+        setCurrentActivity("Resting on Terrazzo Bench");
+        artworkRef.current?.performSimsAction({
+          x: a.x,
+          z: a.z,
+          yaw: a.yaw,
+          posture: "sit",
+          bubble: "sparkle",
+          burstColor: "#10b981",
+          onArrive: () => {
+            setSimsVibes((v) => applySimsVibeDelta(v, { energy: 24, focus: 8 }));
+            soundEngine.playTap(1046.5);
+            setFeedback("Relaxing on the lounge bench — +24 Energy!");
+          }
+        });
+        break;
+      }
+      case "bench-meditate": {
+        const a = artworkRef.current?.getSimsFurnitureAnchor("bench") ?? { x: 0, z: 2.02, yaw: 0 };
+        setCameraMode("follow");
+        setCurrentActivity("Stargazing & Visualizing Folds");
+        artworkRef.current?.performSimsAction({
+          x: a.x,
+          z: a.z,
+          yaw: a.yaw,
+          posture: "sit",
+          bubble: "idea",
+          burstColor: "#38bdf8",
+          onArrive: () => {
+            setSimsVibes((v) => applySimsVibeDelta(v, { focus: 22, energy: 10 }));
+            soundEngine.playTap(1174.66);
+            setFeedback("Deep focus reflection on the patio — +22 Focus!");
+          }
+        });
+        break;
+      }
+      case "open-builder":
+        setBuilderSubTab("decor");
+        navigateToStation("builder");
+        break;
+
+      case "espresso-brew": {
+        const a = artworkRef.current?.getSimsFurnitureAnchor("espresso") ?? {
+          x: -1.16,
+          z: 1.52,
+          yaw: -0.95
+        };
+        setCameraMode("follow");
+        setCurrentActivity("Brewing Quantum Espresso");
+        artworkRef.current?.performSimsAction({
+          x: a.x,
+          z: a.z,
+          yaw: a.yaw,
+          posture: "brew",
+          bubble: "coffee",
+          burstColor: "#f59e0b",
+          onArrive: () => {
+            setSimsVibes((v) => applySimsVibeDelta(v, { energy: 28, focus: 12 }));
+            soundEngine.playBuildRoom();
+            setFeedback("Fresh Quantum Elixir brewed! +28 Energy & +12 Focus.");
+          }
+        });
+        break;
+      }
+      case "espresso-share": {
+        const a = artworkRef.current?.getSimsFurnitureAnchor("espresso") ?? {
+          x: -1.16,
+          z: 1.52,
+          yaw: -0.95
+        };
+        setCameraMode("follow");
+        setCurrentActivity("Toasting Open Science");
+        artworkRef.current?.performSimsAction({
+          x: a.x,
+          z: a.z,
+          yaw: a.yaw,
+          posture: "brew",
+          emote: "wave",
+          bubble: "heart",
+          burstColor: "#f472b6",
+          onArrive: () => {
+            setSimsVibes((v) => applySimsVibeDelta(v, { social: 20, energy: 12 }));
+            soundEngine.playPet();
+            setFeedback("Raised an elixir toast to the research neighborhood! +20 Social.");
+          }
+        });
+        break;
+      }
+      case "open-console":
+        navigateToStation("console");
+        break;
+
+      case "micro-analyze": {
+        const a = artworkRef.current?.getSimsFurnitureAnchor("microscope") ?? {
+          x: -1.32,
+          z: -0.78,
+          yaw: -2.1
+        };
+        setCameraMode("follow");
+        setCurrentActivity("Analyzing Protein Fold");
+        artworkRef.current?.performSimsAction({
+          x: a.x,
+          z: a.z,
+          yaw: a.yaw,
+          posture: "analyze",
+          bubble: "dna",
+          burstColor: "#38bdf8",
+          onArrive: () => {
+            setFoldSignal((prev) => ({ action: "wiggle", seq: (prev?.seq || 0) + 1 }));
+            markGoalDone("fold");
+            onAwardPlayBonus?.(1);
+            setSimsVibes((v) => applySimsVibeDelta(v, { focus: 24, energy: -4 }));
+            setFeedback("Refined the live protein structure at the microscope! +24 Focus.");
+          }
+        });
+        break;
+      }
+
+      case "mine-overclock": {
+        const a = artworkRef.current?.getSimsFurnitureAnchor("harvester") ?? {
+          x: 1.38,
+          z: -0.58,
+          yaw: 1.9
+        };
+        setCameraMode("follow");
+        setCurrentActivity("Spinning ALCH Harvester");
+        artworkRef.current?.performSimsAction({
+          x: a.x,
+          z: a.z,
+          yaw: a.yaw,
+          posture: "analyze",
+          bubble: "coin",
+          burstColor: "#6366f1",
+          onArrive: () => {
+            artworkRef.current?.triggerCatalyticPulse(1.0);
+            soundEngine.playProtonPop(4);
+            setSimsVibes((v) => applySimsVibeDelta(v, { focus: 18, energy: -4 }));
+            setFeedback("Overclocked the ALCH coin harvester console! +18 Focus.");
+          }
+        });
+        break;
+      }
+      case "open-mining":
+        navigateToStation("mining");
+        break;
+
+      case "open-moods":
+        setNeighborhoodDrawerOpen(false);
+        setConsoleSubTab("sims");
+        setOpenStation("console");
+        soundEngine.playTap(1046.5);
+        break;
+      case "emote-wave":
+        setCharacterEmote((prev) => ({ emote: "wave", seq: (prev?.seq || 0) + 1 }));
+        setSimsVibes((v) => applySimsVibeDelta(v, { social: 10, fun: 6 }));
+        triggerPlayerMoodlet("Social", "Friendly Wave", "Self");
+        soundEngine.playTap(1046.5);
+        break;
+      case "emote-spin":
+        setCharacterEmote((prev) => ({ emote: "spin", seq: (prev?.seq || 0) + 1 }));
+        setSimsVibes((v) => applySimsVibeDelta(v, { fun: 16, social: 10 }));
+        triggerPlayerMoodlet("Playful", "Silly Twirl", "Self");
+        soundEngine.playTap(1174.66);
+        break;
+      case "open-creator":
+        openCharacterCreator();
+        break;
+      case "go-home":
+        handleReturnHome();
+        break;
+
+      case "fountain-wish":
+        setCameraMode("follow");
+        setCurrentActivity("Making a Science Wish");
+        artworkRef.current?.performSimsAction({
+          x: COMMUNITY_FOUNTAIN_POS[0],
+          z: COMMUNITY_FOUNTAIN_POS[1] - 1.9,
+          yaw: 0,
+          emote: "hop",
+          bubble: "sparkle",
+          burstColor: "#38bdf8",
+          onArrive: () => {
+            artworkRef.current?.triggerCatalyticPulse(1.2);
+            onAwardPlayBonus?.(1);
+            soundEngine.playBuildRoom();
+            setSimsVibes((v) => applySimsVibeDelta(v, { focus: 14, social: 14 }));
+            setFeedback(
+              `Made a wish at the Community Research Fountain!${onAwardPlayBonus ? " +1 spark." : ""}`
+            );
+          }
+        });
+        break;
+      case "fountain-pulse":
+        setCameraMode("neighborhood");
+        artworkRef.current?.triggerCatalyticPulse(1.3);
+        soundEngine.playBuildRoom();
+        ring1Placements.slice(0, 4).forEach((pl) => {
+          artworkRef.current?.fireSocialBeamToNeighbor(pl.lab.tokenId, "#f59e0b");
+        });
+        setSimsVibes((v) => applySimsVibeDelta(v, { social: 22 }));
+        setFeedback("Lit up optical conduits across the entire minted neighborhood!");
+        break;
+      case "open-neighborhood":
+        setOpenStation(null);
+        setNeighborhoodDrawerOpen(true);
+        setCameraMode("neighborhood");
+        break;
+
+      case "neighbor-enter":
+        if ("tokenId" in target) {
+          const found =
+            neighbors.find((n) => n.tokenId === target.tokenId) ||
+            knownNeighborSummaries.find((n) => n.tokenId === target.tokenId);
+          if (found) handleEnterNeighborHome(found);
+        }
+        break;
+      case "neighbor-visit":
+        if ("tokenId" in target) handleVisitNeighbor(target.tokenId);
+        break;
+      case "neighbor-spark":
+        if ("tokenId" in target) handleSendNeighborSpark(target.tokenId);
+        break;
+      case "neighbor-chat":
+      case "neighbor-wave":
+        if ("tokenId" in target) {
+          performNeighborSocial(target.tokenId, "chat", { fireBeam: target.kind === "neighbor-lab" });
+        }
+        break;
+      case "neighbor-joke":
+        if ("tokenId" in target) {
+          performNeighborSocial(target.tokenId, "joke");
+        }
+        break;
+      case "neighbor-inspect":
+        if ("tokenId" in target) {
+          const found = neighbors.find((n) => n.tokenId === target.tokenId) || null;
+          setOpenStation(null);
+          setInspectedNeighbor(found);
+          setNeighborhoodDrawerOpen(true);
+          soundEngine.playTap(1046.5);
+        }
+        break;
+
+      case "host-chat":
+      case "host-wave":
+        if (visitingHome) performNeighborSocial(visitingHome.tokenId, "chat");
+        break;
+      case "host-joke":
+        if (visitingHome) performNeighborSocial(visitingHome.tokenId, "joke");
+        break;
+      case "host-spark":
+        if (visitingHome) {
+          artworkRef.current?.triggerCatalyticPulse(1.2);
+          performNeighborSocial(visitingHome.tokenId, "spark", { awardSparks: 2 });
+        }
+        break;
+      case "host-fold":
+        setFoldSignal((prev) => ({ action: "wiggle", seq: (prev?.seq || 0) + 1 }));
+        markGoalDone("fold");
+        if (visitingHome) {
+          performNeighborSocial(visitingHome.tokenId, "collaborate", { awardSparks: 2 });
+        }
+        break;
+      case "host-guestbook":
+        setNeighborhoodDrawerOpen(false);
+        setConsoleSubTab("studio");
+        setOpenStation("console");
+        setGuestbookOpen(true);
+        soundEngine.playTap(1046.5);
+        break;
+      case "return-home":
+        handleReturnHome();
+        break;
+      case "lot-preview-mint":
+        handleSpawnNeighborMint(1);
+        break;
+      case "lot-mint-wave":
+        handleSpawnNeighborMint(5);
+        break;
+    }
+  };
+
+  const cycleLighting = () => {
+    const idx = (LIGHTING_ORDER.indexOf(lightingMood) + 1) % LIGHTING_ORDER.length;
+    setLightingMood(LIGHTING_ORDER[idx]);
+    soundEngine.playTap(987.77);
+  };
+
+  const cycleAtmosphere = () => {
+    const idx = (ATMOSPHERE_ORDER.indexOf(atmosphereMode) + 1) % ATMOSPHERE_ORDER.length;
+    setAtmosphereMode(ATMOSPHERE_ORDER[idx]);
+    soundEngine.playTap(1046.5);
+  };
+
+  const handleSavePhoto = () => {
+    const dataUrl = artworkRef.current?.capturePhoto();
+    if (!dataUrl) return;
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = `alchemia-lab-${vessel.tokenId}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    soundEngine.playTap(1318.5);
+    setFeedback(`Saved PNG photo of Lab #${vessel.tokenId}.`);
+  };
+
+  const bindTouchDir = (dx: number, dz: number) => ({
+    onPointerDown: (e: React.PointerEvent) => {
+      e.preventDefault();
+      touchDirRef.current = { dx, dz };
+      pushMoveInput();
+    },
+    onPointerUp: () => {
+      touchDirRef.current = { dx: 0, dz: 0 };
+      pushMoveInput();
+    },
+    onPointerLeave: () => {
+      touchDirRef.current = { dx: 0, dz: 0 };
+      pushMoveInput();
+    },
+    onPointerCancel: () => {
+      touchDirRef.current = { dx: 0, dz: 0 };
+      pushMoveInput();
+    }
+  });
+
+  const enrichedImpact: LiveImpactState = {
+    ...impact,
+    tokenId: activeVessel.tokenId,
+    seed: activeVessel.seed,
+    causeId: activeVessel.causeId,
+    causeName: activeVessel.causeName,
+    tokenValueUsd: activeVessel.valueUsd,
+    complexityTier: tier,
+    sectorsMask: activeVessel.sectorsMask,
+    tokenImpactEth: activeVessel.impactEth,
+    petLevel: vitals.level,
+    petMoodScore,
+    petAccessory: vitals.accessory,
+    petSleeping: vitals.sleeping,
+    workUnits: activeVessel.workUnits
+  };
+
+  // Pipe live data into the 5 physical frosted-glass 3D holographic monitors inside WebGL!
+  useEffect(() => {
+    const bench = PROTEIN_BENCHMARKS[liveSnap?.benchmarkIndex ?? 0];
+    artworkRef.current?.updateMonitorTelemetry({
+      pdbId: liveSnap?.pdbBenchmarkId || "1L2Y",
+      taskShort: bench?.shortName || "Trp-cage",
+      bestEnergy: liveSnap?.bestEnergy ?? -18.4,
+      nativeQ: structuralStats?.nativeQ ?? 62,
+      energyHistory: liveSnap?.energyHistory || [],
+      computeActive: liveSnap?.active ?? true,
+      pendingCoins,
+      miningRatePerHour: effectiveMiningRate,
+      petName: petDisplayName,
+      petMood: companionMoodLabel(vitals),
+      petFood: vitals.energy,
+      petHappy: vitals.mood,
+      petPlay: vitals.curiosity,
+      petBoost: tamaBoost,
+      sectorsMask: activeVessel.sectorsMask,
+      tier,
+      characterName: isVisiting
+        ? `${visitingHostProfile?.name || "Host"}'s Lab`
+        : (savedProfile || creatorDraft).name,
+      characterTitle: isVisiting
+        ? `Guest: ${(savedProfile || creatorDraft).name}`
+        : (savedProfile || creatorDraft).title,
+      characterAccent: isVisiting
+        ? traits.palette.liquidMid
+        : (savedProfile || creatorDraft).outfitAccent,
+      goalsDone: goalsDoneCount
+    });
+  }, [
+    liveSnap,
+    structuralStats,
+    pendingCoins,
+    effectiveMiningRate,
+    petDisplayName,
+    vitals,
+    tamaBoost,
+    activeVessel.sectorsMask,
+    tier,
+    isVisiting,
+    visitingHostProfile,
+    traits.palette.liquidMid,
+    savedProfile,
+    creatorDraft,
+    goalsDoneCount
+  ]);
+
+  return (
+    <div
+      ref={stageRef}
+      className={`lab-world-card ${standaloneMode ? "is-standalone" : ""} ${
+        isFullscreen ? "is-fullscreen" : ""
+      }`}
+      aria-label={`Interactive walkable 3D Lab #${vessel.tokenId}`}
+    >
+      {/* Layer 0: Full-bleed Interactive 3D Architectural Lab & Minted Neighborhood Canvas */}
+      <ArtworkCanvas
+        ref={artworkRef}
+        fillContainer
+        showHud={false}
+        walkMode={walkModeActive}
+        characterProfile={activeProfile}
+        visitingHost={visitingHostProp}
+        characterEmoteSignal={characterEmote}
+        creatorCameraMode={creatorOpen}
+        creatorFocusZone={creatorFocusZone}
+        creatorTurntable={creatorTurntable}
+        cameraMode={cameraMode}
+        activeStationHighlight={openStation || nearStation}
+        neighbors={neighbors}
+        labDecor={labDecor}
+        plumbobColor={simsMood.plumbobHex}
+        playerMoodName={simsMood.name}
+        controlsEnabled={!pieMenu}
+        cameraPreset={camPreset}
+        lightingMood={lightingMood}
+        atmosphereMode={atmosphereMode}
+        highlightedResidueIdx={highlightedResidueIdx}
+        showBestFold={showBestFold}
+        previewSectorId={previewSectorId}
+        benchmarkIndex={selectedBenchmark}
+        foldSignal={foldSignal}
+        tamagotchiSignal={tamaSignal}
+        onComputeSnapshot={setLiveSnap}
+        onWalkTelemetry={handleWalkTelemetry}
+        onNearStationChange={handleNearStationChange}
+        onStationArrived={handleStationArrived}
+        onSimsObjectClick={(target, sx, sy) => {
+          if (!savedProfile && !creatorOpen && creatorTriggerMode === "on-first-interaction") {
+            openCharacterCreator();
+            return;
+          }
+          setPieMenu({ target, x: sx, y: sy });
+        }}
+        onInteractiveEvent={(ev) => {
+          if (!savedProfile && !creatorOpen && creatorTriggerMode === "on-first-interaction") {
+            openCharacterCreator();
+            return;
+          }
+          setPieMenu(null);
+          if (ev.kind === "monitor-clicked" && ev.stationId) {
+            manualPanelPinRef.current = true;
+            setNeighborhoodDrawerOpen(false);
+            setOpenStation(ev.stationId);
+          } else if (ev.kind === "floor-walk") {
+            setCurrentActivity(null);
+            manualPanelPinRef.current = Boolean(ev.stationId);
+            if (!ev.stationId) {
+              setOpenStation(null);
+              setPreviewSectorId(null);
+            }
+          } else if (ev.kind === "pet-clicked") {
+            const next = applyTamagotchiAction(vitals, "pet");
+            setVitals(next);
+            saveCompanionVitals(vessel.tokenId, next);
+            setSimsVibes((v) => applySimsVibeDelta(v, { social: 12 }));
+            onAwardPlayBonus?.(ev.bonusCoins);
+            markGoalDone("pet");
+            setFeedback(
+              `Petted ${petDisplayName} in 3D.${onAwardPlayBonus ? ` +${ev.bonusCoins} spark.` : ""}`
+            );
+          } else if (ev.kind === "room-clicked") {
+            onAwardPlayBonus?.(ev.bonusCoins);
+            setFeedback(
+              `Walking to ${ev.roomName || "lab room"}.${
+                onAwardPlayBonus ? ` +${ev.bonusCoins} spark.` : ""
+              }`
+            );
+          } else if (ev.kind === "atom-popped") {
+            onAwardPlayBonus?.(ev.bonusCoins);
+            markGoalDone("proton");
+            setSimsVibes((v) => applySimsVibeDelta(v, { focus: 6 }));
+            setMiniGame((prev) => (prev ? { ...prev, popped: prev.popped + 1 } : null));
+            setFeedback(
+              ev.combo && ev.combo > 1
+                ? `Proton combo x${ev.combo}.${onAwardPlayBonus ? ` +${ev.bonusCoins} sparks.` : ""}`
+                : `Popped a floating proton.${onAwardPlayBonus ? ` +${ev.bonusCoins} sparks.` : ""}`
+            );
+          }
+        }}
+        impact={enrichedImpact}
+      />
+
+      {/* Layer 0.5: Sims-Style Contextual Radial Pie Action Menu */}
+      {!creatorOpen && pieMenu && (
+        <SimsPieMenu
+          target={pieMenu.target}
+          screenX={pieMenu.x}
+          screenY={pieMenu.y}
+          containerWidth={stageRef.current?.clientWidth || 960}
+          containerHeight={stageRef.current?.clientHeight || 640}
+          actions={getSimsPieActions(pieMenu.target, {
+            petSleeping: vitals.sleeping,
+            standalone: standaloneMode
+          })}
+          onSelect={(actionId) => handleSimsPieAction(actionId, pieMenu.target)}
+          onClose={() => setPieMenu(null)}
+        />
+      )}
+
+      {/* Layer 1: 5 World-Anchored Decluttered Floating Glass Cards + Hairline SVG Leader Lines */}
+      {walkModeActive && !creatorOpen && (
+        <div className="world-floats-layer" aria-label="In-world lab station floating panels">
+          <svg className="world-leaders-svg" aria-hidden="true">
+            {LAB_STATIONS.map((st) => (
+              <g key={st.id}>
+                <line
+                  ref={(node) => {
+                    leaderLineRefs.current[st.id] = node;
+                  }}
+                  stroke={st.accent}
+                  strokeWidth="1.2"
+                  strokeDasharray="3 3"
+                  style={{ opacity: 0 }}
+                />
+                <circle
+                  ref={(node) => {
+                    leaderDotRefs.current[st.id] = node;
+                  }}
+                  r="3"
+                  fill={st.accent}
+                  style={{ opacity: 0 }}
+                />
+              </g>
+            ))}
+          </svg>
+          {LAB_STATIONS.map((st) => {
+            const Icon = STATION_ICONS[st.id];
+            const isNear = nearStation === st.id;
+            const isActive = openStation === st.id;
+
+            let headline = st.shortLabel;
+            let liveLine = st.subtitle;
+
+            if (st.id === "research") {
+              headline = liveSnap?.pdbBenchmarkId ? `Fold · ${liveSnap.pdbBenchmarkId}` : "Protein Lab";
+              liveLine = liveSnap
+                ? `${liveSnap.bestEnergy.toFixed(1)} kcal · ${
+                    structuralStats ? `Q ${structuralStats.nativeQ}%` : `${liveSnap.discoveries} folds`
+                  }`
+                : "Folding 3D chain…";
+            } else if (st.id === "mining") {
+              headline = `${pendingCoins.toFixed(2)} ALCH`;
+              liveLine = `${effectiveMiningRate} / hr · 0% tax`;
+            } else if (st.id === "pet") {
+              headline = petDisplayName;
+              liveLine = `${companionMoodLabel(vitals)} · ${tamaBoost}x speed`;
+            } else if (st.id === "builder") {
+              headline = `Rooms ${builtCount}/6`;
+              liveLine = `Level ${tier} · Build wings`;
+            } else if (st.id === "console") {
+              headline = savedProfile?.name || "Researcher";
+              liveLine = `Goals ${goalsDoneCount}/5 · Wardrobe`;
+            }
+
+            return (
+              <button
+                key={st.id}
+                ref={(node) => {
+                  floatingNodeRefs.current[st.id] = node;
+                }}
+                type="button"
+                className={`world-float-card clickable ${isNear ? "is-near" : ""} ${
+                  isActive ? "is-open" : ""
+                }`}
+                style={{ "--station-accent": st.accent } as React.CSSProperties}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigateToStation(st.id);
+                }}
+              >
+                <span
+                  className="cute-icon-bubble world-float-icon"
+                  style={{ "--bubble-accent": st.accent } as React.CSSProperties}
+                >
+                  <Icon size={13} />
+                </span>
+                <div className="world-float-content">
+                  <div className="world-float-top">
+                    <strong>{headline}</strong>
+                  </div>
+                  <div className="world-float-sub">{liveLine}</div>
+                </div>
+                {isNear && !isActive && <span className="world-float-key">E</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Layer 2: Cutesy Silver-White Glassmorphism Floating Top HUD */}
+      {!creatorOpen && (
+        <header className="world-hud-top">
+          <div className="world-hud-group">
+            {isVisiting && visitingHostProfile ? (
+              <span className="world-pill world-pill-visiting">
+                <span className="cute-icon-bubble is-sm" style={{ "--bubble-accent": "#10b981" } as React.CSSProperties}>
+                  <DoorOpen size={11} />
+                </span>
+                <strong>
+                  {visitingHostProfile.name}&apos;s Home · #{activeVessel.tokenId}
+                </strong>
+                <span className="world-pill-muted">{activeVessel.minter}</span>
+              </span>
+            ) : switchableVessels && switchableVessels.length > 1 && onSelectTokenId ? (
+              switchableVessels.map((v) => (
+                <button
+                  key={v.tokenId}
+                  type="button"
+                  className={`world-pill clickable ${v.tokenId === vessel.tokenId ? "active" : ""}`}
+                  onClick={() => onSelectTokenId(v.tokenId)}
+                >
+                  <span className="cute-icon-bubble is-sm">
+                    <FlaskConical size={11} />
+                  </span>
+                  <strong>#{v.tokenId}</strong>
+                  <span className="world-pill-muted">{countSectors(v.sectorsMask)}/6</span>
+                </button>
+              ))
+            ) : (
+              <span className="world-pill">
+                <span className="cute-icon-bubble is-sm">
+                  <FlaskConical size={11} />
+                </span>
+                <strong>Lab #{vessel.tokenId}</strong>
+                <span className="world-pill-muted">{traits.vessel}</span>
+              </span>
+            )}
+
+            {isVisiting && (
+              <>
+                <button
+                  type="button"
+                  className="world-pill clickable"
+                  onClick={() => {
+                    setNeighborhoodDrawerOpen(false);
+                    setConsoleSubTab("studio");
+                    setOpenStation("console");
+                    setGuestbookOpen(true);
+                    soundEngine.playTap(1046.5);
+                  }}
+                  title="Read and sign this home's guestbook"
+                >
+                  <span className="cute-icon-bubble is-sm">
+                    <BookOpen size={11} />
+                  </span>
+                  <span>Guestbook ({guestbookEntries.length})</span>
+                </button>
+                <button
+                  type="button"
+                  className="world-pill active clickable"
+                  onClick={handleReturnHome}
+                  title="Return to your own Home Lab (H)"
+                >
+                  <Home size={12} />
+                  <span>Go Home (#{vessel.tokenId})</span>
+                </button>
+              </>
+            )}
+
+            {savedProfile && (
+              <button
+                type="button"
+                className="world-pill clickable"
+                onClick={openCharacterCreator}
+                title="Customize character name, look & wardrobe (C)"
+              >
+                <span
+                  className="cute-icon-bubble is-sm"
+                  style={{ "--bubble-accent": savedProfile.outfitAccent } as React.CSSProperties}
+                >
+                  <UserRound size={11} />
+                </span>
+                <strong>{savedProfile.name}</strong>
+                <Pencil size={10} className="world-pill-edit-ico" />
+              </button>
+            )}
+
+            <button
+              type="button"
+              className={`world-pill clickable ${
+                neighborhoodDrawerOpen || cameraMode === "neighborhood" ? "active" : ""
+              }`}
+              onClick={handleOpenNeighborhood}
+              title="Explore Alchemia Town & visit neighbors (N)"
+            >
+              <span className="cute-icon-bubble is-sm">
+                <MapPin size={11} />
+              </span>
+              <strong>{neighbors.length + 1} Homes</strong>
+              <span className="world-pill-muted">{townGrowth.title}</span>
+            </button>
+
+            {(charOutInNeighborhood || cameraMode === "neighborhood") && !isVisiting && (
+              <button
+                type="button"
+                className="world-pill clickable"
+                onClick={handleReturnHome}
+                title="Walk back to your Home Lab (H)"
+              >
+                <Home size={12} />
+                <span>Home</span>
+              </button>
+            )}
+          </div>
+
+          <div className="world-hud-group">
+            {!standaloneMode && (
+              <>
+                <div className="world-balance-capsule" aria-label="Sparks and ALCH balance">
+                  <span className="world-balance-item" title="Play sparks earned in 3D">
+                    <span className="cute-icon-bubble is-xs">
+                      <Sparkles size={10} />
+                    </span>
+                    <strong>{labSparks}</strong>
+                  </span>
+                  <span className="world-balance-sep" aria-hidden="true" />
+                  <span className="world-balance-item" title="ALCH token balance">
+                    <span className="cute-icon-bubble is-xs">
+                      <Coins size={10} />
+                    </span>
+                    <strong>{userCoinBalance.toFixed(1)}</strong>
+                    <span className="world-pill-muted">ALCH</span>
+                  </span>
+                </div>
+                {onConnectWallet && !walletAddress && (
+                  <button
+                    type="button"
+                    className="world-pill clickable"
+                    onClick={() => void onConnectWallet()}
+                  >
+                    <Wallet size={12} />
+                    Connect
+                  </button>
+                )}
+              </>
+            )}
+
+            <button
+              type="button"
+              className="world-icon-orb clickable"
+              onClick={() => setSoundOn(soundEngine.toggle())}
+              aria-label={soundOn ? "Mute sound" : "Enable sound"}
+              title="Toggle sound (M)"
+            >
+              {soundOn ? <Volume2 size={14} /> : <VolumeX size={14} />}
+            </button>
+
+            <button
+              type="button"
+              className="world-icon-orb clickable"
+              onClick={() => void toggleFullscreen()}
+              aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+              title={isFullscreen ? "Exit fullscreen" : "Expand fullscreen"}
+            >
+              {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            </button>
+
+            {animationUrl && !standaloneMode && (
+              <a
+                href={
+                  savedProfile
+                    ? `${animationUrl}${animationUrl.includes("?") ? "&" : "?"}char=${encodeCharacterCode(
+                        savedProfile
+                      )}`
+                    : animationUrl
+                }
+                target="_blank"
+                rel="noreferrer"
+                className="world-pill clickable"
+                style={{ textDecoration: "none" }}
+                title="Open standalone fullscreen NFT with your designed character"
+              >
+                <Sparkles size={11} />
+                <span>NFT</span>
+                <ArrowUpRight size={11} />
+              </a>
+            )}
+          </div>
+        </header>
+      )}
+
+      {/* Clickable Cutesy Silver-Glass Plumbob Mood & 4-Icon Needs Charm */}
+      {!creatorOpen && Boolean(savedProfile) && (
+        <button
+          type="button"
+          className="sims-vibes-bar clickable"
+          aria-label="Open Sims moods, character status and relationships"
+          title="Click to change mood, rename character, or grow relationships"
+          onClick={() => {
+            setNeighborhoodDrawerOpen(false);
+            setConsoleSubTab("sims");
+            setOpenStation((cur) => (cur === "console" ? null : "console"));
+            soundEngine.playTap(1046.5);
+          }}
+        >
+          <span
+            className="sims-plumbob-dome"
+            style={{ "--plumbob": simsMood.plumbobHex } as React.CSSProperties}
+          >
+            <svg viewBox="0 0 16 24" className="sims-plumbob-icon" aria-hidden="true">
+              <polygon points="8,1 15,12 8,23 1,12" fill={simsMood.plumbobHex} />
+              <polygon points="8,1 15,12 8,14" fill="rgba(255,255,255,0.48)" />
+            </svg>
+          </span>
+          <span className="sims-mood-title">{simsMood.name}</span>
+          <div className="sims-vibe-meters">
+            <span className="sims-need-pill" title={`Energy ${simsVibes.energy}%`}>
+              <Zap size={10} className="sims-need-ico" />
+              <span className="sims-need-track">
+                <i style={{ width: `${simsVibes.energy}%`, background: "#10b981" }} />
+              </span>
+            </span>
+            <span className="sims-need-pill" title={`Focus ${simsVibes.focus}%`}>
+              <Brain size={10} className="sims-need-ico" />
+              <span className="sims-need-track">
+                <i style={{ width: `${simsVibes.focus}%`, background: "#38bdf8" }} />
+              </span>
+            </span>
+            <span className="sims-need-pill" title={`Social ${simsVibes.social}%`}>
+              <Heart size={10} className="sims-need-ico" />
+              <span className="sims-need-track">
+                <i style={{ width: `${simsVibes.social}%`, background: "#f472b6" }} />
+              </span>
+            </span>
+            <span className="sims-need-pill" title={`Fun ${simsVibes.fun}%`}>
+              <Smile size={10} className="sims-need-ico" />
+              <span className="sims-need-track">
+                <i style={{ width: `${simsVibes.fun}%`, background: "#a855f7" }} />
+              </span>
+            </span>
+          </div>
+          {activeMoodlet && activeMoodlet.expiresAtMs > nowTick ? (
+            <span className="sims-activity-pill">
+              <Sparkles size={9} /> {activeMoodlet.label}
+            </span>
+          ) : currentActivity ? (
+            <span className="sims-activity-pill">{currentActivity}</span>
+          ) : null}
+        </button>
+      )}
+
+      {/* Doorstep Portal Transition Shimmer when Entering or Leaving a Neighbor's Home */}
+      {homeTransitionLabel && (
+        <div className="home-transition-overlay" role="status" aria-live="polite">
+          <div className="home-transition-pill">
+            <DoorOpen size={15} />
+            <span>{homeTransitionLabel}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Preview Lab Banner or Feedback Toast */}
+      {!creatorOpen && (feedback || isPreviewLab) && (
+        <div className="world-toast-wrap" role="status">
+          {feedback ? (
+            <div className="world-toast">
+              <span>{feedback}</span>
+              <button type="button" onClick={() => setFeedback(null)} aria-label="Dismiss">
+                ×
+              </button>
+            </div>
+          ) : isPreviewLab ? (
+            <div className="world-toast">
+              <span>
+                Exploring live Lab #{vessel.tokenId}.{" "}
+                {onGoMint && (
+                  <button type="button" className="world-inline-link" onClick={onGoMint}>
+                    Mint your own for $1
+                  </button>
+                )}{" "}
+                to save rooms on-chain.
+              </span>
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {/* First-Interaction Floating CTA in Standalone NFT Mode before character is created */}
+      {!savedProfile && !creatorOpen && creatorTriggerMode === "on-first-interaction" && (
+        <div className="world-enter-cta-wrap">
+          <button
+            type="button"
+            className="btn-mint-minimal clickable world-enter-cta"
+            onClick={openCharacterCreator}
+          >
+            <Footprints size={16} />
+            Design Character &amp; Walk Inside
+          </button>
+          <span className="world-enter-hint">
+            Or click the floor / press WASD to create your researcher
+          </span>
+        </div>
+      )}
+
+      {/* Layer 3: Interactive Floating Glass Station Panel (opens smoothly inside the NFT card!) */}
+      {!creatorOpen && openStation && (
+        <aside
+          className="glass-panel world-station-drawer"
+          aria-label={LAB_STATION_BY_ID[openStation].label}
+        >
+          <div className="world-drawer-head">
+            <div className="world-drawer-title-group">
+              <span
+                className="drawer-icon-medallion"
+                style={{ "--bubble-accent": LAB_STATION_BY_ID[openStation].accent } as React.CSSProperties}
+              >
+                {(() => {
+                  const DrawerIcon = STATION_ICONS[openStation];
+                  return <DrawerIcon size={17} />;
+                })()}
+              </span>
+              <div>
+                <div className="single-kicker">{LAB_STATION_BY_ID[openStation].subtitle}</div>
+                <h3 className="world-drawer-title">{LAB_STATION_BY_ID[openStation].label}</h3>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="inline-icon-btn clickable"
+              onClick={() => {
+                setOpenStation(null);
+                setPreviewSectorId(null);
+                manualPanelPinRef.current = false;
+              }}
+              aria-label="Close panel"
+            >
+              <X size={14} />
+            </button>
+          </div>
+
+          <div className="world-drawer-scroll">
+            {/* STATION 1: PROTEIN RESEARCH WORKBENCH */}
+            {openStation === "research" && (
+              <div className="world-drawer-stack">
+                <div className="science-head">
+                  <div className="science-title" style={{ fontSize: "1.15rem" }}>
+                    {liveSnap ? liveSnap.taskTitle : "Loading protein benchmark…"}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                    <select
+                      className="protein-select clickable"
+                      value={selectedBenchmark ?? liveSnap?.benchmarkIndex ?? 0}
+                      onChange={(e) => {
+                        const idx = Number(e.target.value);
+                        setSelectedBenchmark(idx);
+                        soundEngine.playTap(987.77);
+                      }}
+                      aria-label="Choose protein benchmark"
+                    >
+                      {PROTEIN_BENCHMARKS.map((b) => (
+                        <option key={b.pdbId} value={b.id}>
+                          {b.shortName} · {b.sequence.length} aa
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="subtle-pill-btn clickable"
+                      style={{ padding: "5px 10px", fontSize: "0.72rem" }}
+                      onClick={() => {
+                        const nextActive = !(liveSnap?.active ?? true);
+                        artworkRef.current?.setComputeActive(nextActive);
+                      }}
+                    >
+                      {liveSnap?.active === false ? <Play size={11} /> : <Pause size={11} />}
+                      {liveSnap?.active === false ? "Resume" : "Pause"}
+                    </button>
+                  </div>
+                </div>
+
+                {liveSnap && (
+                  <>
+                    <p className="science-summary">
+                      {PROTEIN_BENCHMARKS[liveSnap.benchmarkIndex]?.humanSummary}
+                    </p>
+
+                    <div className={`daily-fold-bar ${dailyDone ? "completed" : ""}`}>
+                      <span>
+                        <Trophy size={12} style={{ verticalAlign: "-2px", marginRight: 5 }} />
+                        {dailyDone ? (
+                          <>
+                            Today&apos;s fold done: <strong>{dailyChallenge.shortName}</strong>
+                          </>
+                        ) : (
+                          <>
+                            Daily fold: <strong>{dailyChallenge.shortName}</strong> · target{" "}
+                            <strong>{dailyChallenge.targetEnergyKcal} kcal/mol</strong>
+                          </>
+                        )}
+                      </span>
+                      {!dailyDone && liveSnap.benchmarkIndex !== dailyChallenge.benchmarkIndex && (
+                        <button
+                          type="button"
+                          className="sector-btn eth clickable"
+                          onClick={() => {
+                            setSelectedBenchmark(dailyChallenge.benchmarkIndex);
+                            soundEngine.playTap(987.77);
+                          }}
+                        >
+                          Try fold
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="world-metrics-2x2">
+                      <div className="science-metric">
+                        <span>Best energy</span>
+                        <strong>{liveSnap.bestEnergy.toFixed(1)} kcal/mol</strong>
+                      </div>
+                      <div className="science-metric">
+                        <span>Native fold Q</span>
+                        <strong>{structuralStats ? `${structuralStats.nativeQ}%` : "—"}</strong>
+                      </div>
+                      <div className="science-metric">
+                        <span>Size fit</span>
+                        <strong>
+                          {liveSnap.radiusOfGyration.toFixed(1)}Å ({liveSnap.compactnessMatchPct}%)
+                        </strong>
+                      </div>
+                      <div className="science-metric">
+                        <span>Core burial</span>
+                        <strong>{liveSnap.hydrophobicBurialPct}%</strong>
+                      </div>
+                    </div>
+
+                    <div className="sparkline-row">
+                      <EnergySparkline history={liveSnap.energyHistory} />
+                      <div className="sparkline-meta">
+                        <span>
+                          {liveSnap.opsPerSecond.toLocaleString()} steps/s · {liveSnap.contactCount}{" "}
+                          contacts
+                        </span>
+                        {structuralStats && (
+                          <span>
+                            Helix {structuralStats.ss.helixPct}% · Sheet{" "}
+                            {structuralStats.ss.sheetPct}% · {structuralStats.geometry.stericClashes}{" "}
+                            clashes
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {structuralStats && (
+                      <SequenceRibbonBar
+                        residues={
+                          liveSnap.bestResidues?.length ? liveSnap.bestResidues : liveSnap.residues
+                        }
+                        secondaryCodes={structuralStats.ss.codes}
+                        onHoverResidue={setHighlightedResidueIdx}
+                      />
+                    )}
+
+                    {showContactMap && structuralStats && (
+                      <ContactMapSvg
+                        residueCount={liveSnap.sequenceCode.length}
+                        contacts={structuralStats.contacts}
+                      />
+                    )}
+
+                    <div className="mining-buttons">
+                      <button
+                        type="button"
+                        className="sector-btn clickable"
+                        onClick={() => {
+                          setFoldSignal((prev) => ({ action: "wiggle", seq: (prev?.seq || 0) + 1 }));
+                          onAwardPlayBonus?.(1);
+                          markGoalDone("fold");
+                          setFeedback("Wiggled protein backbone to lower energy.");
+                        }}
+                      >
+                        Wiggle
+                      </button>
+                      <button
+                        type="button"
+                        className="sector-btn eth clickable"
+                        onClick={() => {
+                          setFoldSignal((prev) => ({ action: "shake", seq: (prev?.seq || 0) + 1 }));
+                          onAwardPlayBonus?.(1);
+                          markGoalDone("fold");
+                          setFeedback("Shook protein chain to explore a fresh fold.");
+                        }}
+                      >
+                        Shake
+                      </button>
+                      <button
+                        type="button"
+                        className="sector-btn eth clickable"
+                        onClick={() => {
+                          setFoldSignal((prev) => ({ action: "bury", seq: (prev?.seq || 0) + 1 }));
+                          onAwardPlayBonus?.(1);
+                          markGoalDone("fold");
+                          setFeedback("Pulled hydrophobic amino acids inward.");
+                        }}
+                      >
+                        Bury core
+                      </button>
+                      <button
+                        type="button"
+                        className={`subtle-pill-btn clickable ${showBestFold ? "active" : ""}`}
+                        onClick={() => {
+                          setShowBestFold((v) => !v);
+                          soundEngine.playTap(987.77);
+                        }}
+                      >
+                        {showBestFold ? "Best fold" : "Live search"}
+                      </button>
+                      <button
+                        type="button"
+                        className="subtle-pill-btn clickable"
+                        onClick={() => {
+                          downloadPDBFromSnapshot(liveSnap);
+                          setFeedback(`Downloaded ${liveSnap.pdbBenchmarkId}.pdb.`);
+                        }}
+                      >
+                        <Download size={12} /> .PDB
+                      </button>
+                      <button
+                        type="button"
+                        className="subtle-pill-btn clickable"
+                        onClick={() => {
+                          downloadMMCIFFromSnapshot(liveSnap);
+                          setFeedback(`Downloaded ${liveSnap.pdbBenchmarkId}.cif.`);
+                        }}
+                      >
+                        <Download size={12} /> .CIF
+                      </button>
+                      <button
+                        type="button"
+                        className="subtle-pill-btn clickable"
+                        onClick={() =>
+                          downloadScienceCertificateFromSnapshot(liveSnap, {
+                            nativeContactQ: structuralStats?.nativeQ,
+                            helixPct: structuralStats?.ss.helixPct,
+                            sheetPct: structuralStats?.ss.sheetPct,
+                            meanCaBondAngstrom: structuralStats?.geometry.meanCaBondAngstrom,
+                            stericClashes: structuralStats?.geometry.stericClashes,
+                            geometryGrade: structuralStats?.geometry.grade
+                          })
+                        }
+                      >
+                        <FileJson size={12} /> .JSON
+                      </button>
+                      <button
+                        type="button"
+                        className="subtle-pill-btn clickable"
+                        onClick={() => setShowContactMap((v) => !v)}
+                      >
+                        <Grid2x2 size={12} /> {showContactMap ? "Hide map" : "Contacts"}
+                      </button>
+                      <a
+                        href={`https://www.rcsb.org/structure/${liveSnap.pdbBenchmarkId}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="subtle-pill-btn clickable"
+                        style={{ textDecoration: "none" }}
+                      >
+                        RCSB <ArrowUpRight size={11} />
+                      </a>
+                      {onAnchorProof && !isVisiting && (
+                        <button
+                          type="button"
+                          className="subtle-pill-btn clickable"
+                          onClick={async () => {
+                            try {
+                              await onAnchorProof(vessel, liveSnap);
+                              soundEngine.playBuildRoom();
+                              setFeedback(
+                                `Saved fold proof (${liveSnap.proofHash.slice(0, 12)}…) on-chain.`
+                              );
+                            } catch (err) {
+                              setFeedback(
+                                err instanceof Error
+                                  ? err.message
+                                  : "Connect owner wallet to save proof."
+                              );
+                            }
+                          }}
+                        >
+                          <ShieldCheck size={12} /> Save proof
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* STATION 2: ALCH COIN MINING BAY */}
+            {openStation === "mining" && (
+              <div className="world-drawer-stack">
+                <div className="mining-head">
+                  <div>
+                    <div className="single-kicker">0% Tax ALCH Yield</div>
+                    <div className="mining-big">
+                      {pendingCoins.toFixed(2)} <span>ALCH ready</span>
+                    </div>
+                  </div>
+                  <div className="mining-rate-badge">{effectiveMiningRate} / hr</div>
+                </div>
+
+                <div className="world-metrics-2x2">
+                  <div className="science-metric">
+                    <span>Base rate</span>
+                    <strong>{baseRate} ALCH/hr</strong>
+                  </div>
+                  <div className="science-metric">
+                    <span>Pet care boost</span>
+                    <strong>{tamaBoost}x active</strong>
+                  </div>
+                  <div className="science-metric">
+                    <span>Wallet balance</span>
+                    <strong>{userCoinBalance.toFixed(1)} ALCH</strong>
+                  </div>
+                  <div className="science-metric">
+                    <span>Shared to science</span>
+                    <strong>{totalCoinsDonatedToResearch.toFixed(1)} ALCH</strong>
+                  </div>
+                </div>
+
+                {onClaimCoins && !isVisiting ? (
+                  <>
+                    <div className="tithe-slider-row">
+                      <div className="tithe-label">
+                        <span>Share part of claim with researchers</span>
+                        <strong>{tithePct}% to research</strong>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={50}
+                        step={5}
+                        value={tithePct}
+                        onChange={(e) => setTithePct(Number(e.target.value))}
+                        className="silver-slider"
+                        aria-label="Percent of mined coins shared with researchers"
+                      />
+                    </div>
+
+                    <div className="mining-buttons">
+                      <button
+                        type="button"
+                        className="btn-mint-minimal clickable"
+                        style={{ padding: "10px 20px", fontSize: "0.84rem" }}
+                        onClick={async () => {
+                          try {
+                            await onClaimCoins(vessel, pendingCoins, tithePct);
+                            soundEngine.playTap(1174.66);
+                            markGoalDone("claim");
+                            setCharacterEmote((prev) => ({
+                              emote: "spin",
+                              seq: (prev?.seq || 0) + 1
+                            }));
+                            setFeedback(
+                              `Claimed ${(pendingCoins * (1 - tithePct / 100)).toFixed(
+                                1
+                              )} ALCH and shared ${(pendingCoins * (tithePct / 100)).toFixed(
+                                1
+                              )} ALCH with research.`
+                            );
+                          } catch (err) {
+                            setFeedback(
+                              err instanceof Error ? err.message : "Could not claim right now."
+                            );
+                          }
+                        }}
+                      >
+                        <Coins size={14} /> Claim ALCH
+                      </button>
+
+                      {onDonateCoins && (
+                        <div className="donate-quick-group">
+                          {([10, 25, 100] as const).map((amt) => (
+                            <button
+                              key={amt}
+                              type="button"
+                              className={`donate-chip clickable ${donateAmt === amt ? "active" : ""}`}
+                              onClick={() => setDonateAmt(amt)}
+                            >
+                              {amt}
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            className="subtle-pill-btn clickable"
+                            onClick={async () => {
+                              if (userCoinBalance < donateAmt) {
+                                setFeedback(`Claim at least ${donateAmt} ALCH first to donate.`);
+                                return;
+                              }
+                              try {
+                                await onDonateCoins(vessel, donateAmt);
+                                soundEngine.playPet();
+                                setFeedback(`Sent ${donateAmt} ALCH straight to research.`);
+                              } catch (err) {
+                                setFeedback(
+                                  err instanceof Error ? err.message : "Donation cancelled."
+                                );
+                              }
+                            }}
+                          >
+                            <HeartHandshake size={13} /> Donate {donateAmt}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <p className="science-summary">
+                    {isVisiting ? (
+                      <>
+                        You&apos;re visiting{" "}
+                        <strong>
+                          {visitingHostProfile?.name || "this researcher"}&apos;s Lab #
+                          {activeVessel.tokenId}
+                        </strong>{" "}
+                        ({effectiveMiningRate} ALCH / hr · {builtCount}/6 rooms). Gift a research
+                        spark or help fold their protein to cheer them on!
+                      </>
+                    ) : (
+                      <>
+                        This lab generates <strong>{effectiveMiningRate} ALCH / hr</strong> from its
+                        Level {tier} reactor and {builtCount} built rooms. Connect your wallet in
+                        the ALCHEMIA app to claim and share mined ALCH on-chain.
+                      </>
+                    )}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* STATION 3: PET SANCTUARY */}
+            {openStation === "pet" && (
+              <div className="world-drawer-stack">
+                <div className="tama-head">
+                  <div>
+                    {editingPetName ? (
+                      <form
+                        className="pet-name-form"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          handleSavePetName();
+                        }}
+                      >
+                        <input
+                          type="text"
+                          value={petNameDraft}
+                          maxLength={22}
+                          placeholder={defaultPetLabel}
+                          onChange={(e) => setPetNameDraft(e.target.value)}
+                          autoFocus
+                          className="pet-name-input"
+                          aria-label="Pet name"
+                        />
+                        <button type="submit" className="sector-btn clickable">
+                          Save
+                        </button>
+                      </form>
+                    ) : (
+                      <div className="tama-title-row">
+                        <span className="tama-title">{petDisplayName}</span>
+                        <button
+                          type="button"
+                          className="inline-icon-btn clickable"
+                          onClick={() => {
+                            setPetNameDraft(vitals.petName);
+                            setEditingPetName(true);
+                          }}
+                          title="Rename pet"
+                          aria-label="Rename pet"
+                        >
+                          <Pencil size={12} />
+                        </button>
+                      </div>
+                    )}
+                    <div className="tama-sub">
+                      Level {vitals.level} · {companionMoodLabel(vitals)} ·{" "}
+                      <strong>{tamaBoost}x</strong> lab speed ·{" "}
+                      <Flame size={11} style={{ verticalAlign: "-1px" }} /> {vitals.dailyStreak}d
+                      streak
+                    </div>
+                  </div>
+                </div>
+
+                <div className="tama-bars">
+                  <div className="tama-bar-item">
+                    <span>Food</span>
+                    <div className="mini-track">
+                      <div
+                        className="mini-fill"
+                        style={{ width: `${vitals.energy}%`, background: "#10b981" }}
+                      />
+                    </div>
+                  </div>
+                  <div className="tama-bar-item">
+                    <span>Happy</span>
+                    <div className="mini-track">
+                      <div
+                        className="mini-fill"
+                        style={{ width: `${vitals.mood}%`, background: "#f472b6" }}
+                      />
+                    </div>
+                  </div>
+                  <div className="tama-bar-item">
+                    <span>Play</span>
+                    <div className="mini-track">
+                      <div
+                        className="mini-fill"
+                        style={{ width: `${vitals.curiosity}%`, background: "#5b8def" }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="tama-actions">
+                  <button
+                    type="button"
+                    className="subtle-pill-btn clickable"
+                    onClick={() => handleTamagotchi("feed")}
+                  >
+                    <Cookie size={13} />
+                    {onSpendCoinsForTreat ? "Feed (5 sparks)" : "Feed"}
+                  </button>
+                  <button
+                    type="button"
+                    className="subtle-pill-btn clickable"
+                    onClick={() => handleTamagotchi("pet")}
+                  >
+                    <Heart size={13} /> Pet
+                  </button>
+                  <button
+                    type="button"
+                    className="subtle-pill-btn clickable"
+                    onClick={() => handleTamagotchi("play")}
+                  >
+                    <Sparkles size={13} /> Play
+                  </button>
+                  <button
+                    type="button"
+                    className="subtle-pill-btn clickable"
+                    onClick={handleToggleSleep}
+                  >
+                    {vitals.sleeping ? <Sun size={13} /> : <Moon size={13} />}
+                    {vitals.sleeping ? "Wake" : "Nap"}
+                  </button>
+                  <button
+                    type="button"
+                    className="subtle-pill-btn clickable"
+                    onClick={handleCycleStyle}
+                  >
+                    <Tag size={13} /> {PET_ACCESSORY_LABELS[vitals.accessory || "auto"]}
+                  </button>
+                  <button
+                    type="button"
+                    className="subtle-pill-btn clickable"
+                    onClick={() => {
+                      if (miniGame) {
+                        setMiniGame(null);
+                        return;
+                      }
+                      soundEngine.playTap(1046.5);
+                      setCameraMode("orbit");
+                      setCamPreset((prev) => ({ preset: "iso", seq: (prev?.seq || 0) + 1 }));
+                      setMiniGame({ endsAtMs: Date.now() + 20000, popped: 0, goal: 6 });
+                      setFeedback("Pop 6 floating protons in the 3D scene within 20s for +12 sparks.");
+                    }}
+                  >
+                    <Timer size={13} />
+                    {miniGame
+                      ? `${miniGame.popped}/${miniGame.goal} · ${Math.max(
+                          0,
+                          Math.ceil((miniGame.endsAtMs - nowTick) / 1000)
+                        )}s`
+                      : "Proton Catch"}
+                  </button>
+                </div>
+
+                <div className="badge-row">
+                  {badges.map((b) => (
+                    <span key={b.label} className={`badge-chip ${b.earned ? "earned" : ""}`}>
+                      <Award size={11} />
+                      {b.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* STATION 4: SIMS-STYLE ARCHITECT ROOM BUILDER & DECOR STUDIO */}
+            {openStation === "builder" && (
+              <div className="world-drawer-stack">
+                <div className="builder-subtabs" role="tablist" aria-label="Builder mode">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={builderSubTab === "rooms"}
+                    className={`builder-subtab clickable ${
+                      builderSubTab === "rooms" ? "active" : ""
+                    }`}
+                    onClick={() => {
+                      setBuilderSubTab("rooms");
+                      soundEngine.playTap(880);
+                    }}
+                  >
+                    <Building2 size={12} /> Rooms ({builtCount}/6)
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={builderSubTab === "decor"}
+                    className={`builder-subtab clickable ${
+                      builderSubTab === "decor" ? "active" : ""
+                    }`}
+                    onClick={() => {
+                      setBuilderSubTab("decor");
+                      soundEngine.playTap(987.77);
+                    }}
+                  >
+                    <Palette size={12} /> Decor &amp; Sky
+                  </button>
+                </div>
+
+                {builderSubTab === "decor" ? (
+                  <div className="world-drawer-stack">
+                    <div>
+                      <div className="single-kicker" style={{ marginBottom: 8 }}>
+                        Terrazzo Floor Finish (Live 3D)
+                      </div>
+                      <div className="decor-grid">
+                        {FLOOR_STYLES.map((f) => (
+                          <button
+                            key={f.id}
+                            type="button"
+                            className={`decor-swatch-card clickable ${
+                              labDecor.floorStyle === f.id ? "active" : ""
+                            }`}
+                            onClick={() => {
+                              updateLabDecor({ ...labDecor, floorStyle: f.id });
+                              setFeedback(`Applied ${f.label} stone finish to your lab.`);
+                            }}
+                          >
+                            <span
+                              className="decor-swatch-dot"
+                              style={{ background: f.swatch }}
+                            />
+                            <strong>{f.label}</strong>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="single-kicker" style={{ marginBottom: 8 }}>
+                        Patio Centerpiece Sculpture
+                      </div>
+                      <div className="decor-grid">
+                        {PATIO_DECORS.map((p) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            className={`decor-swatch-card clickable ${
+                              labDecor.patioDecor === p.id ? "active" : ""
+                            }`}
+                            onClick={() => {
+                              updateLabDecor({ ...labDecor, patioDecor: p.id });
+                              setFeedback(`Placed ${p.label} on the lab patio.`);
+                            }}
+                          >
+                            <strong>{p.label}</strong>
+                            <small>{p.desc}</small>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="single-kicker" style={{ marginBottom: 8 }}>
+                        World Sky &amp; Time of Day
+                      </div>
+                      <div className="tama-actions">
+                        {LIGHTING_ORDER.map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            className={`subtle-pill-btn clickable ${
+                              lightingMood === m ? "active" : ""
+                            }`}
+                            onClick={() => {
+                              setLightingMood(m);
+                              soundEngine.playTap(987.77);
+                            }}
+                          >
+                            <Sun size={12} /> {LIGHTING_LABELS[m]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="single-kicker" style={{ marginBottom: 8 }}>
+                        Atmosphere Particles
+                      </div>
+                      <div className="tama-actions">
+                        {ATMOSPHERE_ORDER.map((a) => (
+                          <button
+                            key={a}
+                            type="button"
+                            className={`subtle-pill-btn clickable ${
+                              atmosphereMode === a ? "active" : ""
+                            }`}
+                            onClick={() => {
+                              setAtmosphereMode(a);
+                              soundEngine.playTap(1046.5);
+                            }}
+                          >
+                            <CloudSnow size={12} /> {ATMOSPHERE_LABELS[a]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="builder-head">
+                      <span>
+                        {isVisiting
+                          ? `${visitingHostProfile?.name || "Host"}'s home · ${builtCount} of 6 rooms`
+                          : `${builtCount} of 6 architectural wings built`}
+                      </span>
+                      {onUpgradeVessel && !isVisiting && tier < 5 && (
+                        <button
+                          type="button"
+                          className="sector-btn eth clickable"
+                          onClick={async () => {
+                            const nextTargetUsd =
+                              tier === 1 ? 5 : tier === 2 ? 25 : tier === 3 ? 100 : 500;
+                            const delta = Math.max(1, nextTargetUsd - vessel.valueUsd);
+                            try {
+                              await onUpgradeVessel(vessel, delta);
+                              soundEngine.playBuildRoom();
+                              setFeedback(`Upgraded Lab #${vessel.tokenId} to Level ${tier + 1}.`);
+                            } catch (err) {
+                              setFeedback(
+                                err instanceof Error ? err.message : "Upgrade cancelled."
+                              );
+                            }
+                          }}
+                        >
+                          <ArrowUpCircle
+                            size={11}
+                            style={{ verticalAlign: "-1px", marginRight: 4 }}
+                          />
+                          Level {tier + 1} (+$
+                          {Math.max(
+                            1,
+                            (tier === 1 ? 5 : tier === 2 ? 25 : tier === 3 ? 100 : 500) -
+                              vessel.valueUsd
+                          )}
+                          )
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="world-sector-list">
+                      {LAB_SECTORS.map((sector) => {
+                        const built = hasSector(activeVessel.sectorsMask, sector.id);
+                        const canAffordCoins = userCoinBalance >= sector.coinCost;
+
+                        return (
+                          <div
+                            key={sector.id}
+                            className={`sector-card ${built ? "is-built" : ""} ${
+                              previewSectorId === sector.id ? "is-previewing" : ""
+                            }`}
+                            onMouseEnter={() => {
+                              if (!built) setPreviewSectorId(sector.id);
+                            }}
+                            onMouseLeave={() => {
+                              if (previewSectorId === sector.id) setPreviewSectorId(null);
+                            }}
+                          >
+                            <div className="sector-top">
+                              <span className="sector-name">
+                                <span
+                                  className="cause-dot"
+                                  style={{ background: sector.accent }}
+                                />
+                                {sector.name}
+                              </span>
+                              <span className="sector-bonus">
+                                +{sector.miningBonusPerHour} ALCH/hr
+                              </span>
+                            </div>
+                            <p className="sector-desc">{sector.role}</p>
+                            <div className="sector-bottom">
+                              <span className="sector-effect">{sector.researchEffect}</span>
+                              {built ? (
+                                <span className="built-pill">
+                                  <Check size={12} /> Built
+                                </span>
+                              ) : onBuildSector && !isVisiting ? (
+                                <div style={{ display: "flex", gap: 6 }}>
+                                  <button
+                                    type="button"
+                                    className="sector-btn clickable"
+                                    disabled={!canAffordCoins}
+                                    onClick={async () => {
+                                      try {
+                                        await onBuildSector(vessel, sector.id, true);
+                                        setPreviewSectorId(null);
+                                        markGoalDone("room");
+                                        setFeedback(
+                                          `Added ${sector.name} to Lab #${vessel.tokenId}.`
+                                        );
+                                      } catch (err) {
+                                        setFeedback(
+                                          err instanceof Error
+                                            ? err.message
+                                            : "Could not build room."
+                                        );
+                                      }
+                                    }}
+                                  >
+                                    {sector.coinCost} ALCH
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="sector-btn eth clickable"
+                                    onClick={async () => {
+                                      try {
+                                        await onBuildSector(vessel, sector.id, false);
+                                        setPreviewSectorId(null);
+                                        markGoalDone("room");
+                                        setFeedback(
+                                          `Added ${sector.name} to Lab #${vessel.tokenId}.`
+                                        );
+                                      } catch (err) {
+                                        setFeedback(
+                                          err instanceof Error
+                                            ? err.message
+                                            : "Could not build room."
+                                        );
+                                      }
+                                    }}
+                                  >
+                                    ${sector.ethCostUsd}
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="sector-effect">Unbuilt lot</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* STATION 5: SIMS STATUS, MOODS, RELATIONSHIPS, QUICK RENAME, GUESTBOOK & STUDIO */}
+            {openStation === "console" && (
+              <div className="world-drawer-stack">
+                <div className="builder-subtabs builder-subtabs-3" role="tablist" aria-label="Sims status tabs">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={consoleSubTab === "sims"}
+                    className={`builder-subtab clickable ${consoleSubTab === "sims" ? "active" : ""}`}
+                    onClick={() => {
+                      setConsoleSubTab("sims");
+                      soundEngine.playTap(987.77);
+                    }}
+                  >
+                    <Smile size={12} /> Moods
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={consoleSubTab === "friends"}
+                    className={`builder-subtab clickable ${consoleSubTab === "friends" ? "active" : ""}`}
+                    onClick={() => {
+                      setConsoleSubTab("friends");
+                      soundEngine.playTap(1046.5);
+                    }}
+                  >
+                    <Heart size={12} /> Friends
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={consoleSubTab === "studio"}
+                    className={`builder-subtab clickable ${consoleSubTab === "studio" ? "active" : ""}`}
+                    onClick={() => {
+                      setConsoleSubTab("studio");
+                      soundEngine.playTap(880);
+                    }}
+                  >
+                    <BookOpen size={12} /> Studio
+                  </button>
+                </div>
+
+                {/* SUB-TAB 1: YOUR SIMS STATUS, QUICK RENAME, PERSONALITY TRAIT, NEEDS & MOOD SHIFTER */}
+                {consoleSubTab === "sims" && (
+                  <div className="world-drawer-stack">
+                    {savedProfile && (
+                      <div className="world-profile-card">
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          {quickNameEditing ? (
+                            <form className="pet-name-form" onSubmit={handleQuickRename}>
+                              <input
+                                type="text"
+                                value={quickNameDraft}
+                                maxLength={20}
+                                onChange={(e) => setQuickNameDraft(e.target.value)}
+                                autoFocus
+                                className="pet-name-input"
+                                aria-label="Character name"
+                              />
+                              <button type="submit" className="sector-btn clickable">
+                                Save
+                              </button>
+                            </form>
+                          ) : (
+                            <div className="tama-title-row">
+                              <span className="tama-title" style={{ fontSize: "1.2rem" }}>
+                                {savedProfile.name}
+                              </span>
+                              <button
+                                type="button"
+                                className="inline-icon-btn clickable"
+                                onClick={() => {
+                                  setQuickNameDraft(savedProfile.name);
+                                  setQuickNameEditing(true);
+                                }}
+                                title="Rename character"
+                                aria-label="Rename character"
+                              >
+                                <Pencil size={12} />
+                              </button>
+                            </div>
+                          )}
+                          <div className="tama-sub">
+                            {savedProfile.title} ·{" "}
+                            {PERSONALITY_TRAITS.find((t) => t.id === (savedProfile.trait || "genius"))
+                              ?.label || "Genius"}{" "}
+                            · Lab #{vessel.tokenId}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="subtle-pill-btn clickable"
+                          onClick={openCharacterCreator}
+                        >
+                          <UserRound size={12} /> Wardrobe
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Live Sims Mood Card & 4 Needs Bars */}
+                    <div
+                      className="sims-mood-hero"
+                      style={{ borderColor: `${simsMood.plumbobHex}66` }}
+                    >
+                      <div className="sims-mood-hero-top">
+                        <span
+                          className="sims-plumbob-chip"
+                          style={{ "--plumbob": simsMood.plumbobHex } as React.CSSProperties}
+                        >
+                          <svg viewBox="0 0 16 24" className="sims-plumbob-icon" aria-hidden="true">
+                            <polygon points="8,1 15,12 8,23 1,12" fill={simsMood.plumbobHex} />
+                            <polygon points="8,1 15,12 8,14" fill="rgba(255,255,255,0.42)" />
+                          </svg>
+                          <strong style={{ fontSize: "0.92rem" }}>{simsMood.name}</strong>
+                        </span>
+                        {activeMoodlet && activeMoodlet.expiresAtMs > nowTick && (
+                          <span
+                            className="sims-activity-pill"
+                            style={{ background: simsMood.plumbobHex }}
+                          >
+                            +{activeMoodlet.label}
+                          </span>
+                        )}
+                      </div>
+                      <p className="tama-sub" style={{ marginTop: 4 }}>
+                        {simsMood.tagline}
+                      </p>
+
+                      <div className="tama-bars" style={{ marginTop: 10 }}>
+                        <div className="tama-bar-item">
+                          <span>Energy {simsVibes.energy}%</span>
+                          <div className="mini-track">
+                            <div
+                              className="mini-fill"
+                              style={{ width: `${simsVibes.energy}%`, background: "#10b981" }}
+                            />
+                          </div>
+                        </div>
+                        <div className="tama-bar-item">
+                          <span>Focus {simsVibes.focus}%</span>
+                          <div className="mini-track">
+                            <div
+                              className="mini-fill"
+                              style={{ width: `${simsVibes.focus}%`, background: "#38bdf8" }}
+                            />
+                          </div>
+                        </div>
+                        <div className="tama-bar-item">
+                          <span>Social {simsVibes.social}%</span>
+                          <div className="mini-track">
+                            <div
+                              className="mini-fill"
+                              style={{ width: `${simsVibes.social}%`, background: "#f472b6" }}
+                            />
+                          </div>
+                        </div>
+                        <div className="tama-bar-item">
+                          <span>Fun {simsVibes.fun}%</span>
+                          <div className="mini-track">
+                            <div
+                              className="mini-fill"
+                              style={{ width: `${simsVibes.fun}%`, background: "#a855f7" }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 1-Click Mood Shifter */}
+                    <div>
+                      <div className="single-kicker" style={{ marginBottom: 7 }}>
+                        Change Mood (Live 3D Plumbob &amp; Emote)
+                      </div>
+                      <div className="mood-shift-grid">
+                        {MOOD_SHIFT_ACTIONS.map((act) => {
+                          const vis = SIMS_MOOD_VISUALS[act.mood];
+                          const isCurrent = simsMood.name === act.mood;
+                          return (
+                            <button
+                              key={act.id}
+                              type="button"
+                              className={`mood-shift-btn clickable ${isCurrent ? "active" : ""}`}
+                              style={{ "--mood-hex": vis.plumbobHex } as React.CSSProperties}
+                              onClick={() => handleShiftMood(act)}
+                            >
+                              <span
+                                className="cause-dot"
+                                style={{ background: vis.plumbobHex }}
+                              />
+                              <div>
+                                <strong>{act.mood}</strong>
+                                <small>{act.label}</small>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Personality Trait Selector */}
+                    <div>
+                      <div className="single-kicker" style={{ marginBottom: 7 }}>
+                        Personality Trait
+                      </div>
+                      <div className="creator-chip-grid">
+                        {PERSONALITY_TRAITS.map((tr) => (
+                          <button
+                            key={tr.id}
+                            type="button"
+                            title={tr.desc}
+                            className={`creator-chip clickable ${
+                              (savedProfile?.trait || "genius") === tr.id ? "active" : ""
+                            }`}
+                            onClick={() => handleChangeTrait(tr.id)}
+                          >
+                            {tr.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* SUB-TAB 2: SIMS RELATIONSHIPS & NEIGHBOR STATUSES */}
+                {consoleSubTab === "friends" && (
+                  <div className="world-drawer-stack">
+                    <div className="single-kicker">
+                      Town Relationships &amp; Live Neighbor Moods ({neighbors.length} residents)
+                    </div>
+                    <div className="world-sector-list">
+                      {neighbors
+                        .slice(0, 16)
+                        .map((lab) => ({
+                          lab,
+                          npc: deriveNeighborCharacterProfile(lab),
+                          status: getNeighborSimsStatus(lab.tokenId, lab.seed, relationsMap)
+                        }))
+                        .sort((a, b) => b.status.score - a.status.score)
+                        .map(({ lab, npc, status }) => (
+                          <div key={lab.tokenId} className="neighbor-card">
+                            <div className="neighbor-card-head">
+                              <span
+                                className="cause-dot"
+                                style={{ background: status.plumbobHex }}
+                                title={`Current mood: ${status.mood}`}
+                              />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div className="neighbor-card-title">
+                                  <strong>
+                                    {npc.name} <small style={{ fontWeight: 500 }}>· #{lab.tokenId}</small>
+                                  </strong>
+                                  <span
+                                    className="rel-tier-badge"
+                                    style={{
+                                      color: status.tierColor,
+                                      borderColor: `${status.tierColor}66`
+                                    }}
+                                  >
+                                    {status.tier}
+                                  </span>
+                                </div>
+                                <div className="tama-sub">
+                                  {status.mood} · {status.traitLabel} · {status.activity}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="rel-meter-row">
+                              <div className="mini-track" style={{ flex: 1 }}>
+                                <div
+                                  className="mini-fill"
+                                  style={{
+                                    width: `${Math.max(4, status.score)}%`,
+                                    background: status.tierColor
+                                  }}
+                                />
+                              </div>
+                              <span className="rel-score-text">{status.score}/100</span>
+                            </div>
+
+                            <div className="neighbor-card-actions">
+                              <button
+                                type="button"
+                                className="subtle-pill-btn clickable"
+                                onClick={() => performNeighborSocial(lab.tokenId, "chat")}
+                              >
+                                <MessageCircle size={11} /> Chat
+                              </button>
+                              <button
+                                type="button"
+                                className="subtle-pill-btn clickable"
+                                onClick={() => performNeighborSocial(lab.tokenId, "joke")}
+                              >
+                                <Smile size={11} /> Joke
+                              </button>
+                              <button
+                                type="button"
+                                className="subtle-pill-btn clickable"
+                                onClick={() => handleSendNeighborSpark(lab.tokenId)}
+                              >
+                                <Sparkles size={11} /> Spark
+                              </button>
+                              <button
+                                type="button"
+                                className="sector-btn clickable"
+                                onClick={() => handleEnterNeighborHome(lab)}
+                              >
+                                <DoorOpen size={11} /> Visit
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* SUB-TAB 3: COZY LAB GUESTBOOK, GOALS & STUDIO CAMERA */}
+                {consoleSubTab === "studio" && (
+                  <div className="world-drawer-stack">
+                    <div className={`world-goals-block ${guestbookOpen ? "guestbook-highlighted" : ""}`}>
+                      <div
+                        className="single-kicker"
+                        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}
+                      >
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <BookOpen size={12} /> Lab #{activeVessel.tokenId} Guestbook ·{" "}
+                          {guestbookEntries.length} notes
+                        </span>
+                        {isVisiting && (
+                          <button
+                            type="button"
+                            className="sector-btn clickable"
+                            style={{ padding: "3px 8px", fontSize: "0.66rem" }}
+                            onClick={handleReturnHome}
+                          >
+                            <Home size={10} /> Go Home
+                          </button>
+                        )}
+                      </div>
+                      <form className="guestbook-form" onSubmit={handleSignGuestbook}>
+                        <input
+                          type="text"
+                          value={guestbookDraft}
+                          maxLength={140}
+                          onChange={(e) => setGuestbookDraft(e.target.value)}
+                          placeholder={
+                            isVisiting
+                              ? `Leave a cozy note for ${visitingHostProfile?.name || "your host"}…`
+                              : "Write a welcome note for visiting neighbors…"
+                          }
+                          className="guestbook-input"
+                          aria-label="Guestbook message"
+                        />
+                        <button type="submit" className="sector-btn clickable">
+                          Sign
+                        </button>
+                      </form>
+                      <div className="guestbook-list">
+                        {guestbookEntries.slice(0, 6).map((note) => (
+                          <div key={note.id} className="guestbook-entry">
+                            <div className="guestbook-entry-head">
+                              <span className="cause-dot" style={{ background: note.accent }} />
+                              <strong>{note.authorName}</strong>
+                              <span className="tama-sub">{note.authorTitle}</span>
+                            </div>
+                            <p className="guestbook-entry-msg">{note.message}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="world-goals-block">
+                      <div className="single-kicker" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <ListChecks size={12} /> Lab goals · {goalsDoneCount} of 5
+                      </div>
+                      <div className="goals-list" style={{ marginTop: 6, paddingTop: 6 }}>
+                        {(
+                          [
+                            { key: "pet", label: "Pet or play with your lab companion" },
+                            { key: "proton", label: "Pop a floating proton inside 3D" },
+                            { key: "fold", label: "Wiggle or shake the live protein chain" },
+                            { key: "claim", label: "Claim mined ALCH coins" },
+                            { key: "room", label: "Build your first architectural room" }
+                          ] as const
+                        ).map((g) => (
+                          <div key={g.key} className={`goal-row ${effectiveGoals[g.key] ? "done" : ""}`}>
+                            <span className="goal-check">
+                              {effectiveGoals[g.key] ? <Check size={11} /> : null}
+                            </span>
+                            <span>{g.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="single-kicker" style={{ marginBottom: 8 }}>
+                        Studio &amp; Camera
+                      </div>
+                      <div className="tama-actions">
+                        <button type="button" className="subtle-pill-btn clickable" onClick={cycleLighting}>
+                          <Sun size={12} /> Light: {LIGHTING_LABELS[lightingMood]}
+                        </button>
+                        <button type="button" className="subtle-pill-btn clickable" onClick={cycleAtmosphere}>
+                          <CloudSnow size={12} /> Air: {ATMOSPHERE_LABELS[atmosphereMode]}
+                        </button>
+                        <button type="button" className="subtle-pill-btn clickable" onClick={handleSavePhoto}>
+                          <Camera size={12} /> Save PNG
+                        </button>
+                        <button
+                          type="button"
+                          className={`subtle-pill-btn clickable ${cameraMode === "follow" ? "active" : ""}`}
+                          onClick={() => {
+                            setCameraMode("follow");
+                            soundEngine.playTap(880);
+                          }}
+                        >
+                          <Footprints size={12} /> Follow Cam
+                        </button>
+                        <button
+                          type="button"
+                          className={`subtle-pill-btn clickable ${cameraMode === "orbit" ? "active" : ""}`}
+                          onClick={() => {
+                            setCameraMode("orbit");
+                            soundEngine.playTap(880);
+                          }}
+                        >
+                          <Compass size={12} /> Orbit Cam
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </aside>
+      )}
+
+      {/* Layer 3.5: Living Minted NFT Neighborhood Directory & Neighbor Inspector */}
+      {!creatorOpen && !openStation && neighborhoodDrawerOpen && (
+        <aside className="glass-panel world-station-drawer" aria-label="Minted NFT Neighborhood">
+          <div className="world-drawer-head">
+            <div className="world-drawer-title-group">
+              <span className="drawer-icon-medallion" style={{ "--bubble-accent": "#38bdf8" } as React.CSSProperties}>
+                <MapPin size={17} />
+              </span>
+              <div>
+                <div className="single-kicker">
+                  {townGrowth.title} · {neighbors.length + 1} Minted Homes
+                </div>
+                <h3 className="world-drawer-title">Alchemia Town</h3>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="inline-icon-btn clickable"
+              onClick={() => {
+                setNeighborhoodDrawerOpen(false);
+                setInspectedNeighbor(null);
+                setCameraMode("follow");
+              }}
+              aria-label="Close neighborhood panel"
+            >
+              <X size={14} />
+            </button>
+          </div>
+
+          <div className="world-drawer-scroll">
+            <div className="world-drawer-stack">
+              {/* Live Town Growth Progress & Civic Milestone Unlocks */}
+              <div className="town-growth-card">
+                <div className="town-growth-head">
+                  <strong>
+                    Stage {townGrowth.level}/5 · {townGrowth.title}
+                  </strong>
+                  <span>
+                    {townGrowth.nextMilestone
+                      ? `${neighbors.length + 1} / ${townGrowth.nextMilestone} mints`
+                      : `${neighbors.length + 1} mints · Max Tier`}
+                  </span>
+                </div>
+                <p className="town-growth-sub">{townGrowth.subtitle}</p>
+                <div className="town-growth-track">
+                  <div
+                    className="town-growth-fill"
+                    style={{ width: `${Math.max(8, townGrowth.progressPct)}%` }}
+                  />
+                </div>
+                <div className="wing-tags" style={{ marginTop: 8 }}>
+                  <span className="wing-tag built">● 4 Canal Bridges</span>
+                  <span className={`wing-tag ${townGrowth.transitUnlocked ? "built" : ""}`}>
+                    {townGrowth.transitUnlocked ? "● " : "○ "}Hover-Shuttle (10+)
+                  </span>
+                  <span className={`wing-tag ${townGrowth.skylineUnlocked ? "built" : ""}`}>
+                    {townGrowth.skylineUnlocked ? "● " : "○ "}Skyline Towers (25+)
+                  </span>
+                </div>
+              </div>
+
+              <div className="world-metrics-2x2">
+                <div className="science-metric">
+                  <span>Inner Boulevard</span>
+                  <strong>{ring1Placements.length}/8 walkable</strong>
+                </div>
+                <div className="science-metric">
+                  <span>Canal Suburbs</span>
+                  <strong>{ring2Placements.length}/16 walkable</strong>
+                </div>
+                <div className="science-metric">
+                  <span>Skyline District</span>
+                  <strong>{ring3Placements.length} towers</strong>
+                </div>
+                <div className="science-metric">
+                  <span>Community Pool</span>
+                  <strong>{impact.globalImpactEth.toFixed(3)} ETH</strong>
+                </div>
+              </div>
+
+              <div className="tama-actions">
+                <button
+                  type="button"
+                  className={`subtle-pill-btn clickable ${
+                    cameraMode === "neighborhood" ? "active" : ""
+                  }`}
+                  onClick={() => {
+                    setCameraMode((m) => (m === "neighborhood" ? "follow" : "neighborhood"));
+                    soundEngine.playTap(987.77);
+                  }}
+                >
+                  <Eye size={12} /> {cameraMode === "neighborhood" ? "Follow Cam" : "Aerial Vista"}
+                </button>
+                <button
+                  type="button"
+                  className="subtle-pill-btn clickable"
+                  onClick={handleReturnHome}
+                >
+                  <Home size={12} /> Home Lab
+                </button>
+                <button
+                  type="button"
+                  className="sector-btn clickable"
+                  onClick={() => handleSpawnNeighborMint(1)}
+                  title="Watch a newly minted NFT rise onto the next surveyed blueprint lot"
+                >
+                  <Plus size={12} /> +1 Mint
+                </button>
+                <button
+                  type="button"
+                  className="sector-btn eth clickable"
+                  onClick={() => handleSpawnNeighborMint(5)}
+                  title="Watch a 5-mint wave expand the town into new blocks & suburbs"
+                >
+                  <Sparkles size={12} /> +5 Wave
+                </button>
+                {onGoMint && (
+                  <button
+                    type="button"
+                    className="subtle-pill-btn clickable"
+                    onClick={onGoMint}
+                  >
+                    Mint Real Lab
+                  </button>
+                )}
+              </div>
+
+              {inspectedNeighbor && (() => {
+                const nTraits = deriveTraitsFromSeed(inspectedNeighbor.seed);
+                const npc = deriveNeighborCharacterProfile(inspectedNeighbor);
+                const isSwitchable = Boolean(
+                  switchableVessels?.some((sv) => sv.tokenId === inspectedNeighbor.tokenId) &&
+                    onSelectTokenId
+                );
+                const neighborNftUrl = buildAnimationUrl({
+                  tokenId: inspectedNeighbor.tokenId,
+                  seed: inspectedNeighbor.seed,
+                  causeId: inspectedNeighbor.causeId,
+                  complexityTier: inspectedNeighbor.complexityTier,
+                  sectorsMask: inspectedNeighbor.sectorsMask,
+                  tokenValueUsd: inspectedNeighbor.valueUsd,
+                  globalImpactEth: impact.globalImpactEth,
+                  totalSupply: effectiveTotalSupply
+                });
+
+                return (
+                  <div className="neighbor-inspector-card">
+                    <div className="neighbor-card-head">
+                      <span
+                        className="cause-dot"
+                        style={{ background: nTraits.palette.liquidMid }}
+                      />
+                      <div>
+                        <strong>
+                          Lab #{inspectedNeighbor.tokenId} · {nTraits.vessel}
+                        </strong>
+                        <div className="tama-sub">
+                          {npc.name} ({npc.title}) · {inspectedNeighbor.causeName}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="inline-icon-btn clickable"
+                        onClick={() => setInspectedNeighbor(null)}
+                        aria-label="Close neighbor details"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                    <div className="wing-tags" style={{ marginTop: 8 }}>
+                      {LAB_SECTORS.map((sec) => {
+                        const built = hasSector(inspectedNeighbor.sectorsMask, sec.id);
+                        return (
+                          <span key={sec.id} className={`wing-tag ${built ? "built" : ""}`}>
+                            {built ? "● " : "○ "}
+                            {sec.shortName}
+                          </span>
+                        );
+                      })}
+                    </div>
+                    <div className="neighbor-card-actions" style={{ marginTop: 10 }}>
+                      <button
+                        type="button"
+                        className="btn-mint-minimal clickable"
+                        style={{ padding: "6px 12px", fontSize: "0.74rem" }}
+                        onClick={() => handleEnterNeighborHome(inspectedNeighbor)}
+                      >
+                        <DoorOpen size={12} />{" "}
+                        {inspectedNeighbor.tokenId === vessel.tokenId ? "Return Home" : "Enter Home"}
+                      </button>
+                      <button
+                        type="button"
+                        className="sector-btn clickable"
+                        onClick={() => handleVisitNeighbor(inspectedNeighbor.tokenId)}
+                      >
+                        <MapPin size={11} /> Walk Outside
+                      </button>
+                      <button
+                        type="button"
+                        className="subtle-pill-btn clickable"
+                        onClick={() => handleSendNeighborSpark(inspectedNeighbor.tokenId)}
+                      >
+                        <Send size={11} /> Send Spark
+                      </button>
+                      {isSwitchable && (
+                        <button
+                          type="button"
+                          className="subtle-pill-btn clickable"
+                          onClick={() => {
+                            onSelectTokenId?.(inspectedNeighbor.tokenId);
+                            setVisitingHome(null);
+                            setNeighborhoodDrawerOpen(false);
+                          }}
+                        >
+                          Manage Own Lab
+                        </button>
+                      )}
+                      <a
+                        href={neighborNftUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="subtle-pill-btn clickable"
+                        style={{ textDecoration: "none" }}
+                      >
+                        NFT <ArrowUpRight size={11} />
+                      </a>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="single-kicker">
+                Walkable Boulevard Neighbors ({ring1Placements.length})
+              </div>
+              {ring1Placements.length === 0 ? (
+                <p className="science-summary">
+                  You&apos;re the pioneer founder of this research plaza! Click{" "}
+                  <strong>Preview New Mint</strong> above (or mint another NFT) to watch new
+                  architectural neighbor labs rise along the boulevard.
+                </p>
+              ) : (
+                <div className="world-sector-list">
+                  {ring1Placements.map((pl) => {
+                    const nTraits = deriveTraitsFromSeed(pl.lab.seed);
+                    const npc = deriveNeighborCharacterProfile(pl.lab);
+                    return (
+                      <div key={pl.lab.tokenId} className="neighbor-card">
+                        <div className="neighbor-card-head">
+                          <span
+                            className="cause-dot"
+                            style={{ background: nTraits.palette.liquidMid }}
+                          />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div className="neighbor-card-title">
+                              <strong>Lab #{pl.lab.tokenId}</strong>
+                              <span className="sector-bonus">
+                                {countSectors(pl.lab.sectorsMask)}/6 rooms
+                              </span>
+                            </div>
+                            <div className="tama-sub">
+                              {npc.name} · ${pl.lab.valueUsd} · {pl.lab.causeName}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="neighbor-card-actions">
+                          <button
+                            type="button"
+                            className="sector-btn clickable"
+                            onClick={() => handleEnterNeighborHome(pl.lab)}
+                          >
+                            <DoorOpen size={11} />{" "}
+                            {pl.lab.tokenId === vessel.tokenId ? "Return Home" : "Enter Home"}
+                          </button>
+                          <button
+                            type="button"
+                            className="subtle-pill-btn clickable"
+                            onClick={() => handleVisitNeighbor(pl.lab.tokenId)}
+                          >
+                            <Footprints size={11} /> Walk Over
+                          </button>
+                          <button
+                            type="button"
+                            className="subtle-pill-btn clickable"
+                            onClick={() => handleSendNeighborSpark(pl.lab.tokenId)}
+                          >
+                            <Sparkles size={11} /> Spark
+                          </button>
+                          <button
+                            type="button"
+                            className="subtle-pill-btn clickable"
+                            onClick={() => setInspectedNeighbor(pl.lab)}
+                          >
+                            Inspect
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {ring2Placements.length > 0 && (
+                <>
+                  <div className="single-kicker">
+                    Canal-Side Suburb Estates ({ring2Placements.length} — Walk across the 4 bridges!)
+                  </div>
+                  <div className="world-sector-list">
+                    {ring2Placements.map((pl) => {
+                      const nTraits = deriveTraitsFromSeed(pl.lab.seed);
+                      const npc = deriveNeighborCharacterProfile(pl.lab);
+                      return (
+                        <div key={pl.lab.tokenId} className="neighbor-card">
+                          <div className="neighbor-card-head">
+                            <span
+                              className="cause-dot"
+                              style={{ background: nTraits.palette.liquidMid }}
+                            />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div className="neighbor-card-title">
+                                <strong>Lab #{pl.lab.tokenId}</strong>
+                                <span className="sector-bonus">{pl.districtName}</span>
+                              </div>
+                              <div className="tama-sub">
+                                {npc.name} · {countSectors(pl.lab.sectorsMask)}/6 rooms · $
+                                {pl.lab.valueUsd}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="neighbor-card-actions">
+                            <button
+                              type="button"
+                              className="sector-btn clickable"
+                              onClick={() => handleEnterNeighborHome(pl.lab)}
+                            >
+                              <DoorOpen size={11} />{" "}
+                              {pl.lab.tokenId === vessel.tokenId ? "Return Home" : "Enter Home"}
+                            </button>
+                            <button
+                              type="button"
+                              className="subtle-pill-btn clickable"
+                              onClick={() => handleVisitNeighbor(pl.lab.tokenId)}
+                            >
+                              <Footprints size={11} /> Walk Over
+                            </button>
+                            <button
+                              type="button"
+                              className="subtle-pill-btn clickable"
+                              onClick={() => setInspectedNeighbor(pl.lab)}
+                            >
+                              Inspect
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
+              {ring3Placements.length > 0 && (
+                <div className="world-goals-block">
+                  <div className="single-kicker" style={{ marginBottom: 6 }}>
+                    Outer Skyline City Towers ({ring3Placements.length} minted NFTs — tap to visit)
+                  </div>
+                  <div className="wing-tags">
+                    {ring3Placements.map((pl) => (
+                      <button
+                        key={pl.lab.tokenId}
+                        type="button"
+                        className="wing-tag built clickable"
+                        style={{ border: "none" }}
+                        onClick={() => setInspectedNeighbor(pl.lab)}
+                      >
+                        #{pl.lab.tokenId}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </aside>
+      )}
+
+      {/* Layer 4: Plush Silver-White Glassmorphism Bottom Dock & Cute Icon Controls */}
+      {!creatorOpen && Boolean(savedProfile) && (
+        <div className="world-hud-bottom">
+          <div className="world-dock-pills" role="navigation" aria-label="Lab sections">
+            {LAB_STATIONS.map((st) => {
+              const Icon = STATION_ICONS[st.id];
+              const active = openStation === st.id;
+              const near = nearStation === st.id;
+              return (
+                <button
+                  key={st.id}
+                  type="button"
+                  className={`world-dock-btn clickable ${active ? "active" : ""} ${
+                    near ? "is-near" : ""
+                  }`}
+                  style={{ "--dock-accent": st.accent } as React.CSSProperties}
+                  onClick={() => navigateToStation(st.id)}
+                >
+                  <span className="dock-icon-charm">
+                    <Icon size={13} />
+                  </span>
+                  <span>{st.shortLabel}</span>
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              className={`world-dock-btn clickable ${neighborhoodDrawerOpen ? "active" : ""}`}
+              style={{ "--dock-accent": "#0ea5e9" } as React.CSSProperties}
+              onClick={handleOpenNeighborhood}
+            >
+              <span className="dock-icon-charm">
+                <Users size={13} />
+              </span>
+              <span>Town</span>
+            </button>
+          </div>
+
+          <div className="world-dock-right">
+            <button
+              type="button"
+              className={`world-pill clickable ${cameraMode !== "orbit" ? "active" : ""}`}
+              onClick={() => {
+                setCameraMode((prev) =>
+                  prev === "follow" ? "orbit" : prev === "orbit" ? "neighborhood" : "follow"
+                );
+                soundEngine.playTap(880);
+              }}
+              title="Cycle Follow / Orbit / Aerial Town camera (V)"
+            >
+              <span className="cute-icon-bubble is-xs">
+                {cameraMode === "follow" ? (
+                  <Footprints size={11} />
+                ) : cameraMode === "neighborhood" ? (
+                  <Compass size={11} />
+                ) : (
+                  <Eye size={11} />
+                )}
+              </span>
+              <span>
+                {cameraMode === "follow"
+                  ? "Follow"
+                  : cameraMode === "neighborhood"
+                    ? "Aerial"
+                    : "Orbit"}
+              </span>
+            </button>
+            <button
+              type="button"
+              className="world-pill clickable"
+              onClick={cycleLighting}
+              title="Switch world sky & time of day"
+            >
+              <span className="cute-icon-bubble is-xs">
+                {lightingMood === "golden" ? (
+                  <Sunset size={11} />
+                ) : lightingMood === "moonlit" ? (
+                  <Moon size={11} />
+                ) : (
+                  <Sun size={11} />
+                )}
+              </span>
+              <span>{LIGHTING_LABELS[lightingMood]}</span>
+            </button>
+            <button
+              type="button"
+              className="world-pill clickable"
+              onClick={cycleAtmosphere}
+              title="Switch atmosphere particles"
+            >
+              <span className="cute-icon-bubble is-xs">
+                {atmosphereMode === "snow" ? <CloudSnow size={11} /> : <Sparkles size={11} />}
+              </span>
+              <span>{ATMOSPHERE_LABELS[atmosphereMode]}</span>
+            </button>
+            <button
+              type="button"
+              className={`world-icon-orb clickable ${showTouchPad ? "active" : ""}`}
+              onClick={() => setShowTouchPad((v) => !v)}
+              title="Toggle on-screen walk pad"
+              aria-label="Toggle on-screen walk pad"
+            >
+              <Gamepad2 size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Subtle Frosted-Silver Keyboard & Walk Hint Micro-Capsule */}
+      {!creatorOpen && Boolean(savedProfile) && (
+        <div className="world-walk-hint">
+          <kbd className="world-walk-kbd">WASD</kbd> walk · <kbd className="world-walk-kbd">Click</kbd>{" "}
+          Sims actions · <kbd className="world-walk-kbd">N</kbd> town ·{" "}
+          <kbd className="world-walk-kbd">H</kbd> home · <kbd className="world-walk-kbd">C</kbd> look
+        </div>
+      )}
+
+      {/* Optional Compact On-Screen Walk D-Pad for Mobile / Touch / Mouse-Only Walking */}
+      {!creatorOpen && Boolean(savedProfile) && showTouchPad && (
+        <div className="world-dpad" aria-label="On-screen walk controls">
+          <div />
+          <button type="button" className="dpad-btn clickable" aria-label="Walk forward" {...bindTouchDir(0, 1)}>
+            <ArrowUp size={15} />
+          </button>
+          <div />
+          <button type="button" className="dpad-btn clickable" aria-label="Walk left" {...bindTouchDir(-1, 0)}>
+            <ArrowLeft size={15} />
+          </button>
+          <button
+            type="button"
+            className="dpad-btn dpad-center clickable"
+            aria-label="Interact or jump"
+            onClick={() => {
+              if (nearStation) setOpenStation((cur) => (cur === nearStation ? null : nearStation));
+              else setCharacterEmote((prev) => ({ emote: "hop", seq: (prev?.seq || 0) + 1 }));
+            }}
+          >
+            {nearStation ? "E" : "•"}
+          </button>
+          <button type="button" className="dpad-btn clickable" aria-label="Walk right" {...bindTouchDir(1, 0)}>
+            <ArrowRight size={15} />
+          </button>
+          <div />
+          <button type="button" className="dpad-btn clickable" aria-label="Walk backward" {...bindTouchDir(0, -1)}>
+            <ArrowDown size={15} />
+          </button>
+          <div />
+        </div>
+      )}
+
+      {/* Live Dual-Scale Architectural Blueprint Mini-Map Radar (Home Lab ↔ Neighborhood District!) */}
+      {!creatorOpen && Boolean(savedProfile) && !showTouchPad && (
+        <div className="world-minimap" aria-label="Lab & neighborhood blueprint mini-map">
+          <svg viewBox="0 0 112 112" className="world-minimap-svg">
+            {radarIsDistrict ? (
+              <>
+                {/* Full Growing Town Radar (r = 26.8): Outer Parkway, Canal Ring, 4 Bridges, Ring 1 + Ring 2 Homes & Open Lots */}
+                <circle
+                  cx="56"
+                  cy="56"
+                  r="46"
+                  fill="rgba(241,245,251,0.34)"
+                  stroke="rgba(148,163,184,0.38)"
+                  strokeWidth="1"
+                />
+                {/* Shimmering Blue Canal Ring (r ≈ 13.85 / 26.8 * 44 ≈ 22.7) */}
+                <circle
+                  cx="56"
+                  cy="56"
+                  r="23"
+                  fill="rgba(224,242,254,0.22)"
+                  stroke="rgba(56,189,248,0.62)"
+                  strokeWidth="2.8"
+                />
+                {/* 4 Cardinal Avenues & Canal Bridges */}
+                <line x1="12" y1="56" x2="100" y2="56" stroke="rgba(255,255,255,0.85)" strokeWidth="1.6" />
+                <line x1="56" y1="12" x2="56" y2="100" stroke="rgba(255,255,255,0.85)" strokeWidth="1.6" />
+                {/* Active Center Lab */}
+                <circle
+                  cx="56"
+                  cy="56"
+                  r="5.2"
+                  fill="rgba(91,141,239,0.28)"
+                  stroke="#5b8def"
+                  strokeWidth="1.2"
+                  className="clickable"
+                  style={{ cursor: "pointer" }}
+                  onClick={handleReturnHome}
+                >
+                  <title>
+                    {isVisiting ? `Return Home (Lab #${vessel.tokenId})` : `Home Lab #${vessel.tokenId}`}
+                  </title>
+                </circle>
+                {/* Community Fountain Dot */}
+                <circle
+                  cx={56 + (COMMUNITY_FOUNTAIN_POS[0] / 26.8) * 44}
+                  cy={56 + (COMMUNITY_FOUNTAIN_POS[1] / 26.8) * 44}
+                  r="2.4"
+                  fill="#0ea5e9"
+                  stroke="#ffffff"
+                  strokeWidth="0.8"
+                >
+                  <title>Community Research Fountain</title>
+                </circle>
+                {/* Surveyed Next-Mint Open Blueprint Lots (dashed cyan rings) */}
+                {upcomingBlueprintLots
+                  .filter((lot) => lot.ring === 1 || lot.ring === 2)
+                  .map((lot) => (
+                    <circle
+                      key={`lot-${lot.plotIndex}`}
+                      cx={56 + (lot.x / 26.8) * 44}
+                      cy={56 + (lot.z / 26.8) * 44}
+                      r="2.8"
+                      fill="none"
+                      stroke="#0ea5e9"
+                      strokeWidth="1"
+                      strokeDasharray="1.6 1.2"
+                    >
+                      <title>Next Mint · Lot #{lot.lotNumber}</title>
+                    </circle>
+                  ))}
+                {/* Clickable Ring 1 + Ring 2 Walkable Neighbor Homes! */}
+                {[...ring1Placements, ...ring2Placements].map((pl) => {
+                  const nx = 56 + (pl.x / 26.8) * 44;
+                  const ny = 56 + (pl.z / 26.8) * 44;
+                  const col = deriveTraitsFromSeed(pl.lab.seed).palette.liquidMid;
+                  return (
+                    <circle
+                      key={pl.lab.tokenId}
+                      cx={nx}
+                      cy={ny}
+                      r={pl.ring === 1 ? 3.5 : 3.0}
+                      fill={col}
+                      stroke="#ffffff"
+                      strokeWidth="1.1"
+                      className="clickable"
+                      style={{ cursor: "pointer" }}
+                      onClick={() => handleVisitNeighbor(pl.lab.tokenId)}
+                    >
+                      <title>
+                        Walk to Lab #{pl.lab.tokenId} ({pl.districtName})
+                      </title>
+                    </circle>
+                  );
+                })}
+              </>
+            ) : (
+              <>
+                {/* Architectural drafting crosshairs & rotunda ring */}
+                <circle cx="56" cy="56" r="48" fill="none" stroke="rgba(148,163,184,0.28)" strokeWidth="1" />
+                <circle
+                  cx="56"
+                  cy="56"
+                  r="24"
+                  fill="rgba(255,255,255,0.65)"
+                  stroke="rgba(100,116,139,0.42)"
+                  strokeWidth="1.2"
+                />
+                <circle
+                  cx="56"
+                  cy="56"
+                  r="9.5"
+                  fill="rgba(91,141,239,0.18)"
+                  stroke="rgba(91,141,239,0.55)"
+                  strokeWidth="1"
+                />
+                <line x1="8" y1="56" x2="104" y2="56" stroke="rgba(148,163,184,0.18)" strokeWidth="0.8" />
+                <line x1="56" y1="8" x2="56" y2="104" stroke="rgba(148,163,184,0.18)" strokeWidth="0.8" />
+
+                {/* 5 Clickable Station Dots */}
+                {LAB_STATIONS.map((st) => {
+                  const cx = 56 + (st.padX / 3.45) * 44;
+                  const cy = 56 + (st.padZ / 3.45) * 44;
+                  const active = openStation === st.id || nearStation === st.id;
+                  return (
+                    <circle
+                      key={st.id}
+                      cx={cx}
+                      cy={cy}
+                      r={active ? 5.2 : 3.8}
+                      fill={st.accent}
+                      stroke="#ffffff"
+                      strokeWidth="1.4"
+                      className="clickable"
+                      style={{ cursor: "pointer" }}
+                      onClick={() => navigateToStation(st.id)}
+                    >
+                      <title>{st.label}</title>
+                    </circle>
+                  );
+                })}
+              </>
+            )}
+
+            {/* Live 3D Companion Pet Blip */}
+            <circle
+              ref={radarPetRef}
+              cx="68"
+              cy="66"
+              r="2.8"
+              fill="#f472b6"
+              stroke="#ffffff"
+              strokeWidth="1"
+              style={{ opacity: 0 }}
+            />
+
+            {/* Live Researcher Directional Chevron */}
+            <g ref={radarPlayerRef} transform="translate(56 74)">
+              <polygon
+                points="0,-5.5 4.2,4.5 0,2.2 -4.2,4.5"
+                fill="#1a1f2c"
+                stroke="#ffffff"
+                strokeWidth="1"
+              />
+            </g>
+          </svg>
+          <span className="world-minimap-label">N</span>
+          <button
+            type="button"
+            className="world-minimap-toggle clickable"
+            onClick={() =>
+              setRadarManualMode((m) =>
+                m === "auto"
+                  ? radarIsDistrict
+                    ? "lab"
+                    : "district"
+                  : m === "district"
+                    ? "lab"
+                    : "district"
+              )
+            }
+            title="Switch mini-map between Home Lab and Neighborhood District"
+          >
+            {radarIsDistrict ? "District" : "Lab"}
+          </button>
+        </div>
+      )}
+
+      {/* Layer 5: First-Interaction & Re-Editable 3D Character Creator */}
+      {creatorOpen && (
+        <CharacterCreatorOverlay
+          draft={creatorDraft}
+          isFirstTime={!savedProfile}
+          turntableOn={creatorTurntable}
+          onChange={(next, emote) => {
+            setCreatorDraft(next);
+            if (emote) {
+              setCharacterEmote((prev) => ({ emote, seq: (prev?.seq || 0) + 1 }));
+            }
+          }}
+          onFocusZoneChange={(zone) => setCreatorFocusZone(zone)}
+          onToggleTurntable={() => setCreatorTurntable((v) => !v)}
+          onFlipView={(back) => {
+            setCreatorTurntable(false);
+            artworkRef.current?.flipCreatorView(back);
+          }}
+          onConfirm={(finalProfile) => {
+            const persisted = saveCharacterProfile(finalProfile);
+            setSavedProfile(persisted);
+            setCreatorDraft(persisted);
+            setCreatorOpen(false);
+            setCreatorTurntable(false);
+            setCreatorFocusZone("full");
+            setCameraMode("follow");
+            setFeedback(
+              `Welcome, ${persisted.name}! Walk around with WASD / Arrows or click any 3D floating monitor.`
+            );
+          }}
+          onCancel={
+            savedProfile
+              ? () => {
+                  setCreatorOpen(false);
+                  setCreatorTurntable(false);
+                  setCreatorFocusZone("full");
+                }
+              : undefined
+          }
+        />
+      )}
+    </div>
+  );
+}

@@ -174,6 +174,43 @@ class AlchemiaSoundEngine {
     this.playGlassBell(880, 0.028, 0.34, 0);
     this.playGlassBell(1318.51, 0.024, 0.44, 0.11);
   }
+
+  /**
+   * Subtle surface-aware porcelain / terrazzo footstep tap with randomized pitch & gain
+   * synced directly to the character's heel-strike cycle.
+   */
+  public playFootstep(surface: "rotunda" | "terrace" | "courtyard", sprint = false) {
+    const ctx = this.getContext(true);
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const baseFreq = surface === "rotunda" ? 410 : surface === "terrace" ? 310 : 240;
+    const jitter = 0.88 + Math.random() * 0.24;
+    const vol = (sprint ? 0.022 : 0.015) * (0.85 + Math.random() * 0.3);
+
+    const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(baseFreq * jitter, now);
+    osc.frequency.exponentialRampToValueAtTime(95 * jitter, now + 0.045);
+
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(baseFreq * 1.9, now);
+    filter.Q.setValueAtTime(1.4, now);
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(vol, now + 0.005);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.055);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.065);
+  }
 }
 
 export const soundEngine = new AlchemiaSoundEngine();

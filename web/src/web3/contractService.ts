@@ -277,6 +277,7 @@ export function buildAnimationUrl(params: {
   complexityTier?: number;
   sectorsMask?: number;
   tokenValueUsd?: number;
+  totalSupply?: number;
   contractAddress?: string;
   chainId?: number;
   tokenImpactEth?: number;
@@ -290,6 +291,9 @@ export function buildAnimationUrl(params: {
   if (params.complexityTier) url.searchParams.set("tier", String(params.complexityTier));
   if (params.sectorsMask !== undefined) url.searchParams.set("sectors", String(params.sectorsMask));
   if (params.tokenValueUsd !== undefined) url.searchParams.set("usd", String(params.tokenValueUsd));
+  if (params.totalSupply !== undefined && params.totalSupply > 0) {
+    url.searchParams.set("supply", String(params.totalSupply));
+  }
   if (params.contractAddress) {
     url.searchParams.set("contract", params.contractAddress);
     url.searchParams.set("chainId", String(params.chainId || 1));

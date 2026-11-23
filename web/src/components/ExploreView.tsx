@@ -7,6 +7,7 @@ import {
   Check,
   CloudSnow,
   Coins,
+  DoorOpen,
   Download,
   FileJson,
   Link2,
@@ -50,6 +51,7 @@ interface ExploreViewProps {
   selectedVessel: MintedVessel | null;
   onSelectVessel: (vessel: MintedVessel | null) => void;
   onOpenInMyLabs: (vessel: MintedVessel) => void;
+  onVisitHomeInMyLabs?: (vessel: MintedVessel) => void;
 }
 
 type GalleryFilter = "all" | "rooms" | "science" | "cats" | "dogs";
@@ -61,9 +63,10 @@ const CAMERA_BUTTONS: Array<{ id: CameraPreset; label: string }> = [
   { id: "molecule", label: "Protein" }
 ];
 
-const LIGHTING_ORDER: LightingMood[] = ["daylight", "silver", "moonlit"];
+const LIGHTING_ORDER: LightingMood[] = ["daylight", "golden", "silver", "moonlit"];
 const LIGHTING_LABELS: Record<LightingMood, string> = {
   daylight: "Day",
+  golden: "Golden",
   silver: "Silver",
   moonlit: "Mist"
 };
@@ -79,7 +82,8 @@ export function ExploreView({
   lastPulseAt,
   selectedVessel,
   onSelectVessel,
-  onOpenInMyLabs
+  onOpenInMyLabs,
+  onVisitHomeInMyLabs
 }: ExploreViewProps) {
   const artworkRef = useRef<ArtworkCanvasHandle>(null);
   const [liveCompute, setLiveCompute] = useState<ComputeSnapshot | null>(null);
@@ -147,7 +151,8 @@ export function ExploreView({
       contractAddress: state.contractAddress || undefined,
       chainId: state.chainId,
       tokenImpactEth: selectedVessel.impactEth,
-      globalImpactEth: state.globalDonatedEth
+      globalImpactEth: state.globalDonatedEth,
+      totalSupply: state.totalSupply
     });
 
     const handleCopyShareLink = async () => {
@@ -219,7 +224,7 @@ export function ExploreView({
               {copiedLink ? "Link copied" : "Share lab"}
             </button>
 
-            {selectedVessel.ownedByUser && (
+            {selectedVessel.ownedByUser ? (
               <button
                 type="button"
                 className="btn-mint-minimal clickable"
@@ -229,7 +234,17 @@ export function ExploreView({
                 <Building2 size={14} />
                 Open in My Labs
               </button>
-            )}
+            ) : onVisitHomeInMyLabs ? (
+              <button
+                type="button"
+                className="btn-mint-minimal clickable"
+                style={{ padding: "10px 20px", fontSize: "0.84rem" }}
+                onClick={() => onVisitHomeInMyLabs(selectedVessel)}
+              >
+                <DoorOpen size={14} />
+                Visit Home in 3D
+              </button>
+            ) : null}
 
             <a
               href={animationUrl}
