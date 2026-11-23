@@ -10,6 +10,7 @@ import {
   Download,
   FileJson,
   Link2,
+  RefreshCw,
   Search,
   Sun,
   Volume2,
@@ -85,6 +86,7 @@ export function ExploreView({
   const [camPreset, setCamPreset] = useState<{ preset: CameraPreset; seq: number } | null>(null);
   const [lightingMood, setLightingMood] = useState<LightingMood>("daylight");
   const [atmosphereMode, setAtmosphereMode] = useState<AtmosphereMode>("clear");
+  const [autoSpin, setAutoSpin] = useState(true);
   const [soundOn, setSoundOn] = useState(() => soundEngine.isEnabled());
   const [tapNote, setTapNote] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -251,6 +253,7 @@ export function ExploreView({
                 cameraPreset={camPreset}
                 lightingMood={lightingMood}
                 atmosphereMode={atmosphereMode}
+                autoRotate={autoSpin}
                 onComputeSnapshot={setLiveCompute}
                 onInteractiveEvent={(ev) => {
                   setTapNote(
@@ -305,6 +308,18 @@ export function ExploreView({
               <button type="button" className="preset-chip clickable" onClick={cycleAtmosphere}>
                 <CloudSnow size={11} style={{ verticalAlign: "-1px", marginRight: 4 }} />
                 {ATMOSPHERE_LABELS[atmosphereMode]}
+              </button>
+              <button
+                type="button"
+                className={`preset-chip clickable ${autoSpin ? "active" : ""}`}
+                onClick={() => {
+                  setAutoSpin((v) => !v);
+                  soundEngine.playTap(880);
+                }}
+                title="Toggle smooth 3D turntable orbit"
+              >
+                <RefreshCw size={11} style={{ verticalAlign: "-1px", marginRight: 4 }} />
+                Spin
               </button>
               <button
                 type="button"

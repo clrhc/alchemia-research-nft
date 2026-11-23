@@ -1108,7 +1108,14 @@ export function getDailyFoldingChallenge(nowMs = Date.now()): DailyFoldingChalle
 
 export function downloadScienceCertificateFromSnapshot(
   snap: ComputeSnapshot,
-  extraMetrics?: { nativeContactQ?: number; helixPct?: number; sheetPct?: number }
+  extraMetrics?: {
+    nativeContactQ?: number;
+    helixPct?: number;
+    sheetPct?: number;
+    meanCaBondAngstrom?: number;
+    stericClashes?: number;
+    geometryGrade?: string;
+  }
 ) {
   const cert = {
     schema: "alchemia.open-science.certificate.v1",
@@ -1137,6 +1144,14 @@ export function downloadScienceCertificateFromSnapshot(
           ? {
               helixPct: extraMetrics.helixPct,
               sheetPct: extraMetrics.sheetPct ?? 0
+            }
+          : null,
+      geometryValidation:
+        typeof extraMetrics?.meanCaBondAngstrom === "number"
+          ? {
+              meanCaBondAngstrom: extraMetrics.meanCaBondAngstrom,
+              stericClashes: extraMetrics.stericClashes ?? 0,
+              grade: extraMetrics.geometryGrade ?? "Clean"
             }
           : null,
       endToEndDistanceAngstrom: Number(snap.endToEndDistance.toFixed(4)),

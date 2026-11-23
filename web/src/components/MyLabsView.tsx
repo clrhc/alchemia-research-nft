@@ -48,6 +48,7 @@ import {
   assignSecondaryStructurePSEA,
   computeContactMap,
   computeNativeContactFractionQ,
+  computeStructureGeometryQuality,
   downloadMMCIFFromSnapshot
 } from "../engine/structuralAnalysis";
 import { soundEngine } from "../engine/soundEngine";
@@ -215,6 +216,7 @@ export function MyLabsView({
     }
   });
   const [showContactMap, setShowContactMap] = useState(false);
+  const [showBestFold, setShowBestFold] = useState(false);
   const [highlightedResidueIdx, setHighlightedResidueIdx] = useState<number | null>(null);
   const [showGoals, setShowGoals] = useState(false);
   const [goals, setGoals] = useState<Record<GoalKey, boolean>>(() => loadGoals());
@@ -328,7 +330,8 @@ export function MyLabsView({
     return {
       ss: assignSecondaryStructurePSEA(coords),
       contacts: computeContactMap(coords),
-      nativeQ: computeNativeContactFractionQ(liveSnap.pdbBenchmarkId, coords)
+      nativeQ: computeNativeContactFractionQ(liveSnap.pdbBenchmarkId, coords),
+      geometry: computeStructureGeometryQuality(coords)
     };
   }, [liveSnap]);
 
@@ -561,6 +564,7 @@ export function MyLabsView({
               lightingMood={lightingMood}
               atmosphereMode={atmosphereMode}
               highlightedResidueIdx={highlightedResidueIdx}
+              showBestFold={showBestFold}
               previewSectorId={previewSectorId}
               benchmarkIndex={selectedBenchmark}
               foldSignal={foldSignal}
@@ -1042,7 +1046,8 @@ export function MyLabsView({
                     {structuralStats ? (
                       <span>
                         Helix {structuralStats.ss.helixPct}% · Sheet {structuralStats.ss.sheetPct}% ·{" "}
-                        {liveSnap.replicaSwaps} swaps
+                        {structuralStats.geometry.meanCaBondAngstrom.toFixed(2)}Å Cα ·{" "}
+                        {structuralStats.geometry.stericClashes} clashes
                       </span>
                     ) : (
                       <span>
@@ -1109,6 +1114,17 @@ export function MyLabsView({
                   </button>
                   <button
                     type="button"
+                    className={`subtle-pill-btn clickable ${showBestFold ? "active" : ""}`}
+                    onClick={() => {
+                      setShowBestFold((v) => !v);
+                      soundEngine.playTap(987.77);
+                    }}
+                    title="Switch 3D cage between lowest-energy best fold and live search"
+                  >
+                    {showBestFold ? "Viewing best" : "Show best"}
+                  </button>
+                  <button
+                    type="button"
                     className="subtle-pill-btn clickable"
                     onClick={() => downloadPDBFromSnapshot(liveSnap)}
                   >
@@ -1130,7 +1146,10 @@ export function MyLabsView({
                       downloadScienceCertificateFromSnapshot(liveSnap, {
                         nativeContactQ: structuralStats?.nativeQ,
                         helixPct: structuralStats?.ss.helixPct,
-                        sheetPct: structuralStats?.ss.sheetPct
+                        sheetPct: structuralStats?.ss.sheetPct,
+                        meanCaBondAngstrom: structuralStats?.geometry.meanCaBondAngstrom,
+                        stericClashes: structuralStats?.geometry.stericClashes,
+                        geometryGrade: structuralStats?.geometry.grade
                       })
                     }
                   >

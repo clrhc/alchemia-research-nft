@@ -25,6 +25,8 @@ interface ArtworkCanvasProps {
   lightingMood?: LightingMood;
   atmosphereMode?: AtmosphereMode;
   highlightedResidueIdx?: number | null;
+  showBestFold?: boolean;
+  autoRotate?: boolean;
   benchmarkIndex?: number | null;
   foldSignal?: { action: "wiggle" | "shake" | "bury"; seq: number } | null;
   onComputeSnapshot?: (snap: ComputeSnapshot) => void;
@@ -43,6 +45,8 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
     lightingMood = "daylight",
     atmosphereMode = "clear",
     highlightedResidueIdx = null,
+    showBestFold = false,
+    autoRotate,
     benchmarkIndex = null,
     foldSignal = null,
     onComputeSnapshot,
@@ -146,6 +150,16 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
   useEffect(() => {
     rendererRef.current?.setHighlightedResidue(highlightedResidueIdx);
   }, [highlightedResidueIdx]);
+
+  useEffect(() => {
+    rendererRef.current?.setShowBestFold(showBestFold);
+  }, [showBestFold]);
+
+  useEffect(() => {
+    if (typeof autoRotate === "boolean") {
+      rendererRef.current?.setAutoRotate(autoRotate);
+    }
+  }, [autoRotate]);
 
   useEffect(() => {
     if (benchmarkIndex !== null && benchmarkIndex >= 0) {

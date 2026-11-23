@@ -2025,6 +2025,12 @@ select:focus-visible,
   color: #047857;
 }
 
+.subtle-pill-btn.active {
+  background: #232a38;
+  border-color: #232a38;
+  color: #ffffff;
+}
+
 @media (max-width: 900px) {
   .single-view-grid,
   .mylabs-grid {

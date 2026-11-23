@@ -205,6 +205,7 @@ export class Alchemy3DRenderer {
   private builtWingGroups: Array<{ sectorId: number; name: string; group: THREE.Group }> = [];
   private highlightedResidueIdx: number | null = null;
   private highlightHalo: THREE.Sprite | null = null;
+  private showBestFold = false;
   private bursts: Burst3D[] = [];
   private shockwaveRing: THREE.Mesh | null = null;
 
@@ -403,6 +404,15 @@ export class Alchemy3DRenderer {
 
   public setHighlightedResidue(index: number | null) {
     this.highlightedResidueIdx = index;
+  }
+
+  public setShowBestFold(showBest: boolean) {
+    this.showBestFold = showBest;
+    this.lastRibbonUpdateMs = 0; // force immediate Mol* ribbon refresh
+  }
+
+  public setAutoRotate(enabled: boolean) {
+    this.controls.autoRotate = enabled;
   }
 
   public selectBenchmark(benchmarkIndex: number) {
@@ -3577,13 +3587,17 @@ export class Alchemy3DRenderer {
     }
 
     // Real 3D Ball-and-Stick Protein Folding Update (Angstroms -> 3D Scene Units)
-    if (this.proteinGroup && this.residueMeshes.length === snap.residues.length) {
+    const displayResidues =
+      this.showBestFold && snap.bestResidues.length === snap.residues.length
+        ? snap.bestResidues
+        : snap.residues;
+    if (this.proteinGroup && this.residueMeshes.length === displayResidues.length) {
       this.proteinGroup.rotation.y = t * 0.48;
       // Scale cleanly whether folding 10-aa Chignolin or 36-aa Villin HP36
-      const angstromScale = snap.residues.length > 26 ? 0.039 : snap.residues.length > 16 ? 0.05 : 0.062;
+      const angstromScale = displayResidues.length > 26 ? 0.039 : displayResidues.length > 16 ? 0.05 : 0.062;
 
-      for (let i = 0; i < snap.residues.length; i++) {
-        const r = snap.residues[i];
+      for (let i = 0; i < displayResidues.length; i++) {
+        const r = displayResidues[i];
         const mesh = this.residueMeshes[i];
         mesh.position.set(r.x * angstromScale, r.y * angstromScale, r.z * angstromScale);
         const baseScale = r.aromatic ? 1.15 : r.hydrophobic ? 1.05 : 0.92;
@@ -3617,7 +3631,7 @@ export class Alchemy3DRenderer {
         const tubularSegs = Math.min(72, this.proteinRibbonCurvePts.length * 3);
         const radialSegs = 6;
         const nextGeo = new THREE.TubeGeometry(curve, tubularSegs, 0.023, radialSegs, false);
-        const ssCodes = assignSecondaryStructurePSEA(snap.residues).codes;
+        const ssCodes = assignSecondaryStructurePSEA(displayResidues).codes;
         const posCount = nextGeo.attributes.position.count;
         const colArr = new Float32Array(posCount * 3);
         const ringStride = radialSegs + 1;

@@ -17,6 +17,13 @@ export interface ContactPair {
   kind: "hydrophobic" | "salt-bridge" | "aromatic" | "backbone";
 }
 
+export interface GeometryQualityReport {
+  meanCaBondAngstrom: number;
+  bondRmsdAngstrom: number;
+  stericClashes: number;
+  grade: "Clean" | "Good" | "Refining";
+}
+
 function vecSub(a: ResidueNode, b: ResidueNode) {
   return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
 }
@@ -198,6 +205,53 @@ export function computeContactMap(residues: ResidueNode[], cutoffAngstrom = 7.8)
     }
   }
   return pairs;
+}
+
+/**
+ * MolProbity-inspired Cα backbone geometry & steric clash audit:
+ *  - Verifies peptide Cα–Cα bond length near ideal 3.80 Å
+ *  - Counts severe non-local steric overlaps (< 3.5 Å for |i - j| >= 2)
+ */
+export function computeStructureGeometryQuality(
+  residues: ResidueNode[]
+): GeometryQualityReport {
+  const n = residues.length;
+  if (n < 2) {
+    return { meanCaBondAngstrom: 3.8, bondRmsdAngstrom: 0, stericClashes: 0, grade: "Clean" };
+  }
+
+  let bondSum = 0;
+  let bondSqErr = 0;
+  const bondCount = n - 1;
+  for (let i = 0; i < bondCount; i++) {
+    const a = residues[i];
+    const b = residues[i + 1];
+    const d = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+    bondSum += d;
+    bondSqErr += (d - 3.8) ** 2;
+  }
+
+  let clashes = 0;
+  const clashSq = 3.5 * 3.5;
+  for (let i = 0; i < n; i++) {
+    const a = residues[i];
+    for (let j = i + 2; j < n; j++) {
+      const b = residues[j];
+      const dSq = (b.x - a.x) ** 2 + (b.y - a.y) ** 2 + (b.z - a.z) ** 2;
+      if (dSq < clashSq) clashes++;
+    }
+  }
+
+  const meanCaBondAngstrom = Number((bondSum / bondCount).toFixed(2));
+  const bondRmsdAngstrom = Number(Math.sqrt(bondSqErr / bondCount).toFixed(2));
+  const grade: GeometryQualityReport["grade"] =
+    clashes === 0 && bondRmsdAngstrom <= 0.35
+      ? "Clean"
+      : clashes <= 2 && bondRmsdAngstrom <= 0.6
+        ? "Good"
+        : "Refining";
+
+  return { meanCaBondAngstrom, bondRmsdAngstrom, stericClashes: clashes, grade };
 }
 
 /**

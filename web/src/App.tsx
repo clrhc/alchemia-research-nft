@@ -1,13 +1,22 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { Sparkles } from "lucide-react";
 import { ArtworkCanvas } from "./components/ArtworkCanvas";
 import { BackgroundCanvas } from "./components/BackgroundCanvas";
 import { CustomCursor } from "./components/CustomCursor";
-import { ExploreView } from "./components/ExploreView";
-import { MyLabsView } from "./components/MyLabsView";
-import { WalletModal } from "./components/WalletModal";
-import { WhitePaperSheet } from "./components/WhitePaperSheet";
+
+const ExploreView = lazy(() =>
+  import("./components/ExploreView").then((m) => ({ default: m.ExploreView }))
+);
+const MyLabsView = lazy(() =>
+  import("./components/MyLabsView").then((m) => ({ default: m.MyLabsView }))
+);
+const WalletModal = lazy(() =>
+  import("./components/WalletModal").then((m) => ({ default: m.WalletModal }))
+);
+const WhitePaperSheet = lazy(() =>
+  import("./components/WhitePaperSheet").then((m) => ({ default: m.WhitePaperSheet }))
+);
 import { type LiveImpactState } from "./engine/alchemyRenderer";
 import { randomSeedHex } from "./engine/prng";
 import type { ComputeSnapshot } from "./engine/researchCompute";
@@ -681,35 +690,39 @@ export function App() {
         )}
 
         {page === "explore" && (
-          <ExploreView
-            state={state}
-            lastPulseAt={lastPulseAt}
-            selectedVessel={exploreSelected}
-            onSelectVessel={setExploreSelected}
-            onOpenInMyLabs={(v) => {
-              setMyLabTokenId(v.tokenId);
-              setPage("mylabs");
-            }}
-          />
+          <Suspense fallback={null}>
+            <ExploreView
+              state={state}
+              lastPulseAt={lastPulseAt}
+              selectedVessel={exploreSelected}
+              onSelectVessel={setExploreSelected}
+              onOpenInMyLabs={(v) => {
+                setMyLabTokenId(v.tokenId);
+                setPage("mylabs");
+              }}
+            />
+          </Suspense>
         )}
 
         {page === "mylabs" && (
-          <MyLabsView
-            state={state}
-            labSparks={labSparks}
-            lastPulseAt={lastPulseAt}
-            activeTokenId={myLabTokenId}
-            onSelectTokenId={setMyLabTokenId}
-            onBuildSector={handleBuildSector}
-            onUpgradeVessel={handleUpgradeVessel}
-            onClaimCoins={handleClaimCoins}
-            onDonateCoins={handleDonateCoins}
-            onAnchorProof={handleAnchorProof}
-            onAwardPlayBonus={handleAwardPlayBonus}
-            onConnectWallet={handleConnectWallet}
-            onSpendCoinsForTreat={handleSpendSparksForTreat}
-            onGoMint={() => setPage("mint")}
-          />
+          <Suspense fallback={null}>
+            <MyLabsView
+              state={state}
+              labSparks={labSparks}
+              lastPulseAt={lastPulseAt}
+              activeTokenId={myLabTokenId}
+              onSelectTokenId={setMyLabTokenId}
+              onBuildSector={handleBuildSector}
+              onUpgradeVessel={handleUpgradeVessel}
+              onClaimCoins={handleClaimCoins}
+              onDonateCoins={handleDonateCoins}
+              onAnchorProof={handleAnchorProof}
+              onAwardPlayBonus={handleAwardPlayBonus}
+              onConnectWallet={handleConnectWallet}
+              onSpendCoinsForTreat={handleSpendSparksForTreat}
+              onGoMint={() => setPage("mint")}
+            />
+          </Suspense>
         )}
 
         {/* Quiet White Paper Link Pinned at the Very Bottom of the Site */}
@@ -724,24 +737,32 @@ export function App() {
         </footer>
       </div>
 
-      <WhitePaperSheet
-        open={showWhitePaper}
-        onClose={() => setShowWhitePaper(false)}
-        state={state}
-        animationUrl={previewAnimationUrl}
-        liveCompute={liveCompute}
-      />
+      {showWhitePaper && (
+        <Suspense fallback={null}>
+          <WhitePaperSheet
+            open={showWhitePaper}
+            onClose={() => setShowWhitePaper(false)}
+            state={state}
+            animationUrl={previewAnimationUrl}
+            liveCompute={liveCompute}
+          />
+        </Suspense>
+      )}
 
-      <WalletModal
-        open={showWalletModal}
-        onClose={() => setShowWalletModal(false)}
-        walletAddress={state.walletAddress}
-        chainId={state.chainId}
-        connecting={walletConnecting}
-        error={walletError}
-        onConnectProvider={handleConnectProvider}
-        onDisconnect={handleDisconnectWallet}
-      />
+      {showWalletModal && (
+        <Suspense fallback={null}>
+          <WalletModal
+            open={showWalletModal}
+            onClose={() => setShowWalletModal(false)}
+            walletAddress={state.walletAddress}
+            chainId={state.chainId}
+            connecting={walletConnecting}
+            error={walletError}
+            onConnectProvider={handleConnectProvider}
+            onDisconnect={handleDisconnectWallet}
+          />
+        </Suspense>
+      )}
     </>
   );
 }

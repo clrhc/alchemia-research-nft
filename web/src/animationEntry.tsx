@@ -8,6 +8,7 @@ import {
   Eye,
   EyeOff,
   Heart,
+  RefreshCw,
   Sparkles,
   Sun,
   Volume2,
@@ -73,6 +74,7 @@ function StandaloneAnimationViewer() {
   const [showHud, setShowHud] = useState(true);
   const [lightingMood, setLightingMood] = useState<LightingMood>("daylight");
   const [atmosphereMode, setAtmosphereMode] = useState<AtmosphereMode>("clear");
+  const [autoSpin, setAutoSpin] = useState(true);
   const [soundOn, setSoundOn] = useState(() => soundEngine.isEnabled());
   const [camPreset, setCamPreset] = useState<{ preset: CameraPreset; seq: number } | null>(null);
   const [liveSnap, setLiveSnap] = useState<ComputeSnapshot | null>(null);
@@ -229,6 +231,7 @@ function StandaloneAnimationViewer() {
           cameraPreset={camPreset}
           lightingMood={lightingMood}
           atmosphereMode={atmosphereMode}
+          autoRotate={autoSpin}
           tamagotchiSignal={tamaSignal}
           onComputeSnapshot={setLiveSnap}
           onInteractiveEvent={(ev) => {
@@ -281,6 +284,19 @@ function StandaloneAnimationViewer() {
           >
             <CloudSnow size={12} />
             {ATMOSPHERE_LABELS[atmosphereMode]}
+          </button>
+
+          <button
+            type="button"
+            className="art-hud-badge clickable"
+            onClick={() => {
+              setAutoSpin((v) => !v);
+              soundEngine.playTap(880);
+            }}
+            style={{ cursor: "pointer" }}
+          >
+            <RefreshCw size={12} />
+            {autoSpin ? "Spin on" : "Spin off"}
           </button>
 
           <button
