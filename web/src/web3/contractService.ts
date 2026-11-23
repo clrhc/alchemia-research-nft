@@ -23,11 +23,15 @@ export interface MintedVessel {
   causeName: string;
   minter: string;
   ownedByUser: boolean;
+  onChain?: boolean;
   valueUsd: number;
   impactEth: number;
   sectorsMask: number;
   workUnits: number;
   lastClaimMs: number;
+  onChainPendingCoins?: number;
+  onChainMiningRate?: number;
+  syncedAtMs?: number;
   mintedAt: number;
   txHash?: string;
 }
@@ -357,6 +361,7 @@ export async function fetchOnChainCollectionSnapshot(
         category: c.category,
         summary: fb.summary,
         recipientLabel: `${c.researchWallet.slice(0, 6)}…${c.researchWallet.slice(-4)}`,
+        researchWallet: c.researchWallet,
         raisedEth: Number(ethers.formatEther(c.totalRaisedWei)),
         mintCount: Number(c.mintCount),
         accent: fb.accent
@@ -379,6 +384,11 @@ export async function fetchOnChainCollectionSnapshot(
         contract.ownerOf(id)
       ]);
       const valEth = Number(ethers.formatEther(snap.tokenTotalValueWei));
+      const pendingCoinsNum = Number(ethers.formatEther(snap.pendingCoins));
+      const miningRateNum = Number(ethers.formatEther(snap.miningRatePerHour));
+      const nowMs = Date.now();
+      const approxElapsedMs =
+        miningRateNum > 0 ? Math.round((pendingCoinsNum / miningRateNum) * 3600000) : 0;
       const isMine =
         Boolean(walletAddress) &&
         String(owner).toLowerCase() === String(walletAddress).toLowerCase();
@@ -389,11 +399,15 @@ export async function fetchOnChainCollectionSnapshot(
         causeName: String(snap.causeName),
         minter: isMine ? "You" : `${String(owner).slice(0, 6)}…${String(owner).slice(-4)}`,
         ownedByUser: isMine,
+        onChain: true,
         valueUsd: Math.max(1, Math.round(ethToUsd(valEth))),
         impactEth: Number(ethers.formatEther(snap.tokenImpactWei)),
         sectorsMask: Number(snap.sectorsMask),
         workUnits: Number(snap.workUnits),
-        lastClaimMs: Date.now() - Math.round(Number(ethers.formatEther(snap.pendingCoins)) * 60000),
+        lastClaimMs: nowMs - approxElapsedMs,
+        onChainPendingCoins: pendingCoinsNum,
+        onChainMiningRate: miningRateNum,
+        syncedAtMs: nowMs,
         mintedAt: Number(snap.mintedAt)
       };
     })

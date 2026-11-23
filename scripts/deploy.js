@@ -74,6 +74,13 @@ async function main() {
   const tx = await coin.initializeController(nftAddr);
   await tx.wait();
 
+  // Optional Mainnet security hardening: renounce $ALCH ownership after controller is locked
+  if (process.env.RENOUNCE_COIN_OWNERSHIP === "true") {
+    const renTx = await coin.renounceOwnership();
+    await renTx.wait();
+    console.log("AlchemiaCoin ownership renounced (immutable zero-tax & 100M cap)");
+  }
+
   console.log("AlchemiaCoin ($ALCH):   ", coinAddr);
   console.log("AlchemiaRenderer:       ", rendererAddr);
   console.log("AlchemiaImpactNFT:      ", nftAddr);

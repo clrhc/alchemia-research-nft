@@ -9,7 +9,9 @@ import {
   createSoftAOTexture
 } from "./architectTextures";
 import { SeededRNG, deriveTraitsFromSeed } from "./prng";
-import { ResearchComputeEngine, type ComputeSnapshot } from "./researchCompute";
+import type { ComputeSnapshot, ResidueNode } from "./researchCompute";
+import { ResearchComputeRunner } from "./researchRunner";
+import { soundEngine } from "./soundEngine";
 import { hasSector } from "../web3/sectors";
 import { stageFromEth, type AlchemyTraits } from "./traits";
 import type { LiveImpactState } from "./alchemyRenderer";
@@ -53,11 +55,21 @@ interface CompanionRig {
   tail: THREE.Object3D;
   paw?: THREE.Object3D;
   eyes: THREE.Mesh[];
+  homePos: THREE.Vector3;
+  homeRotY: number;
   baseY: number;
   isDog: boolean;
+  petReaction: number;
+}
+
+interface TreatDrop3D {
+  mesh: THREE.Mesh;
+  pos: THREE.Vector3;
+  eaten: boolean;
 }
 
 export type CameraPreset = "iso" | "top" | "pet" | "molecule";
+export type LightingMood = "daylight" | "silver" | "moonlit";
 
 export interface InteractiveEvent {
   kind: "pet-clicked" | "atom-popped";
@@ -95,7 +107,7 @@ export class Alchemy3DRenderer {
 
   private traits: AlchemyTraits;
   private impact: LiveImpactState;
-  private compute: ResearchComputeEngine;
+  private compute: ResearchComputeRunner;
   private onComputeTick?: (snap: ComputeSnapshot) => void;
   private onInteractiveEvent?: (ev: InteractiveEvent) => void;
 
@@ -103,10 +115,25 @@ export class Alchemy3DRenderer {
   private pointerDownPos = { x: 0, y: 0 };
   private desiredCamPos: THREE.Vector3 | null = null;
   private desiredCamTarget: THREE.Vector3 | null = null;
-  private toyBall: { mesh: THREE.Mesh; vel: THREE.Vector3; life: number } | null = null;
+  private toyBall: { mesh: THREE.Mesh; vel: THREE.Vector3; life: number; bounceCooldown: number } | null = null;
+  private treats: TreatDrop3D[] = [];
+
+  private hemiLight: THREE.HemisphereLight | null = null;
+  private keyLight: THREE.DirectionalLight | null = null;
+  private rimLight: THREE.DirectionalLight | null = null;
+  private causticLight: THREE.PointLight | null = null;
+  private lightingMood: LightingMood = "daylight";
 
   private rootGroup = new THREE.Group();
   private dynamicGroup = new THREE.Group();
+  private previewGhostGroup = new THREE.Group();
+  private previewSectorId: number | null = null;
+  private buildPopScale = 1;
+  private proteinChainLength = -1;
+  private cryoHelixes: THREE.Object3D[] = [];
+  private greenhouseStems: THREE.Object3D[] = [];
+  private greenhousePollen: Array<{ mesh: THREE.Mesh; base: THREE.Vector3; phase: number }> = [];
+  private spirePulseRing: THREE.Mesh | null = null;
 
   // Animated 3D references
   private liquidMesh: THREE.Mesh | null = null;
@@ -172,11 +199,18 @@ export class Alchemy3DRenderer {
     this.onComputeTick = onComputeTick;
     this.onInteractiveEvent = onInteractiveEvent;
     this.traits = deriveTraitsFromSeed(initialState.seed);
-    this.compute = new ResearchComputeEngine(
+    this.compute = new ResearchComputeRunner(
       initialState.seed,
       initialState.causeId,
+      initialState.tokenId,
       () => this.onResearchDiscovery(),
-      initialState.tokenId
+      (snap) => {
+        const now = performance.now();
+        if (now - this.lastUiEmit > 240) {
+          this.lastUiEmit = now;
+          this.onComputeTick?.(snap);
+        }
+      }
     );
 
     this.terrazzoTex = createAlabasterTerrazzoTexture();
@@ -240,6 +274,7 @@ export class Alchemy3DRenderer {
     this.setupArchitecturalStudioLighting();
     this.scene.add(this.rootGroup);
     this.rootGroup.add(this.dynamicGroup);
+    this.rootGroup.add(this.previewGhostGroup);
 
     this.syncFillTarget();
     this.displayFill = this.targetFill;
@@ -249,6 +284,7 @@ export class Alchemy3DRenderer {
 
   private setupArchitecturalStudioLighting() {
     const hemi = new THREE.HemisphereLight("#ffffff", "#dae2ee", 1.2);
+    this.hemiLight = hemi;
     this.scene.add(hemi);
 
     // Architectural studio key light casting crisp softbox shadows
@@ -265,11 +301,13 @@ export class Alchemy3DRenderer {
     key.shadow.camera.bottom = -d;
     key.shadow.bias = -0.0004;
     key.shadow.radius = 3.5;
+    this.keyLight = key;
     this.scene.add(key);
 
     // Cool sky rim light sculpting glass & silver silhouettes
     const rim = new THREE.DirectionalLight("#c9e0ff", 0.78);
     rim.position.set(-7.0, 5.5, -5.2);
+    this.rimLight = rim;
     this.scene.add(rim);
 
     const bounce = new THREE.PointLight("#ffefe0", 0.42, 16);
@@ -318,6 +356,142 @@ export class Alchemy3DRenderer {
   public setComputeActive(active: boolean) {
     this.compute.setActive(active);
     this.onComputeTick?.(this.compute.getSnapshot());
+  }
+
+  public selectBenchmark(benchmarkIndex: number) {
+    this.compute.selectBenchmark(benchmarkIndex);
+    this.onComputeTick?.(this.compute.getSnapshot());
+    this.triggerCatalyticPulse(0.7);
+  }
+
+  public setLightingMood(mood: LightingMood) {
+    this.lightingMood = mood;
+    this.applyLightingMood();
+  }
+
+  private applyLightingMood() {
+    const pal = this.traits.palette;
+    if (this.lightingMood === "silver") {
+      this.scene.background = new THREE.Color("#edf1f7");
+      this.scene.fog = new THREE.FogExp2("#edf1f7", 0.036);
+      this.renderer.toneMappingExposure = 1.03;
+      if (this.hemiLight) this.hemiLight.intensity = 1.32;
+      if (this.keyLight) {
+        this.keyLight.color.set("#f4f7fc");
+        this.keyLight.intensity = 1.55;
+      }
+      if (this.rimLight) {
+        this.rimLight.color.set("#a5c8ff");
+        this.rimLight.intensity = 1.05;
+      }
+      if (this.causticLight) this.causticLight.intensity = 1.95;
+    } else if (this.lightingMood === "moonlit") {
+      // Ethereal pearl-slate twilight — still light, airy, pure frosted glass!
+      this.scene.background = new THREE.Color("#dfe6f2");
+      this.scene.fog = new THREE.FogExp2("#dfe6f2", 0.04);
+      this.renderer.toneMappingExposure = 1.12;
+      if (this.hemiLight) this.hemiLight.intensity = 0.92;
+      if (this.keyLight) {
+        this.keyLight.color.set("#e2ecff");
+        this.keyLight.intensity = 1.2;
+      }
+      if (this.rimLight) {
+        this.rimLight.color.set("#93c5fd");
+        this.rimLight.intensity = 1.35;
+      }
+      if (this.causticLight) this.causticLight.intensity = 2.65;
+    } else {
+      this.scene.background = new THREE.Color(pal.bgBottom);
+      this.scene.fog = new THREE.FogExp2(pal.bgBottom, 0.032);
+      this.renderer.toneMappingExposure = 1.08;
+      if (this.hemiLight) this.hemiLight.intensity = 1.22;
+      if (this.keyLight) {
+        this.keyLight.color.set("#fffdf9");
+        this.keyLight.intensity = 1.85;
+      }
+      if (this.rimLight) {
+        this.rimLight.color.set("#c9e0ff");
+        this.rimLight.intensity = 0.78;
+      }
+      if (this.causticLight) {
+        const tier = Math.max(1, Math.min(5, this.impact.complexityTier || 1));
+        this.causticLight.intensity = 1.55 + tier * 0.25;
+      }
+    }
+  }
+
+  /**
+   * Sims Build Mode Ghost Preview: hovering any unbuilt room projects a frosted-glass
+   * architectural blueprint wireframe onto the exact lot location!
+   */
+  public setPreviewSector(sectorId: number | null) {
+    const sectorsMask = this.impact.sectorsMask ?? 0;
+    const normalized =
+      sectorId !== null && sectorId >= 0 && sectorId < 6 && !hasSector(sectorsMask, sectorId)
+        ? sectorId
+        : null;
+    if (normalized === this.previewSectorId) return;
+    this.previewSectorId = normalized;
+    this.disposeObjectChildren(this.previewGhostGroup);
+    if (normalized === null) return;
+
+    const accents = ["#38bdf8", "#6366f1", "#10b981", "#f472b6", "#8b5cf6", "#f59e0b"];
+    const accent = accents[normalized] || "#5b8def";
+
+    const ghostFill = new THREE.MeshPhysicalMaterial({
+      color: "#ffffff",
+      emissive: accent,
+      emissiveIntensity: 0.32,
+      roughness: 0.14,
+      transparent: true,
+      opacity: 0.34,
+      depthWrite: false
+    });
+    const ghostWire = new THREE.LineBasicMaterial({
+      color: accent,
+      transparent: true,
+      opacity: 0.85
+    });
+
+    const g = new THREE.Group();
+    const addGhostShape = (geo: THREE.BufferGeometry, x: number, y: number, z: number, scaleY = 1) => {
+      const m = new THREE.Mesh(geo, ghostFill);
+      m.position.set(x, y, z);
+      m.scale.set(1, scaleY, 1);
+      g.add(m);
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo), ghostWire);
+      edges.position.copy(m.position);
+      edges.scale.copy(m.scale);
+      g.add(edges);
+    };
+
+    if (normalized === 0) {
+      g.position.set(-2.35, 0.23, -1.45);
+      addGhostShape(new THREE.BoxGeometry(1.18, 0.94, 1.08), 0, 0.47, 0);
+      addGhostShape(new THREE.CylinderGeometry(0.12, 0.13, 1.25, 16), -0.24, 0.76, 0);
+      addGhostShape(new THREE.CylinderGeometry(0.12, 0.13, 1.25, 16), 0.24, 0.76, 0);
+    } else if (normalized === 1) {
+      g.position.set(2.42, 0.23, 0.2);
+      addGhostShape(new THREE.CylinderGeometry(0.76, 0.84, 0.16, 8), 0, 0.08, 0);
+      addGhostShape(new THREE.CylinderGeometry(0.45, 0.45, 1.12, 6), 0, 0.72, 0);
+    } else if (normalized === 2) {
+      g.position.set(-2.22, 0.23, 1.62);
+      addGhostShape(new THREE.CylinderGeometry(0.7, 0.78, 0.16, 20), 0, 0.08, 0);
+      addGhostShape(new THREE.IcosahedronGeometry(0.66, 1), 0, 0.36, 0, 0.82);
+    } else if (normalized === 3) {
+      g.position.set(1.98, 0.23, 1.72);
+      addGhostShape(new THREE.BoxGeometry(1.14, 0.14, 0.94), 0, 0.07, 0);
+      addGhostShape(new THREE.BoxGeometry(1.18, 0.06, 0.9), 0, 1.0, -0.04);
+    } else if (normalized === 4) {
+      g.position.set(2.12, 0.23, -1.62);
+      addGhostShape(new THREE.CylinderGeometry(0.55, 0.66, 0.18, 16), 0, 0.09, 0);
+      addGhostShape(new THREE.CylinderGeometry(0.22, 0.3, 2.65, 16), 0, 1.48, 0);
+    } else {
+      g.position.set(0, 3.32, 0);
+      addGhostShape(new THREE.IcosahedronGeometry(1.18, 1), 0, 0.25, 0, 0.56);
+    }
+
+    this.previewGhostGroup.add(g);
   }
 
   public getComputeSnapshot(): ComputeSnapshot {
@@ -376,6 +550,7 @@ export class Alchemy3DRenderer {
     const hits = this.raycaster.intersectObjects(atomTargets, true);
     if (hits.length > 0) {
       const hitPoint = hits[0].point.clone();
+      soundEngine.playProtonPop();
       this.spawnColoredBurst(hitPoint, 14, [this.traits.palette.electron, this.traits.palette.proton, "#ffffff"]);
       this.excitement = Math.min(1.6, this.excitement + 0.55);
       this.onInteractiveEvent?.({ kind: "atom-popped", bonusCoins: 2 });
@@ -402,11 +577,17 @@ export class Alchemy3DRenderer {
     this.syncFillTarget();
 
     const nextSectors = this.impact.sectorsMask ?? 0;
+    const sectorsChanged = nextSectors !== this.builtSectorsMask && this.builtSectorsMask !== -1;
     if (
       this.impact.seed !== this.builtSeed ||
       this.impact.complexityTier !== this.builtTier ||
       nextSectors !== this.builtSectorsMask
     ) {
+      if (sectorsChanged) {
+        this.buildPopScale = 0.92;
+        this.setPreviewSector(null);
+        soundEngine.playBuildRoom();
+      }
       this.rebuild3DModel();
       this.onComputeTick?.(this.compute.getSnapshot());
     }
@@ -433,21 +614,51 @@ export class Alchemy3DRenderer {
    * Live 3D Tamagotchi Companion Reaction (Feed Treat / Pet Hearts / Play Proton Catch)
    */
   public triggerTamagotchiReaction(action: "feed" | "pet" | "play") {
-    this.excitement = Math.min(1.75, this.excitement + (action === "play" ? 1.3 : 1.0));
+    this.excitement = Math.min(1.75, this.excitement + (action === "play" ? 1.35 : 1.05));
     this.discoveryFlash = Math.max(this.discoveryFlash, 0.85);
+    for (const c of this.companions) {
+      c.petReaction = Math.min(1.8, c.petReaction + 1.25);
+    }
     const origin =
       this.companions.length > 0
         ? this.companions[0].group.position.clone().add(new THREE.Vector3(0, 0.85, 0))
         : new THREE.Vector3(0.8, 1.1, 0.6);
 
     if (action === "pet") {
-      this.spawnColoredBurst(origin, 14, ["#f472b6", "#fb7185", "#ffffff"]);
+      soundEngine.playPet();
+      this.spawnColoredBurst(origin, 16, ["#f472b6", "#fb7185", "#fda4af", "#ffffff"]);
     } else if (action === "feed") {
+      soundEngine.playFeed();
       this.spawnColoredBurst(origin, 14, ["#fbbf24", "#34d399", "#ffffff"]);
+      this.dropTreatCluster(origin);
     } else {
+      soundEngine.playBounce();
       this.spawnColoredBurst(origin, 18, ["#38bdf8", "#818cf8", "#f472b6"]);
       this.shockwaveLife = 0.85;
       this.launchBouncingToyBall(origin);
+    }
+  }
+
+  private dropTreatCluster(nearPet: THREE.Vector3) {
+    // Drop 3 glowing crystalline elixir treats on the rotunda terrace for the pet to trot over and nibble!
+    const geo = new THREE.OctahedronGeometry(0.06, 0);
+    for (let i = 0; i < 3; i++) {
+      const ang = Math.atan2(nearPet.z, nearPet.x) + (i - 1) * 0.42;
+      const rad = 0.96 + (i % 2) * 0.26;
+      const tx = Math.cos(ang) * rad;
+      const tz = Math.sin(ang) * rad;
+      const mesh = new THREE.Mesh(
+        geo,
+        new THREE.MeshStandardMaterial({
+          color: i % 2 === 0 ? "#34d399" : "#fbbf24",
+          emissive: i % 2 === 0 ? "#10b981" : "#f59e0b",
+          emissiveIntensity: 0.95,
+          roughness: 0.14
+        })
+      );
+      mesh.position.set(tx, 0.48, tz);
+      this.dynamicGroup.add(mesh);
+      this.treats.push({ mesh, pos: new THREE.Vector3(tx, 0.48, tz), eaten: false });
     }
   }
 
@@ -466,12 +677,13 @@ export class Alchemy3DRenderer {
       })
     );
     ball.add(this.makeGlowSprite("#38bdf8", 0.42, 0.72));
-    ball.position.set(nearPet.x * 0.5, 1.85, nearPet.z + 0.3);
+    ball.position.set(nearPet.x * 0.45, 1.85, nearPet.z + 0.35);
     this.dynamicGroup.add(ball);
     this.toyBall = {
       mesh: ball,
-      vel: new THREE.Vector3((Math.random() - 0.5) * 2.2, 1.4, (Math.random() - 0.5) * 1.8),
-      life: 5.5
+      vel: new THREE.Vector3((Math.random() - 0.5) * 2.1, 1.35, (Math.random() - 0.5) * 1.8),
+      life: 7.0,
+      bounceCooldown: 0
     };
   }
 
@@ -508,6 +720,7 @@ export class Alchemy3DRenderer {
     this.discoveryFlash = 1.0;
     this.excitement = Math.min(1.3, this.excitement + 0.45);
     this.spawnBurst(new THREE.Vector3(0, 3.05, 0), 10);
+    soundEngine.playDiscovery();
   }
 
   private spawnBurst(origin: THREE.Vector3, count: number) {
@@ -568,8 +781,10 @@ export class Alchemy3DRenderer {
 
   public stop() {
     cancelAnimationFrame(this.rafId);
+    this.compute.dispose();
     this.renderer.domElement.removeEventListener("pointerdown", this.handlePointerDown);
     this.renderer.domElement.removeEventListener("pointerup", this.handlePointerUp);
+    this.disposeObjectChildren(this.previewGhostGroup);
     this.clearDynamicGroup();
     this.terrazzoTex.dispose();
     this.titaniumTex.dispose();
@@ -606,10 +821,37 @@ export class Alchemy3DRenderer {
     return sp;
   }
 
-  private clearDynamicGroup() {
-    while (this.dynamicGroup.children.length > 0) {
-      this.dynamicGroup.remove(this.dynamicGroup.children[0]);
+  private disposeObjectChildren(parent: THREE.Object3D) {
+    const sharedTextures = new Set<THREE.Texture>([
+      this.terrazzoTex,
+      this.titaniumTex,
+      this.blueprintTex,
+      this.aoTex
+    ]);
+    parent.traverse((obj) => {
+      if (obj === parent) return;
+      const meshLike = obj as THREE.Mesh;
+      if (meshLike.geometry) {
+        meshLike.geometry.dispose();
+      }
+      if (meshLike.material) {
+        const mats = Array.isArray(meshLike.material) ? meshLike.material : [meshLike.material];
+        for (const mat of mats) {
+          const mAny = mat as unknown as { map?: THREE.Texture | null };
+          if (mAny.map && !sharedTextures.has(mAny.map)) {
+            mAny.map.dispose();
+          }
+          mat.dispose();
+        }
+      }
+    });
+    while (parent.children.length > 0) {
+      parent.remove(parent.children[0]);
     }
+  }
+
+  private clearDynamicGroup() {
+    this.disposeObjectChildren(this.dynamicGroup);
     this.glowTextures.forEach((t) => t.dispose());
     this.glowTextures = [];
     this.bubbles = [];
@@ -627,12 +869,20 @@ export class Alchemy3DRenderer {
     this.miningBlades = [];
     this.acceleratorRings = [];
     this.cryoBeacons = [];
+    this.cryoHelixes = [];
+    this.greenhouseStems = [];
+    this.greenhousePollen = [];
+    this.spirePulseRing = null;
     this.companions = [];
+    this.treats = [];
+    this.toyBall = null;
     this.bursts = [];
+    this.proteinChainLength = -1;
     this.liquidMesh = null;
     this.liquidTopMesh = null;
     this.liquidTopBasePos = null;
     this.waterPoolMesh = null;
+    this.causticLight = null;
     this.nucleusGroup = null;
     this.manometerNeedle = null;
     this.astrolabeRing = null;
@@ -975,7 +1225,9 @@ export class Alchemy3DRenderer {
     // Colored glass caustic light washing gently over the white architectural walls!
     const causticLight = new THREE.PointLight(pal.liquidMid, 1.55 + tier * 0.25, 6.8);
     causticLight.position.set(0, 1.35, 0.15);
+    this.causticLight = causticLight;
     this.dynamicGroup.add(causticLight);
+    this.applyLightingMood();
 
     // Central raised titanium induction reactor plinth under the hero flask
     const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.66, 0.76, 0.12, 48), titaniumMat);
@@ -1528,54 +1780,19 @@ export class Alchemy3DRenderer {
     }
 
     const snap = this.compute.getSnapshot();
-    const resGeo = new THREE.SphereGeometry(0.056, 18, 18);
-    const hydroMat = new THREE.MeshStandardMaterial({
-      color: pal.proton,
-      emissive: pal.proton,
-      emissiveIntensity: 0.58,
-      roughness: 0.18,
-      metalness: 0.3
-    });
-    const polarMat = new THREE.MeshStandardMaterial({
-      color: pal.electron,
-      emissive: pal.electron,
-      emissiveIntensity: 0.48,
-      roughness: 0.16,
-      metalness: 0.4
-    });
+    this.proteinGroup = pGroup;
+    this.rebuildProteinChainMeshes(snap.residues);
 
-    for (const r of snap.residues) {
-      const m = new THREE.Mesh(resGeo, r.hydrophobic ? hydroMat : polarMat);
-      m.scale.setScalar(r.hydrophobic ? 1.08 : 0.92);
-      m.castShadow = true;
-      pGroup.add(m);
-      this.residueMeshes.push(m);
-    }
-
-    // Real 3D Metallic Cylindrical Covalent Backbone Bonds between sequential residues!
-    const bondGeo = new THREE.CylinderGeometry(0.015, 0.015, 1, 10);
-    const bondMat = new THREE.MeshStandardMaterial({
-      color: "#94a3b8",
-      roughness: 0.22,
-      metalness: 0.85
-    });
-    for (let i = 0; i < snap.residues.length - 1; i++) {
-      const cyl = new THREE.Mesh(bondGeo, bondMat);
-      pGroup.add(cyl);
-      this.bondCylinders.push(cyl);
-    }
-
-    // Luminous Hydrophobic Contact Bridges
+    // Luminous Hydrophobic & Salt-Bridge Contact Bridges
     const cGeo = new THREE.BufferGeometry();
-    cGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(70 * 6), 3));
+    cGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(120 * 6), 3));
     const cLines = new THREE.LineSegments(
       cGeo,
-      new THREE.LineBasicMaterial({ color: pal.accent, transparent: true, opacity: 0.62 })
+      new THREE.LineBasicMaterial({ color: pal.accent, transparent: true, opacity: 0.65 })
     );
     this.contactLines = cLines;
     pGroup.add(cLines);
 
-    this.proteinGroup = pGroup;
     this.dynamicGroup.add(pGroup);
 
     // Helical Proton Compute Stream rising from nucleus to folding chamber
@@ -1589,6 +1806,88 @@ export class Alchemy3DRenderer {
       m.add(this.makeGlowSprite(col, 0.24, 0.65));
       this.dynamicGroup.add(m);
       this.protonPackets.push({ mesh: m, t: i / 8, speed: 0.34 + (i % 3) * 0.06 });
+    }
+  }
+
+  private rebuildProteinChainMeshes(residues: ResidueNode[]) {
+    if (!this.proteinGroup) return;
+    const pal = this.traits.palette;
+
+    for (const m of this.residueMeshes) {
+      this.proteinGroup.remove(m);
+    }
+    for (const c of this.bondCylinders) {
+      this.proteinGroup.remove(c);
+    }
+    this.residueMeshes = [];
+    this.bondCylinders = [];
+    this.proteinChainLength = residues.length;
+
+    const sphereR = residues.length > 26 ? 0.044 : 0.056;
+    const resGeo = new THREE.SphereGeometry(sphereR, 16, 16);
+    const hydroMat = new THREE.MeshStandardMaterial({
+      color: pal.proton,
+      emissive: pal.proton,
+      emissiveIntensity: 0.56,
+      roughness: 0.18,
+      metalness: 0.3
+    });
+    const aromaticMat = new THREE.MeshStandardMaterial({
+      color: "#f5c26b",
+      emissive: "#d97706",
+      emissiveIntensity: 0.45,
+      roughness: 0.14,
+      metalness: 0.55
+    });
+    const positiveMat = new THREE.MeshStandardMaterial({
+      color: pal.electron,
+      emissive: pal.electron,
+      emissiveIntensity: 0.58,
+      roughness: 0.16,
+      metalness: 0.35
+    });
+    const negativeMat = new THREE.MeshStandardMaterial({
+      color: pal.accent,
+      emissive: pal.accent,
+      emissiveIntensity: 0.52,
+      roughness: 0.16,
+      metalness: 0.35
+    });
+    const polarMat = new THREE.MeshStandardMaterial({
+      color: "#e2e8f0",
+      emissive: pal.liquidTop,
+      emissiveIntensity: 0.24,
+      roughness: 0.2,
+      metalness: 0.65
+    });
+
+    for (const r of residues) {
+      const mat = r.aromatic
+        ? aromaticMat
+        : r.charge > 0
+          ? positiveMat
+          : r.charge < 0
+            ? negativeMat
+            : r.hydrophobic
+              ? hydroMat
+              : polarMat;
+      const m = new THREE.Mesh(resGeo, mat);
+      m.scale.setScalar(r.aromatic ? 1.15 : r.hydrophobic ? 1.05 : 0.92);
+      m.castShadow = true;
+      this.proteinGroup.add(m);
+      this.residueMeshes.push(m);
+    }
+
+    const bondGeo = new THREE.CylinderGeometry(residues.length > 26 ? 0.012 : 0.015, residues.length > 26 ? 0.012 : 0.015, 1, 10);
+    const bondMat = new THREE.MeshStandardMaterial({
+      color: "#94a3b8",
+      roughness: 0.22,
+      metalness: 0.85
+    });
+    for (let i = 0; i < residues.length - 1; i++) {
+      const cyl = new THREE.Mesh(bondGeo, bondMat);
+      this.proteinGroup.add(cyl);
+      this.bondCylinders.push(cyl);
     }
   }
 
@@ -1834,9 +2133,36 @@ export class Alchemy3DRenderer {
       head.add(halo);
     }
 
+    if ((this.impact.sectorsMask ?? 0) === 0b111111 || (this.impact.complexityTier || 1) >= 5) {
+      const crown = new THREE.Mesh(
+        new THREE.TorusGeometry(0.11, 0.015, 10, 24),
+        new THREE.MeshStandardMaterial({
+          color: "#f8e7b5",
+          emissive: "#f59e0b",
+          emissiveIntensity: 0.35,
+          metalness: 0.92,
+          roughness: 0.14
+        })
+      );
+      crown.rotation.x = Math.PI / 2;
+      crown.position.y = 0.32;
+      head.add(crown);
+    }
+
     group.add(head);
     this.dynamicGroup.add(group);
-    this.companions.push({ group, head, tail: tailPivot, paw, eyes, baseY, isDog: false });
+    this.companions.push({
+      group,
+      head,
+      tail: tailPivot,
+      paw,
+      eyes,
+      homePos: new THREE.Vector3(x, baseY, z),
+      homeRotY: rotY,
+      baseY,
+      isDog: false,
+      petReaction: 0
+    });
   }
 
   private createStylizedDog3D(x: number, y: number, z: number, rotY: number, variant: string) {
@@ -1980,9 +2306,35 @@ export class Alchemy3DRenderer {
       }
     }
 
+    if ((this.impact.sectorsMask ?? 0) === 0b111111 || (this.impact.complexityTier || 1) >= 5) {
+      const crown = new THREE.Mesh(
+        new THREE.TorusGeometry(0.115, 0.015, 10, 24),
+        new THREE.MeshStandardMaterial({
+          color: "#f8e7b5",
+          emissive: "#f59e0b",
+          emissiveIntensity: 0.35,
+          metalness: 0.92,
+          roughness: 0.14
+        })
+      );
+      crown.rotation.x = Math.PI / 2;
+      crown.position.y = 0.33;
+      head.add(crown);
+    }
+
     group.add(head);
     this.dynamicGroup.add(group);
-    this.companions.push({ group, head, tail: tailPivot, eyes, baseY, isDog: true });
+    this.companions.push({
+      group,
+      head,
+      tail: tailPivot,
+      eyes,
+      homePos: new THREE.Vector3(x, baseY, z),
+      homeRotY: rotY,
+      baseY,
+      isDog: true,
+      petReaction: 0
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -2036,6 +2388,24 @@ export class Alchemy3DRenderer {
       group.add(beacon);
       this.cryoBeacons.push(beacon);
     }
+
+    // Internal spinning crystalline cryo-helix visible inside the frosted glass chamber
+    const helix = new THREE.Group();
+    helix.position.set(0, 0.52, 0);
+    const hMat = new THREE.MeshStandardMaterial({
+      color: "#7dd3fc",
+      emissive: "#38bdf8",
+      emissiveIntensity: 0.9,
+      roughness: 0.12
+    });
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const orb = new THREE.Mesh(new THREE.OctahedronGeometry(0.042, 0), hMat);
+      orb.position.set(Math.cos(a) * 0.14, -0.22 + i * 0.09, Math.sin(a) * 0.14);
+      helix.add(orb);
+    }
+    group.add(helix);
+    this.cryoHelixes.push(helix);
 
     // Glass skybridge linking Cryo Wing to central rotunda
     const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.06, 0.34), stone);
@@ -2093,6 +2463,24 @@ export class Alchemy3DRenderer {
     group.add(rotor);
     this.miningBlades.push(rotor);
 
+    // Sleek optical energy conduit linking Mining Pavilion straight into the central reactor
+    const conduitCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(-0.35, 0.65, 0),
+      new THREE.Vector3(-1.12, 0.95, -0.06),
+      new THREE.Vector3(-1.82, 0.45, -0.18)
+    ]);
+    const conduit = new THREE.Mesh(
+      new THREE.TubeGeometry(conduitCurve, 24, 0.018, 8, false),
+      new THREE.MeshStandardMaterial({
+        color: "#818cf8",
+        emissive: "#6366f1",
+        emissiveIntensity: 0.9,
+        transparent: true,
+        opacity: 0.78
+      })
+    );
+    group.add(conduit);
+
     this.dynamicGroup.add(group);
   }
 
@@ -2104,8 +2492,8 @@ export class Alchemy3DRenderer {
     const stone = new THREE.MeshStandardMaterial({ map: this.terrazzoTex, color: "#ffffff", roughness: 0.45 });
     const glass = new THREE.MeshPhysicalMaterial({
       color: "#ecfdf5",
-      transmission: 0.84,
-      roughness: 0.1,
+      transmission: 0.86,
+      roughness: 0.08,
       ior: 1.46,
       thickness: 0.12,
       transparent: true
@@ -2117,62 +2505,126 @@ export class Alchemy3DRenderer {
     plinth.receiveShadow = true;
     group.add(plinth);
 
-    const domeGeo = new THREE.IcosahedronGeometry(0.64, 1);
+    const domeGeo = new THREE.IcosahedronGeometry(0.66, 1);
     const dome = new THREE.Mesh(domeGeo, glass);
-    dome.position.y = 0.24;
-    dome.scale.set(1, 0.82, 1);
+    dome.position.y = 0.26;
+    dome.scale.set(1, 0.84, 1);
     group.add(dome);
 
     const wireframe = new THREE.LineSegments(
       new THREE.EdgesGeometry(domeGeo),
-      new THREE.LineBasicMaterial({ color: "#94a3b8", transparent: true, opacity: 0.7 })
+      new THREE.LineBasicMaterial({ color: "#94a3b8", transparent: true, opacity: 0.72 })
     );
     wireframe.position.copy(dome.position);
     wireframe.scale.copy(dome.scale);
     group.add(wireframe);
 
-    // Luminous Emerald Bio-Catalyst Tree Core inside the geodesic dome
-    const bioCore = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(0.24, 1),
-      new THREE.MeshStandardMaterial({ color: "#34d399", emissive: "#10b981", emissiveIntensity: 0.75, roughness: 0.25 })
-    );
-    bioCore.position.y = 0.36;
-    group.add(bioCore);
+    // 3 Graceful swaying porcelain-and-sage botanical stems inside the conservatory
+    const stemMat = new THREE.MeshStandardMaterial({ color: "#475569", roughness: 0.4 });
+    const leafMat = new THREE.MeshStandardMaterial({
+      color: "#6ee7b7",
+      emissive: "#10b981",
+      emissiveIntensity: 0.45,
+      roughness: 0.25
+    });
+    for (let s = 0; s < 3; s++) {
+      const a = (s / 3) * Math.PI * 2 + 0.4;
+      const stemPivot = new THREE.Group();
+      stemPivot.position.set(Math.cos(a) * 0.16, 0.16, Math.sin(a) * 0.16);
+      const h = 0.36 + (s % 2) * 0.12;
+      const curve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(Math.cos(a) * 0.06, h * 0.55, Math.sin(a) * 0.06),
+        new THREE.Vector3(Math.cos(a) * 0.12, h, Math.sin(a) * 0.12)
+      ]);
+      stemPivot.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 12, 0.015, 6, false), stemMat));
+      const leaf = new THREE.Mesh(new THREE.IcosahedronGeometry(0.11, 1), leafMat);
+      leaf.position.set(Math.cos(a) * 0.12, h, Math.sin(a) * 0.12);
+      leaf.scale.set(1.25, 0.55, 0.9);
+      stemPivot.add(leaf);
+      group.add(stemPivot);
+      this.greenhouseStems.push(stemPivot);
+    }
+
+    // Drifting golden-mint pollen motes inside the greenhouse
+    const pGeo = new THREE.SphereGeometry(0.02, 8, 8);
+    const pMat = new THREE.MeshBasicMaterial({ color: "#a7f3d0" });
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const base = new THREE.Vector3(Math.cos(a) * 0.28, 0.34 + (i % 3) * 0.12, Math.sin(a) * 0.28);
+      const mote = new THREE.Mesh(pGeo, pMat);
+      mote.position.copy(base);
+      group.add(mote);
+      this.greenhousePollen.push({ mesh: mote, base, phase: i * 1.1 });
+    }
 
     this.dynamicGroup.add(group);
   }
 
   private buildCompanionSanctuaryWing3D() {
-    // Sector 3: South-East Cantilevered Glass Sanctuary Canopy + Floating Companion Play-Orb
+    // Sector 3: South-East Sunlit Glass Pet Lounge with Cushion Bed, Cat Perch & Bowls
     const group = new THREE.Group();
     group.position.set(1.98, 0.23, 1.72);
 
     const stone = new THREE.MeshStandardMaterial({ map: this.terrazzoTex, color: "#ffffff", roughness: 0.45 });
     const metal = new THREE.MeshStandardMaterial({ map: this.titaniumTex, color: "#dce3ed", roughness: 0.2, metalness: 0.88 });
+    const softMat = new THREE.MeshStandardMaterial({ color: "#fdf2f8", roughness: 0.72 });
 
-    const deck = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.14, 0.92), stone);
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(1.18, 0.14, 0.96), stone);
     deck.position.y = 0.07;
     deck.castShadow = true;
     deck.receiveShadow = true;
     group.add(deck);
 
-    for (const sx of [-0.42, 0.42]) {
-      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.86, 12), metal);
-      p.position.set(sx, 0.56, -0.32);
+    for (const sx of [-0.46, 0.46]) {
+      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.88, 12), metal);
+      p.position.set(sx, 0.58, -0.34);
       group.add(p);
     }
-    const canopy = new THREE.Mesh(new THREE.BoxGeometry(1.16, 0.05, 0.88), stone);
-    canopy.position.set(0, 1.0, -0.06);
+    const canopy = new THREE.Mesh(new THREE.BoxGeometry(1.22, 0.05, 0.92), stone);
+    canopy.position.set(0, 1.02, -0.06);
     canopy.rotation.x = 0.08;
     canopy.castShadow = true;
     group.add(canopy);
 
-    // Glowing floating companion play-orb
+    // Plush circular pet cushion bed
+    const bed = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.055, 12, 28), softMat);
+    bed.rotation.x = Math.PI / 2;
+    bed.position.set(-0.24, 0.18, 0.08);
+    group.add(bed);
+
+    // Miniature architectural cat tree / perch platform
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.042, 0.44, 12), metal);
+    post.position.set(0.28, 0.36, -0.14);
+    group.add(post);
+    const perch = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.04, 20), softMat);
+    perch.position.set(0.28, 0.59, -0.14);
+    group.add(perch);
+
+    // Twin brushed-silver food & water bowls
+    for (let b = 0; b < 2; b++) {
+      const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.06, 0.045, 16), metal);
+      bowl.position.set(0.16 + b * 0.18, 0.16, 0.24);
+      group.add(bowl);
+      const fill = new THREE.Mesh(
+        new THREE.CircleGeometry(0.062, 16),
+        new THREE.MeshStandardMaterial({
+          color: b === 0 ? "#38bdf8" : "#fbbf24",
+          emissive: b === 0 ? "#38bdf8" : "#f59e0b",
+          emissiveIntensity: 0.35
+        })
+      );
+      fill.rotation.x = -Math.PI / 2;
+      fill.position.set(0.16 + b * 0.18, 0.184, 0.24);
+      group.add(fill);
+    }
+
+    // Glowing floating companion play-lantern
     const orb = new THREE.Mesh(
-      new THREE.SphereGeometry(0.11, 18, 18),
+      new THREE.SphereGeometry(0.1, 18, 18),
       new THREE.MeshStandardMaterial({ color: "#f472b6", emissive: "#f472b6", emissiveIntensity: 0.9 })
     );
-    orb.position.set(0, 0.46, 0.08);
+    orb.position.set(-0.24, 0.52, -0.05);
     orb.add(this.makeGlowSprite("#f472b6", 0.45, 0.6));
     group.add(orb);
     this.cryoBeacons.push(orb);
@@ -2212,6 +2664,16 @@ export class Alchemy3DRenderer {
     innerBeam.position.y = 1.48;
     group.add(innerBeam);
 
+    // Rising energy pulse ring climbing up the accelerator spire
+    const pulseRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.28, 0.016, 10, 32),
+      new THREE.MeshStandardMaterial({ color: "#c4b5fd", emissive: "#8b5cf6", emissiveIntensity: 1.4 })
+    );
+    pulseRing.rotation.x = Math.PI / 2;
+    pulseRing.position.y = 0.45;
+    group.add(pulseRing);
+    this.spirePulseRing = pulseRing;
+
     // Counter-rotating Magnetic Accelerator Coil Rings stacked up the spire
     for (let i = 0; i < 4; i++) {
       const coil = new THREE.Mesh(new THREE.TorusGeometry(0.32 - i * 0.03, 0.022, 10, 36), metal);
@@ -2219,6 +2681,26 @@ export class Alchemy3DRenderer {
       coil.position.y = 0.65 + i * 0.56;
       group.add(coil);
       this.acceleratorRings.push(coil);
+    }
+
+    // Spawn 3 extra tappable glowing protons orbiting the Particle Tower!
+    for (let p = 0; p < 3; p++) {
+      const ang = (p / 3) * Math.PI * 2;
+      const g = new THREE.Group();
+      const basePos = new THREE.Vector3(
+        2.12 + Math.cos(ang) * 0.62,
+        1.1 + p * 0.55,
+        -1.62 + Math.sin(ang) * 0.62
+      );
+      g.position.copy(basePos);
+      const orb = new THREE.Mesh(
+        new THREE.SphereGeometry(0.068, 16, 16),
+        new THREE.MeshStandardMaterial({ color: "#a78bfa", emissive: "#8b5cf6", emissiveIntensity: 1.1 })
+      );
+      orb.add(this.makeGlowSprite("#8b5cf6", 0.36, 0.72));
+      g.add(orb);
+      this.dynamicGroup.add(g);
+      this.floatingAtoms.push({ group: g, base: basePos, phase: p * 2.1, speed: 1.25 });
     }
 
     const finial = new THREE.Mesh(new THREE.OctahedronGeometry(0.14, 0), metal);
@@ -2230,7 +2712,7 @@ export class Alchemy3DRenderer {
   }
 
   private buildObservatoryCrown3D() {
-    // Sector 5: Upper Architectural Astronomical Skylight Crown Ring
+    // Sector 5: Geodesic Translucent Crystal Observatory Dome + Celestial Rings
     const group = new THREE.Group();
     group.position.set(0, 3.32, 0);
     const goldSilver = new THREE.MeshStandardMaterial({
@@ -2238,9 +2720,33 @@ export class Alchemy3DRenderer {
       roughness: 0.18,
       metalness: 0.92
     });
+    const crystalGlass = new THREE.MeshPhysicalMaterial({
+      color: "#ffffff",
+      transmission: 0.88,
+      roughness: 0.06,
+      ior: 1.5,
+      thickness: 0.14,
+      transparent: true,
+      opacity: 0.65
+    });
+
     const crown = new THREE.Mesh(new THREE.TorusGeometry(1.18, 0.028, 12, 64), goldSilver);
     crown.rotation.x = Math.PI / 2;
     group.add(crown);
+
+    const geoDome = new THREE.IcosahedronGeometry(1.16, 1);
+    const shell = new THREE.Mesh(geoDome, crystalGlass);
+    shell.scale.set(1, 0.54, 1);
+    shell.position.y = 0.24;
+    group.add(shell);
+
+    const frame = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geoDome),
+      new THREE.LineBasicMaterial({ color: "#cbd5e1", transparent: true, opacity: 0.58 })
+    );
+    frame.scale.copy(shell.scale);
+    frame.position.copy(shell.position);
+    group.add(frame);
 
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * Math.PI * 2;
@@ -2380,20 +2886,51 @@ export class Alchemy3DRenderer {
     const tier = Math.max(1, Math.min(5, this.impact.complexityTier || 1));
     const sMask = this.impact.sectorsMask ?? 0;
 
-    // Real open-science physics evaluations per frame (Cryo-Folding Wing boosts throughput!)
+    // Real open-science physics evaluations per frame (offloaded to Web Worker when available!)
     if (this.compute.isActive()) {
       const cryoMult = hasSector(sMask, 0) ? 1.6 : 1;
       const obsMult = hasSector(sMask, 5) ? 1.4 : 1;
-      this.compute.stepCompute(Math.round((18 + tier * 8) * cryoMult * obsMult));
+      this.compute.requestStep(Math.round((20 + tier * 8) * cryoMult * obsMult));
       if (now - this.lastUiEmit > 280) {
         this.lastUiEmit = now;
         this.onComputeTick?.(this.compute.getSnapshot());
       }
     }
 
-    // Animate Sims-style built architectural wings (Quantum Mining Blades, Accelerator Coils, Cryo Beacons)
+    // Smooth elastic pop-in when a new Sims room is built
+    if (this.buildPopScale < 0.999) {
+      this.buildPopScale += (1 - this.buildPopScale) * Math.min(1, dt * 8);
+      this.dynamicGroup.scale.setScalar(this.buildPopScale);
+    } else if (this.dynamicGroup.scale.x !== 1) {
+      this.dynamicGroup.scale.setScalar(1);
+    }
+
+    // Gentle breathing animation on Sims hover-preview ghost wireframe
+    if (this.previewGhostGroup.children.length > 0) {
+      this.previewGhostGroup.position.y = Math.sin(t * 3.6) * 0.055;
+    }
+
+    // Animate Sims-style built architectural wings
     for (const blade of this.miningBlades) {
       blade.rotation.y += dt * (2.6 + this.excitement * 3.5);
+    }
+    for (const hx of this.cryoHelixes) {
+      hx.rotation.y -= dt * 1.45;
+    }
+    for (let i = 0; i < this.greenhouseStems.length; i++) {
+      this.greenhouseStems[i].rotation.z = Math.sin(t * 1.4 + i * 1.8) * 0.07;
+    }
+    for (const p of this.greenhousePollen) {
+      p.mesh.position.set(
+        p.base.x + Math.sin(t * 1.3 + p.phase) * 0.06,
+        p.base.y + Math.cos(t * 1.6 + p.phase) * 0.08,
+        p.base.z + Math.cos(t * 1.1 + p.phase) * 0.06
+      );
+    }
+    if (this.spirePulseRing) {
+      const p = (t * 0.55) % 1;
+      this.spirePulseRing.position.y = 0.4 + p * 2.3;
+      this.spirePulseRing.scale.setScalar(1 - p * 0.35);
     }
     for (let i = 0; i < this.acceleratorRings.length; i++) {
       this.acceleratorRings[i].rotation.z += dt * (i % 2 === 0 ? 1.1 : -0.9);
@@ -2403,6 +2940,9 @@ export class Alchemy3DRenderer {
       this.cryoBeacons[i].position.y += Math.sin(t * 2.8 + i) * 0.0008;
     }
     const snap = this.compute.getSnapshot();
+    if (snap.residues.length > 0 && snap.residues.length !== this.proteinChainLength) {
+      this.rebuildProteinChainMeshes(snap.residues);
+    }
 
     if (!this.userDragging) this.controls.autoRotate = true;
 
@@ -2423,14 +2963,19 @@ export class Alchemy3DRenderer {
     // Real bouncing 3D proton toy ball physics on the architectural terrace!
     if (this.toyBall) {
       this.toyBall.life -= dt;
+      this.toyBall.bounceCooldown = Math.max(0, this.toyBall.bounceCooldown - dt);
       this.toyBall.vel.y -= 5.8 * dt;
       this.toyBall.mesh.position.addScaledVector(this.toyBall.vel, dt);
       if (this.toyBall.mesh.position.y < 0.5) {
         this.toyBall.mesh.position.y = 0.5;
+        if (Math.abs(this.toyBall.vel.y) > 0.65 && this.toyBall.bounceCooldown <= 0) {
+          soundEngine.playBounce();
+          this.toyBall.bounceCooldown = 0.22;
+        }
         this.toyBall.vel.y = Math.abs(this.toyBall.vel.y) * 0.78;
       }
       const rDist = Math.hypot(this.toyBall.mesh.position.x, this.toyBall.mesh.position.z);
-      if (rDist > 1.68) {
+      if (rDist > 1.65) {
         this.toyBall.vel.x *= -0.82;
         this.toyBall.vel.z *= -0.82;
       }
@@ -2547,8 +3092,9 @@ export class Alchemy3DRenderer {
 
     // Real 3D Ball-and-Stick Protein Folding Update (Angstroms -> 3D Scene Units)
     if (this.proteinGroup && this.residueMeshes.length === snap.residues.length) {
-      this.proteinGroup.rotation.y = t * 0.5;
-      const angstromScale = 0.055; // maps ~10Å radius neatly into 0.55-unit containment halo
+      this.proteinGroup.rotation.y = t * 0.48;
+      // Scale cleanly whether folding 10-aa Chignolin or 36-aa Villin HP36
+      const angstromScale = snap.residues.length > 26 ? 0.039 : snap.residues.length > 16 ? 0.05 : 0.062;
 
       for (let i = 0; i < snap.residues.length; i++) {
         const r = snap.residues[i];
@@ -2576,12 +3122,16 @@ export class Alchemy3DRenderer {
         const cPos = this.contactLines.geometry.getAttribute("position") as THREE.BufferAttribute;
         let ptr = 0;
         for (let i = 0; i < snap.residues.length; i++) {
-          if (!snap.residues[i].hydrophobic) continue;
+          const ri = snap.residues[i];
           const a = this.residueMeshes[i].position;
           for (let j = i + 3; j < snap.residues.length; j++) {
-            if (!snap.residues[j].hydrophobic) continue;
+            const rj = snap.residues[j];
+            const isContactPair =
+              (ri.hydrophobic && rj.hydrophobic) ||
+              (ri.charge !== 0 && rj.charge !== 0 && ri.charge * rj.charge < 0);
+            if (!isContactPair) continue;
             const b = this.residueMeshes[j].position;
-            if (a.distanceTo(b) < 0.36 && ptr < 68) {
+            if (a.distanceTo(b) < 0.36 && ptr < 116) {
               cPos.setXYZ(ptr * 2, a.x, a.y, a.z);
               cPos.setXYZ(ptr * 2 + 1, b.x, b.y, b.z);
               ptr++;
@@ -2639,21 +3189,122 @@ export class Alchemy3DRenderer {
       cAttr.needsUpdate = true;
     }
 
+    // Spin any active terrace treats gently
+    for (const tr of this.treats) {
+      if (!tr.eaten) {
+        tr.mesh.rotation.y += dt * 2.5;
+        tr.mesh.position.y = 0.48 + Math.sin(t * 4.2 + tr.pos.x) * 0.03;
+      }
+    }
+
     const blinking = Math.sin(t * 0.88) > 0.968;
+    const activeTreat = this.treats.find((tr) => !tr.eaten) || null;
     for (const c of this.companions) {
-      const hop = this.excitement > 0.08 ? Math.abs(Math.sin(t * 9.5)) * 0.13 * this.excitement : 0;
-      c.group.position.y = c.baseY + hop;
-      c.head.rotation.z = Math.sin(t * 1.6) * 0.08;
-      // Gently look upward at the folding protein when a discovery flashes!
+      c.petReaction = Math.max(0, c.petReaction - dt * 0.75);
+
+      // Autonomous 3D Pet AI: chase the bouncing toy ball, trot to dropped treats, or return to cushion!
+      let targetX = c.homePos.x;
+      let targetZ = c.homePos.z;
+      let moveSpeed = 1.15;
+      let chasing = false;
+
+      if (this.toyBall) {
+        // Stay outside central hero vessel radius (0.82) and inside rotunda rim (1.58)
+        const bx = this.toyBall.mesh.position.x;
+        const bz = this.toyBall.mesh.position.z;
+        const bRad = Math.hypot(bx, bz);
+        if (bRad > 0.76 && bRad < 1.65) {
+          targetX = bx;
+          targetZ = bz;
+          moveSpeed = 2.05;
+          chasing = true;
+        }
+      } else if (activeTreat) {
+        targetX = activeTreat.pos.x;
+        targetZ = activeTreat.pos.z;
+        moveSpeed = 1.75;
+        chasing = true;
+      }
+
+      const dx = targetX - c.group.position.x;
+      const dz = targetZ - c.group.position.z;
+      const dist = Math.hypot(dx, dz);
+
+      if (dist > 0.05) {
+        const stepDist = Math.min(dist, moveSpeed * dt);
+        const nx = c.group.position.x + (dx / dist) * stepDist;
+        const nz = c.group.position.z + (dz / dist) * stepDist;
+        // Gently steer around the center glass flask if needed
+        const nextRad = Math.hypot(nx, nz);
+        if (nextRad > 0.78) {
+          c.group.position.x = nx;
+          c.group.position.z = nz;
+        } else {
+          const push = 0.82 / Math.max(0.01, nextRad);
+          c.group.position.x = nx * push;
+          c.group.position.z = nz * push;
+        }
+        const desiredYaw = Math.atan2(dx, dz);
+        let diffYaw = desiredYaw - c.group.rotation.y;
+        while (diffYaw > Math.PI) diffYaw -= Math.PI * 2;
+        while (diffYaw < -Math.PI) diffYaw += Math.PI * 2;
+        c.group.rotation.y += diffYaw * Math.min(1, dt * 8);
+      } else if (!chasing) {
+        let diffYaw = c.homeRotY - c.group.rotation.y;
+        while (diffYaw > Math.PI) diffYaw -= Math.PI * 2;
+        while (diffYaw < -Math.PI) diffYaw += Math.PI * 2;
+        c.group.rotation.y += diffYaw * Math.min(1, dt * 4);
+      }
+
+      // If pet reaches the toy ball, give it a playful playful boop!
+      if (this.toyBall && dist < 0.28) {
+        this.toyBall.vel.x = (Math.random() - 0.5) * 2.4;
+        this.toyBall.vel.y = 1.65;
+        this.toyBall.vel.z = (Math.random() - 0.5) * 2.4;
+        c.petReaction = Math.min(1.8, c.petReaction + 0.9);
+        this.spawnColoredBurst(c.group.position.clone().add(new THREE.Vector3(0, 0.75, 0)), 6, [
+          "#38bdf8",
+          "#f472b6",
+          "#ffffff"
+        ]);
+      }
+
+      // If pet reaches a dropped elixir treat, nibble it with joyful emerald sparkles!
+      if (activeTreat && dist < 0.26) {
+        activeTreat.eaten = true;
+        this.dynamicGroup.remove(activeTreat.mesh);
+        c.petReaction = Math.min(1.8, c.petReaction + 1.1);
+        soundEngine.playTap(1318.5);
+        this.spawnColoredBurst(activeTreat.pos.clone().add(new THREE.Vector3(0, 0.2, 0)), 8, [
+          "#34d399",
+          "#fbbf24",
+          "#ffffff"
+        ]);
+      }
+
+      const walkBounce = dist > 0.08 ? Math.abs(Math.sin(t * 14)) * 0.08 : 0;
+      const happyHop =
+        this.excitement > 0.08 || c.petReaction > 0.1
+          ? Math.abs(Math.sin(t * 9.5)) * 0.12 * Math.max(this.excitement, c.petReaction)
+          : 0;
+      c.group.position.y = c.baseY + Math.max(walkBounce, happyHop);
+      c.head.rotation.z = Math.sin(t * 1.6) * 0.08 + Math.sin(t * 11) * c.petReaction * 0.09;
       c.head.rotation.x = Math.sin(t * 1.1) * 0.05 - 0.07 - this.discoveryFlash * 0.22;
 
       if (c.isDog) {
-        c.tail.rotation.z = Math.sin(t * (7.5 + this.excitement * 11)) * (0.28 + this.excitement * 0.22);
+        c.tail.rotation.z =
+          Math.sin(t * (7.5 + (this.excitement + c.petReaction) * 9)) *
+          (0.28 + Math.min(0.45, (this.excitement + c.petReaction) * 0.2));
       } else {
-        c.tail.rotation.z = Math.sin(t * (2.2 + this.excitement * 4)) * 0.22;
-        if (c.paw) c.paw.rotation.x = 0.7 + Math.sin(t * (2.8 + this.excitement * 5)) * 0.35;
+        c.tail.rotation.z = Math.sin(t * (2.2 + (this.excitement + c.petReaction) * 4)) * 0.24;
+        if (c.paw) c.paw.rotation.x = 0.7 + Math.sin(t * (2.8 + (this.excitement + c.petReaction) * 5)) * 0.35;
       }
       for (const eye of c.eyes) eye.scale.y = blinking ? 0.15 : 1.0;
+    }
+
+    // Clean out eaten treats array once all finished
+    if (this.treats.length > 0 && this.treats.every((tr) => tr.eaten)) {
+      this.treats = [];
     }
 
     if (this.orreryGroup) this.orreryGroup.rotation.y = t * 0.3;

@@ -32,6 +32,7 @@ contract AlchemiaCoin is ERC20, ERC20Burnable, ERC20Permit, Ownable2Step {
     error ControllerAlreadyInitialized();
     error MaxSupplyExceeded();
     error ZeroAddress();
+    error ZeroAmount();
 
     constructor() ERC20("Alchemia Coin", "ALCH") ERC20Permit("Alchemia Coin") Ownable(msg.sender) {}
 
@@ -62,6 +63,7 @@ contract AlchemiaCoin is ERC20, ERC20Burnable, ERC20Permit, Ownable2Step {
      */
     function donateToResearch(address researchWallet, uint256 amount) external {
         if (researchWallet == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
         _transfer(msg.sender, researchWallet, amount);
         totalDonatedToResearch += amount;
         emit CoinsDonatedToResearch(msg.sender, researchWallet, amount);

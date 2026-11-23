@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ethers } from "ethers";
 import { Sparkles } from "lucide-react";
 import { ArtworkCanvas } from "./components/ArtworkCanvas";
 import { BackgroundCanvas } from "./components/BackgroundCanvas";
@@ -10,6 +11,7 @@ import { WhitePaperSheet } from "./components/WhitePaperSheet";
 import { type LiveImpactState } from "./engine/alchemyRenderer";
 import { randomSeedHex } from "./engine/prng";
 import type { ComputeSnapshot } from "./engine/researchCompute";
+import { loadLabSparks, saveLabSparks } from "./engine/tamagotchi";
 import { stageFromEth } from "./engine/traits";
 import {
   DEFAULT_CAUSES,
@@ -36,9 +38,18 @@ import { LAB_SECTORS, SLIDER_USD_STOPS } from "./web3/sectors";
 
 type PageTab = "mint" | "explore" | "mylabs";
 
+function sliderDetailLabel(usd: number): string {
+  if (usd >= 500) return "4D crystal crown";
+  if (usd >= 100) return "Cat & dog pair";
+  if (usd >= 25) return "Orbiting celestial rings";
+  if (usd >= 5) return "Dual glass condensers";
+  return "Full base 3D lab";
+}
+
 export function App() {
   const [page, setPage] = useState<PageTab>("mint");
   const [state, setState] = useState<CollectionState>(() => loadInitialCollectionState());
+  const [labSparks, setLabSparks] = useState<number>(() => loadLabSparks());
   const [sliderIndex, setSliderIndex] = useState<number>(0); // 0 -> $1
   const [currentSeed, setCurrentSeed] = useState<`0x${string}`>(
     "0x8a4f91e023c47b89d01f4e5276b98c31456fa234890bcdef1234567890ab0100"
@@ -59,6 +70,7 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const channelRef = useRef<BroadcastChannel | null>(null);
+  const deepLinkAppliedRef = useRef(false);
 
   useEffect(() => {
     if (typeof BroadcastChannel !== "undefined") {
@@ -66,6 +78,21 @@ export function App() {
     }
     return () => channelRef.current?.close();
   }, []);
+
+  // Support shareable ?lab=<tokenId> deep links opening straight into Gallery single view
+  useEffect(() => {
+    if (deepLinkAppliedRef.current || typeof window === "undefined") return;
+    const labParam = new URLSearchParams(window.location.search).get("lab");
+    if (!labParam) return;
+    const wantedId = Number(labParam);
+    if (!Number.isFinite(wantedId) || wantedId <= 0) return;
+    const match = state.vessels.find((v) => v.tokenId === wantedId);
+    if (match) {
+      deepLinkAppliedRef.current = true;
+      setExploreSelected(match);
+      setPage("explore");
+    }
+  }, [state.vessels]);
 
   useEffect(() => {
     if (!state.contractAddress) return;
@@ -182,6 +209,14 @@ export function App() {
     };
   };
 
+  const awardSparks = (delta: number) => {
+    setLabSparks((prev) => {
+      const next = Math.max(0, Math.round(prev + delta));
+      saveLabSparks(next);
+      return next;
+    });
+  };
+
   const handleMint = async () => {
     if (busy) return;
     if (state.contractAddress && !state.walletAddress) {
@@ -224,11 +259,15 @@ export function App() {
         causeName: cause.name,
         minter: "You",
         ownedByUser: true,
+        onChain: Boolean(state.contractAddress),
         valueUsd: amountUsd,
         impactEth: Number((totalEth * (state.liquiditySeeded ? 0.6667 : 0.6)).toFixed(6)),
         sectorsMask: 0,
         workUnits: 1,
         lastClaimMs: Date.now(),
+        onChainPendingCoins: 0,
+        onChainMiningRate: complexityTier * 5,
+        syncedAtMs: Date.now(),
         mintedAt: Math.floor(Date.now() / 1000),
         txHash
       };
@@ -237,6 +276,7 @@ export function App() {
       setCurrentSeed(seed);
       setCurrentCauseId(nextCauseId);
       setMyLabTokenId(tokenId);
+      awardSparks(15);
 
       setState((prev) => {
         const split = applySplitToState(prev, totalEth);
@@ -256,7 +296,7 @@ export function App() {
 
       setLastPulseAt(Date.now());
       setBgPulseSignal((n) => n + 1);
-      setNotice(`Minted Lab #${tokenId}! Open My Labs to build wings, mine $ALCH, or care for your companion.`);
+      setNotice(`Lab #${tokenId} is ready. Open My Labs to build rooms and care for your pet.`);
     } catch (err) {
       setNotice(err instanceof Error ? err.message : "Transaction cancelled.");
     } finally {
@@ -302,6 +342,7 @@ export function App() {
         workUnits: Math.max(1, snap.workUnitsCompleted)
       });
     }
+    awardSparks(10);
     setState((prev) => ({
       ...prev,
       vessels: prev.vessels.map((v) =>
@@ -339,6 +380,7 @@ export function App() {
     }
 
     const newMask = vessel.sectorsMask | (1 << sectorId);
+    awardSparks(20);
     setState((prev) => {
       let nextGlobal = prev.globalDonatedEth;
       let nextReserve = prev.liquidityReserveEth;
@@ -403,6 +445,7 @@ export function App() {
 
     const toResearch = Number(((amount * researchTithePct) / 100).toFixed(2));
     const toHolder = Number((amount - toResearch).toFixed(2));
+    const nowMs = Date.now();
 
     setState((prev) => {
       const next: CollectionState = {
@@ -410,7 +453,9 @@ export function App() {
         userCoinBalance: Number((prev.userCoinBalance + toHolder).toFixed(2)),
         totalCoinsDonatedToResearch: Number((prev.totalCoinsDonatedToResearch + toResearch).toFixed(2)),
         vessels: prev.vessels.map((v) =>
-          v.tokenId === vessel.tokenId ? { ...v, lastClaimMs: Date.now() } : v
+          v.tokenId === vessel.tokenId
+            ? { ...v, lastClaimMs: nowMs, onChainPendingCoins: 0, syncedAtMs: nowMs }
+            : v
         )
       };
       saveDemoState(next);
@@ -421,9 +466,13 @@ export function App() {
 
   const handleDonateCoins = async (vessel: MintedVessel, amount: number) => {
     if (state.contractAddress && state.coinAddress && vessel.ownedByUser) {
+      const causeWallet = state.causes[vessel.causeId]?.researchWallet;
+      if (!causeWallet || !ethers.isAddress(causeWallet)) {
+        throw new Error("Research wallet address is still loading. Try again in a moment.");
+      }
       await executeOnChainDonateCoins({
         coinAddress: state.coinAddress,
-        researchWallet: state.causes[vessel.causeId]?.recipientLabel || state.contractAddress,
+        researchWallet: causeWallet,
         amountCoins: amount
       });
     }
@@ -442,28 +491,27 @@ export function App() {
     setBgPulseSignal((n) => n + 1);
   };
 
-  const handleAwardPlayBonus = (coins: number) => {
-    setState((prev) => {
-      const next = {
-        ...prev,
-        userCoinBalance: Number((prev.userCoinBalance + coins).toFixed(2))
-      };
-      saveDemoState(next);
-      return next;
-    });
+  const handleAwardPlayBonus = (sparks: number) => {
+    awardSparks(sparks);
   };
 
-  const handleSpendCoinsForTreat = (cost: number): boolean => {
-    if (state.userCoinBalance < cost) return false;
-    setState((prev) => {
-      const next = {
-        ...prev,
-        userCoinBalance: Number((prev.userCoinBalance - cost).toFixed(2))
-      };
-      saveDemoState(next);
-      return next;
-    });
-    return true;
+  const handleSpendSparksForTreat = (cost: number): boolean => {
+    if (labSparks >= cost) {
+      awardSparks(-cost);
+      return true;
+    }
+    if (!state.contractAddress && state.userCoinBalance >= cost) {
+      setState((prev) => {
+        const next = {
+          ...prev,
+          userCoinBalance: Number((prev.userCoinBalance - cost).toFixed(2))
+        };
+        saveDemoState(next);
+        return next;
+      });
+      return true;
+    }
+    return false;
   };
 
   return (
@@ -521,10 +569,11 @@ export function App() {
                 showHud={false}
                 onComputeSnapshot={setLiveCompute}
                 onInteractiveEvent={(ev) => {
+                  awardSparks(ev.bonusCoins);
                   setNotice(
                     ev.kind === "pet-clicked"
-                      ? "You petted the lab companion."
-                      : "Nice catch! You popped a floating proton."
+                      ? `Petted in 3D. +${ev.bonusCoins} spark.`
+                      : `Popped a floating proton. +${ev.bonusCoins} sparks.`
                   );
                 }}
                 onPulseClick={() => setBgPulseSignal((n) => n + 1)}
@@ -543,8 +592,8 @@ export function App() {
               </h1>
 
               <p className="open-explainer">
-                Start at $1. Slide up to add more detail to one 3D lab. Every piece comes with a
-                pet you can play with, rooms you can build, and live protein folding running inside.
+                Start at $1. Slide up to add detail to one 3D lab. Each piece comes with a pet to
+                care for, rooms to build, and live protein folding inside.
               </p>
             </header>
 
@@ -553,7 +602,7 @@ export function App() {
               <div className="slider-wrap">
                 <div className="slider-readout">
                   <span className="slider-dollar">${amountUsd}</span>
-                  <span className="slider-hint">Drag for more detail</span>
+                  <span className="slider-hint">{sliderDetailLabel(amountUsd)}</span>
                 </div>
                 <input
                   type="range"
@@ -602,6 +651,7 @@ export function App() {
         {page === "mylabs" && (
           <MyLabsView
             state={state}
+            labSparks={labSparks}
             lastPulseAt={lastPulseAt}
             activeTokenId={myLabTokenId}
             onSelectTokenId={setMyLabTokenId}
@@ -611,7 +661,7 @@ export function App() {
             onAnchorProof={handleAnchorProof}
             onAwardPlayBonus={handleAwardPlayBonus}
             onConnectWallet={handleConnectWallet}
-            onSpendCoinsForTreat={handleSpendCoinsForTreat}
+            onSpendCoinsForTreat={handleSpendSparksForTreat}
             onGoMint={() => setPage("mint")}
           />
         )}

@@ -3,7 +3,8 @@ import { Cpu, Move3d, Pause, Play } from "lucide-react";
 import {
   Alchemy3DRenderer,
   type CameraPreset,
-  type InteractiveEvent
+  type InteractiveEvent,
+  type LightingMood
 } from "../engine/alchemy3DRenderer";
 import { type LiveImpactState } from "../engine/alchemyRenderer";
 import type { ComputeSnapshot } from "../engine/researchCompute";
@@ -15,6 +16,9 @@ interface ArtworkCanvasProps {
   compact?: boolean;
   cameraPreset?: { preset: CameraPreset; seq: number } | null;
   tamagotchiSignal?: { action: TamagotchiAction; seq: number } | null;
+  previewSectorId?: number | null;
+  lightingMood?: LightingMood;
+  benchmarkIndex?: number | null;
   onComputeSnapshot?: (snap: ComputeSnapshot) => void;
   onInteractiveEvent?: (ev: InteractiveEvent) => void;
   onPulseClick?: () => void;
@@ -26,6 +30,9 @@ export function ArtworkCanvas({
   compact = false,
   cameraPreset = null,
   tamagotchiSignal = null,
+  previewSectorId = null,
+  lightingMood = "daylight",
+  benchmarkIndex = null,
   onComputeSnapshot,
   onInteractiveEvent,
   onPulseClick
@@ -55,6 +62,7 @@ export function ArtworkCanvas({
       }
     );
     rendererRef.current = renderer;
+    renderer.setLightingMood(lightingMood);
     renderer.start();
 
     const observer = new ResizeObserver(() => renderer.resize());
@@ -98,6 +106,20 @@ export function ArtworkCanvas({
       rendererRef.current?.setCameraPreset(cameraPreset.preset);
     }
   }, [cameraPreset]);
+
+  useEffect(() => {
+    rendererRef.current?.setPreviewSector(previewSectorId);
+  }, [previewSectorId]);
+
+  useEffect(() => {
+    rendererRef.current?.setLightingMood(lightingMood);
+  }, [lightingMood]);
+
+  useEffect(() => {
+    if (benchmarkIndex !== null && benchmarkIndex >= 0) {
+      rendererRef.current?.selectBenchmark(benchmarkIndex);
+    }
+  }, [benchmarkIndex]);
 
   const toggleCompute = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -143,7 +165,7 @@ export function ArtworkCanvas({
               <Move3d size={11} />
               {compact
                 ? `Level ${impact.complexityTier}`
-                : `Drag to turn · Level ${impact.complexityTier}`}
+                : `Drag to spin · Level ${impact.complexityTier}`}
             </span>
           </div>
 
@@ -161,7 +183,9 @@ export function ArtworkCanvas({
                     marginTop: 2
                   }}
                 >
-                  {computeSnap?.lastDiscoveryLabel || "Folding 3D protein chain…"}
+                  {computeSnap
+                    ? `${computeSnap.bestEnergy.toFixed(1)} kcal/mol · Rg ${computeSnap.radiusOfGyration.toFixed(1)}Å (${computeSnap.compactnessMatchPct}% fit)`
+                    : "Folding 3D protein chain…"}
                 </div>
               </div>
               <div

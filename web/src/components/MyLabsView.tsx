@@ -6,24 +6,38 @@ import {
   Check,
   Coins,
   Cookie,
+  Cpu,
   Download,
+  FileJson,
+  Flame,
   Heart,
   HeartHandshake,
+  Pencil,
   Pickaxe,
   ShieldCheck,
   Sparkles,
+  Sun,
+  Volume2,
+  VolumeX,
   Wallet
 } from "lucide-react";
 import { ArtworkCanvas } from "./ArtworkCanvas";
-import type { CameraPreset } from "../engine/alchemy3DRenderer";
+import type { CameraPreset, LightingMood } from "../engine/alchemy3DRenderer";
 import { deriveTraitsFromSeed } from "../engine/prng";
-import { downloadPDBFromSnapshot, type ComputeSnapshot } from "../engine/researchCompute";
+import {
+  PROTEIN_BENCHMARKS,
+  downloadPDBFromSnapshot,
+  downloadScienceCertificateFromSnapshot,
+  type ComputeSnapshot
+} from "../engine/researchCompute";
+import { soundEngine } from "../engine/soundEngine";
 import {
   applyTamagotchiAction,
   companionBoostMultiplier,
   companionMoodLabel,
   loadCompanionVitals,
   saveCompanionVitals,
+  setCompanionPetName,
   type CompanionVitals,
   type TamagotchiAction
 } from "../engine/tamagotchi";
@@ -42,6 +56,7 @@ import {
 
 interface MyLabsViewProps {
   state: CollectionState;
+  labSparks: number;
   lastPulseAt: number;
   activeTokenId: number | null;
   onSelectTokenId: (tokenId: number) => void;
@@ -49,7 +64,7 @@ interface MyLabsViewProps {
   onClaimCoins: (vessel: MintedVessel, amount: number, researchTithePct: number) => Promise<void>;
   onDonateCoins: (vessel: MintedVessel, amount: number) => Promise<void>;
   onAnchorProof: (vessel: MintedVessel, snap: ComputeSnapshot) => Promise<void>;
-  onAwardPlayBonus: (coins: number) => void;
+  onAwardPlayBonus: (sparks: number) => void;
   onConnectWallet: () => Promise<void>;
   onSpendCoinsForTreat: (cost: number) => boolean;
   onGoMint: () => void;
@@ -62,8 +77,49 @@ const CAMERA_BUTTONS: Array<{ id: CameraPreset; label: string }> = [
   { id: "molecule", label: "Protein" }
 ];
 
+const LIGHTING_ORDER: LightingMood[] = ["daylight", "silver", "moonlit"];
+const LIGHTING_LABELS: Record<LightingMood, string> = {
+  daylight: "Day",
+  silver: "Silver",
+  moonlit: "Mist"
+};
+
+function EnergySparkline({ history }: { history: number[] }) {
+  if (history.length < 3) return null;
+  const minE = Math.min(...history) - 0.5;
+  const maxE = Math.max(...history) + 0.5;
+  const span = Math.max(1, maxE - minE);
+  const w = 220;
+  const h = 38;
+  const pts = history
+    .map((val, i) => {
+      const x = (i / (history.length - 1)) * w;
+      const y = h - 4 - ((val - minE) / span) * (h - 8);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+
+  return (
+    <svg
+      viewBox={`0 0 ${w} ${h}`}
+      className="energy-sparkline"
+      aria-label="Live protein energy curve"
+    >
+      <polyline
+        fill="none"
+        stroke="#5b8def"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        points={pts}
+      />
+    </svg>
+  );
+}
+
 export function MyLabsView({
   state,
+  labSparks,
   lastPulseAt,
   activeTokenId,
   onSelectTokenId,
@@ -86,6 +142,12 @@ export function MyLabsView({
   const [liveSnap, setLiveSnap] = useState<ComputeSnapshot | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [camPreset, setCamPreset] = useState<{ preset: CameraPreset; seq: number } | null>(null);
+  const [lightingMood, setLightingMood] = useState<LightingMood>("daylight");
+  const [soundOn, setSoundOn] = useState(() => soundEngine.isEnabled());
+  const [previewSectorId, setPreviewSectorId] = useState<number | null>(null);
+  const [selectedBenchmark, setSelectedBenchmark] = useState<number | null>(null);
+  const [editingPetName, setEditingPetName] = useState(false);
+  const [petNameDraft, setPetNameDraft] = useState("");
   const [vitals, setVitals] = useState<CompanionVitals>(() =>
     loadCompanionVitals(selected?.tokenId ?? 1)
   );
@@ -95,7 +157,14 @@ export function MyLabsView({
   const [feedback, setFeedback] = useState<string | null>(null);
 
   useEffect(() => {
-    if (selected) setVitals(loadCompanionVitals(selected.tokenId));
+    if (selected) {
+      const loaded = loadCompanionVitals(selected.tokenId);
+      setVitals(loaded);
+      setPetNameDraft(loaded.petName);
+      setEditingPetName(false);
+      setSelectedBenchmark(null);
+      setPreviewSectorId(null);
+    }
   }, [selected?.tokenId]);
 
   useEffect(() => {
@@ -126,10 +195,24 @@ export function MyLabsView({
   const effectiveMiningRate = Number((baseRate * tamaBoost).toFixed(1));
   const builtCount = countSectors(selected.sectorsMask);
 
-  const elapsedHours = Math.max(0, (nowTick - selected.lastClaimMs) / 3600000);
-  const pendingCoins = Number(
-    (effectiveMiningRate * Math.max(0.05, elapsedHours * (state.contractAddress ? 1 : 6))).toFixed(2)
-  );
+  // Exact on-chain pending interpolation when synced from Base Sepolia / Mainnet
+  let pendingCoins: number;
+  if (
+    selected.onChain &&
+    typeof selected.onChainPendingCoins === "number" &&
+    typeof selected.syncedAtMs === "number"
+  ) {
+    const sinceSyncHours = Math.max(0, (nowTick - selected.syncedAtMs) / 3600000);
+    const rate = selected.onChainMiningRate ?? baseRate;
+    pendingCoins = Number((selected.onChainPendingCoins + rate * sinceSyncHours).toFixed(4));
+  } else {
+    const elapsedHours = Math.max(0, (nowTick - selected.lastClaimMs) / 3600000);
+    pendingCoins = Number((effectiveMiningRate * Math.max(0.05, elapsedHours * 6)).toFixed(2));
+  }
+
+  const defaultPetLabel =
+    tier >= 4 || hasSector(selected.sectorsMask, 3) ? "Cat & Dog" : traits.familiar.name;
+  const petDisplayName = vitals.petName || defaultPetLabel;
 
   const animationUrl = buildAnimationUrl({
     tokenId: selected.tokenId,
@@ -148,14 +231,16 @@ export function MyLabsView({
     if (action === "feed") {
       const ok = onSpendCoinsForTreat(5);
       if (!ok) {
-        setFeedback("You need 5 ALCH for a treat. Claim your mined coins first.");
+        setFeedback("You need 5 sparks for treats. Tap your pet or pop floating protons in 3D.");
         return;
       }
-      setFeedback("Treat given. Your pet has more energy now.");
+      setFeedback("Treats dropped on the patio. Watch your pet trot over.");
     } else if (action === "pet") {
-      setFeedback("Your pet loved that. Mood went up.");
+      onAwardPlayBonus(1);
+      setFeedback("Your pet loved that. +1 spark.");
     } else {
-      setFeedback("Tossed a glowing ball onto the patio. Watch them play!");
+      onAwardPlayBonus(2);
+      setFeedback("Tossed a glowing ball onto the patio. +2 sparks.");
     }
     const next = applyTamagotchiAction(vitals, action);
     setVitals(next);
@@ -163,11 +248,25 @@ export function MyLabsView({
     setTamaSignal((prev) => ({ action, seq: (prev?.seq || 0) + 1 }));
   };
 
-  // Playful interactive lab badges
+  const handleSavePetName = () => {
+    const next = setCompanionPetName(vitals, petNameDraft);
+    setVitals(next);
+    saveCompanionVitals(selected.tokenId, next);
+    setEditingPetName(false);
+    soundEngine.playTap(1046.5);
+  };
+
+  const cycleLighting = () => {
+    const idx = (LIGHTING_ORDER.indexOf(lightingMood) + 1) % LIGHTING_ORDER.length;
+    setLightingMood(LIGHTING_ORDER[idx]);
+    soundEngine.playTap(987.77);
+  };
+
   const badges = [
     { label: "First Room", earned: builtCount >= 1 },
     { label: "Pet Keeper", earned: vitals.careStreak >= 3 },
-    { label: "Research Helper", earned: selected.workUnits >= 5 },
+    { label: "Protein Folder", earned: selected.workUnits >= 5 },
+    { label: "Coin Sharer", earned: state.totalCoinsDonatedToResearch > 0 },
     { label: "Full Campus", earned: builtCount === 6 }
   ];
 
@@ -188,6 +287,10 @@ export function MyLabsView({
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <div className="coin-balance-pill" title="Play sparks earned by petting and popping protons">
+            <Sparkles size={13} />
+            <strong>{labSparks} sparks</strong>
+          </div>
           <div className="coin-balance-pill">
             <Coins size={14} />
             <strong>{state.userCoinBalance.toFixed(1)} ALCH</strong>
@@ -233,19 +336,22 @@ export function MyLabsView({
       {feedback && (
         <div className="mylabs-feedback" role="status">
           <span>{feedback}</span>
-          <button type="button" onClick={() => setFeedback(null)}>
+          <button type="button" onClick={() => setFeedback(null)} aria-label="Dismiss notice">
             ×
           </button>
         </div>
       )}
 
       <div className="mylabs-grid">
-        {/* Left: Interactive 3D Lab + Camera Presets + Pet Care */}
+        {/* Left: Interactive 3D Lab + Studio Controls + Pet Care */}
         <div className="mylabs-left">
           <div className="floating-model-card">
             <ArtworkCanvas
               showHud
               cameraPreset={camPreset}
+              lightingMood={lightingMood}
+              previewSectorId={previewSectorId}
+              benchmarkIndex={selectedBenchmark}
               tamagotchiSignal={tamaSignal}
               onComputeSnapshot={setLiveSnap}
               onInteractiveEvent={(ev) => {
@@ -254,10 +360,10 @@ export function MyLabsView({
                   setVitals(next);
                   saveCompanionVitals(selected.tokenId, next);
                   onAwardPlayBonus(ev.bonusCoins);
-                  setFeedback(`Petted in 3D! Mood up and +${ev.bonusCoins} ALCH spark.`);
+                  setFeedback(`Petted ${petDisplayName} in 3D. +${ev.bonusCoins} spark.`);
                 } else {
                   onAwardPlayBonus(ev.bonusCoins);
-                  setFeedback(`Popped a floating proton! +${ev.bonusCoins} ALCH spark.`);
+                  setFeedback(`Popped a floating proton. +${ev.bonusCoins} sparks.`);
                 }
               }}
               impact={{
@@ -280,34 +386,82 @@ export function MyLabsView({
             />
           </div>
 
-          {/* Architect Camera Presets */}
+          {/* Camera Views + Studio Lighting + Sound Toggle */}
           <div className="camera-bar">
             {CAMERA_BUTTONS.map((btn) => (
               <button
                 key={btn.id}
                 type="button"
                 className="preset-chip clickable"
-                onClick={() =>
-                  setCamPreset((prev) => ({ preset: btn.id, seq: (prev?.seq || 0) + 1 }))
-                }
+                onClick={() => {
+                  soundEngine.playTap(880);
+                  setCamPreset((prev) => ({ preset: btn.id, seq: (prev?.seq || 0) + 1 }));
+                }}
               >
                 {btn.label}
               </button>
             ))}
+            <button type="button" className="preset-chip clickable" onClick={cycleLighting}>
+              <Sun size={11} style={{ verticalAlign: "-1px", marginRight: 4 }} />
+              {LIGHTING_LABELS[lightingMood]}
+            </button>
+            <button
+              type="button"
+              className="preset-chip clickable"
+              onClick={() => setSoundOn(soundEngine.toggle())}
+              aria-label={soundOn ? "Mute sound" : "Enable sound"}
+            >
+              {soundOn ? <Volume2 size={12} /> : <VolumeX size={12} />}
+            </button>
           </div>
 
           {/* Pet Care Card */}
           <div className="glass-panel tama-card">
             <div className="tama-head">
               <div>
-                <div className="tama-title">
-                  {tier >= 4 || hasSector(selected.sectorsMask, 3)
-                    ? "Cat & Dog"
-                    : traits.familiar.name}
-                </div>
+                {editingPetName ? (
+                  <form
+                    className="pet-name-form"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      handleSavePetName();
+                    }}
+                  >
+                    <input
+                      type="text"
+                      value={petNameDraft}
+                      maxLength={22}
+                      placeholder={defaultPetLabel}
+                      onChange={(e) => setPetNameDraft(e.target.value)}
+                      autoFocus
+                      className="pet-name-input"
+                      aria-label="Pet name"
+                    />
+                    <button type="submit" className="sector-btn clickable">
+                      Save
+                    </button>
+                  </form>
+                ) : (
+                  <div className="tama-title-row">
+                    <span className="tama-title">{petDisplayName}</span>
+                    <button
+                      type="button"
+                      className="inline-icon-btn clickable"
+                      onClick={() => {
+                        setPetNameDraft(vitals.petName);
+                        setEditingPetName(true);
+                      }}
+                      title="Rename pet"
+                      aria-label="Rename pet"
+                    >
+                      <Pencil size={12} />
+                    </button>
+                  </div>
+                )}
                 <div className="tama-sub">
                   Level {vitals.level} · {companionMoodLabel(vitals)} ·{" "}
-                  <strong>{tamaBoost}x</strong> lab speed
+                  <strong>{tamaBoost}x</strong> lab speed ·{" "}
+                  <Flame size={11} style={{ verticalAlign: "-1px" }} /> {vitals.dailyStreak}d streak
                 </div>
               </div>
               <a
@@ -350,7 +504,7 @@ export function MyLabsView({
                 onClick={() => handleTamagotchi("feed")}
               >
                 <Cookie size={13} />
-                Feed (5 ALCH)
+                Feed (5 sparks)
               </button>
               <button
                 type="button"
@@ -381,14 +535,15 @@ export function MyLabsView({
           </div>
         </div>
 
-        {/* Right: Coin Mining + Build New Rooms */}
+        {/* Right: Coin Mining + Protein Workbench + Sims Room Builder */}
         <div className="mylabs-right">
+          {/* Coin Mining & Researcher Sharing */}
           <div className="glass-panel mining-panel">
             <div className="mining-head">
               <div>
                 <div className="single-kicker">
                   <Pickaxe size={12} style={{ verticalAlign: "-2px", marginRight: 5 }} />
-                  Coin Mining &amp; Protein Folding
+                  Coin Mining · 0% Tax ALCH
                 </div>
                 <div className="mining-big">
                   {pendingCoins.toFixed(2)} <span>ALCH ready</span>
@@ -399,7 +554,7 @@ export function MyLabsView({
 
             <div className="tithe-slider-row">
               <div className="tithe-label">
-                <span>Send part of your claim to researchers</span>
+                <span>Share part of your claim with researchers</span>
                 <strong>{tithePct}% to research</strong>
               </div>
               <input
@@ -420,13 +575,18 @@ export function MyLabsView({
                 className="btn-mint-minimal clickable"
                 style={{ padding: "11px 22px", fontSize: "0.86rem" }}
                 onClick={async () => {
-                  await onClaimCoins(selected, pendingCoins, tithePct);
-                  setFeedback(
-                    `Claimed ${(pendingCoins * (1 - tithePct / 100)).toFixed(1)} ALCH and sent ${(
-                      pendingCoins *
-                      (tithePct / 100)
-                    ).toFixed(1)} ALCH to researchers.`
-                  );
+                  try {
+                    await onClaimCoins(selected, pendingCoins, tithePct);
+                    soundEngine.playTap(1174.66);
+                    setFeedback(
+                      `Claimed ${(pendingCoins * (1 - tithePct / 100)).toFixed(1)} ALCH and sent ${(
+                        pendingCoins *
+                        (tithePct / 100)
+                      ).toFixed(1)} ALCH to researchers.`
+                    );
+                  } catch (err) {
+                    setFeedback(err instanceof Error ? err.message : "Could not claim right now.");
+                  }
                 }}
               >
                 <Coins size={15} />
@@ -441,23 +601,99 @@ export function MyLabsView({
                     setFeedback("Claim at least 25 ALCH first to donate.");
                     return;
                   }
-                  await onDonateCoins(selected, 25);
-                  setFeedback("Sent 25 ALCH straight to the research wallet.");
+                  try {
+                    await onDonateCoins(selected, 25);
+                    soundEngine.playPet();
+                    setFeedback("Sent 25 ALCH straight to the research wallet.");
+                  } catch (err) {
+                    setFeedback(err instanceof Error ? err.message : "Donation cancelled.");
+                  }
                 }}
               >
                 <HeartHandshake size={14} />
                 Donate 25 ALCH
               </button>
+            </div>
+          </div>
 
-              {liveSnap && (
-                <>
+          {/* Real Open-Science Protein Folding Workbench */}
+          <div className="glass-panel science-panel">
+            <div className="science-head">
+              <div>
+                <div className="single-kicker">
+                  <Cpu size={12} style={{ verticalAlign: "-2px", marginRight: 5 }} />
+                  Live Protein Folding
+                </div>
+                <div className="science-title">
+                  {liveSnap ? liveSnap.taskTitle : "Loading protein benchmark…"}
+                </div>
+              </div>
+
+              <select
+                className="protein-select clickable"
+                value={selectedBenchmark ?? liveSnap?.benchmarkIndex ?? 0}
+                onChange={(e) => {
+                  const idx = Number(e.target.value);
+                  setSelectedBenchmark(idx);
+                  soundEngine.playTap(987.77);
+                }}
+                aria-label="Choose protein benchmark"
+              >
+                {PROTEIN_BENCHMARKS.map((b) => (
+                  <option key={b.pdbId} value={b.id}>
+                    {b.shortName} · {b.sequence.length} aa
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {liveSnap && (
+              <>
+                <div className="science-metrics-row">
+                  <div className="science-metric">
+                    <span>Best energy</span>
+                    <strong>{liveSnap.bestEnergy.toFixed(1)} kcal/mol</strong>
+                  </div>
+                  <div className="science-metric">
+                    <span>Native size fit</span>
+                    <strong>
+                      {liveSnap.radiusOfGyration.toFixed(1)}Å ({liveSnap.compactnessMatchPct}%)
+                    </strong>
+                  </div>
+                  <div className="science-metric">
+                    <span>Core burial</span>
+                    <strong>{liveSnap.hydrophobicBurialPct}%</strong>
+                  </div>
+                  <div className="science-metric">
+                    <span>Contacts</span>
+                    <strong>{liveSnap.contactCount}</strong>
+                  </div>
+                </div>
+
+                <div className="sparkline-row">
+                  <EnergySparkline history={liveSnap.energyHistory} />
+                  <div className="sparkline-meta">
+                    <span>{liveSnap.opsPerSecond.toLocaleString()} steps/s</span>
+                    <span>{liveSnap.replicaSwaps} swaps · {liveSnap.workUnitsCompleted} rounds</span>
+                  </div>
+                </div>
+
+                <div className="mining-buttons">
                   <button
                     type="button"
                     className="subtle-pill-btn clickable"
                     onClick={() => downloadPDBFromSnapshot(liveSnap)}
                   >
-                    <Download size={14} />
+                    <Download size={13} />
                     Download .PDB
+                  </button>
+                  <button
+                    type="button"
+                    className="subtle-pill-btn clickable"
+                    onClick={() => downloadScienceCertificateFromSnapshot(liveSnap)}
+                  >
+                    <FileJson size={13} />
+                    .JSON Proof
                   </button>
                   <button
                     type="button"
@@ -465,6 +701,7 @@ export function MyLabsView({
                     onClick={async () => {
                       try {
                         await onAnchorProof(selected, liveSnap);
+                        soundEngine.playBuildRoom();
                         setFeedback(
                           `Saved fold proof (${liveSnap.proofHash.slice(0, 12)}…) on-chain.`
                         );
@@ -475,21 +712,21 @@ export function MyLabsView({
                       }
                     }}
                   >
-                    <ShieldCheck size={14} />
+                    <ShieldCheck size={13} />
                     Save proof
                   </button>
-                </>
-              )}
-            </div>
+                </div>
+              </>
+            )}
           </div>
 
-          {/* Sims-Style Room Builder */}
+          {/* Sims-Style Room Builder with 3D Hover Ghost Preview */}
           <div className="glass-panel builder-panel">
             <div className="builder-head">
               <h3>
                 <Building2 size={16} /> Build new rooms
               </h3>
-              <span>{builtCount} of 6 built</span>
+              <span>{builtCount} of 6 built · hover to preview</span>
             </div>
 
             <div className="sector-grid">
@@ -498,7 +735,24 @@ export function MyLabsView({
                 const canAffordCoins = state.userCoinBalance >= sector.coinCost;
 
                 return (
-                  <div key={sector.id} className={`sector-card ${built ? "is-built" : ""}`}>
+                  <div
+                    key={sector.id}
+                    className={`sector-card ${built ? "is-built" : ""} ${
+                      previewSectorId === sector.id ? "is-previewing" : ""
+                    }`}
+                    onMouseEnter={() => {
+                      if (!built) setPreviewSectorId(sector.id);
+                    }}
+                    onMouseLeave={() => {
+                      if (previewSectorId === sector.id) setPreviewSectorId(null);
+                    }}
+                    onFocus={() => {
+                      if (!built) setPreviewSectorId(sector.id);
+                    }}
+                    onBlur={() => {
+                      if (previewSectorId === sector.id) setPreviewSectorId(null);
+                    }}
+                  >
                     <div className="sector-top">
                       <span className="sector-name">
                         <span className="cause-dot" style={{ background: sector.accent }} />
@@ -522,8 +776,15 @@ export function MyLabsView({
                             className="sector-btn clickable"
                             disabled={!canAffordCoins}
                             onClick={async () => {
-                              await onBuildSector(selected, sector.id, true);
-                              setFeedback(`Added ${sector.name} to Lab #${selected.tokenId}.`);
+                              try {
+                                await onBuildSector(selected, sector.id, true);
+                                setPreviewSectorId(null);
+                                setFeedback(`Added ${sector.name} to Lab #${selected.tokenId}.`);
+                              } catch (err) {
+                                setFeedback(
+                                  err instanceof Error ? err.message : "Could not build room."
+                                );
+                              }
                             }}
                           >
                             {sector.coinCost} ALCH
@@ -532,8 +793,15 @@ export function MyLabsView({
                             type="button"
                             className="sector-btn eth clickable"
                             onClick={async () => {
-                              await onBuildSector(selected, sector.id, false);
-                              setFeedback(`Added ${sector.name} to Lab #${selected.tokenId}.`);
+                              try {
+                                await onBuildSector(selected, sector.id, false);
+                                setPreviewSectorId(null);
+                                setFeedback(`Added ${sector.name} to Lab #${selected.tokenId}.`);
+                              } catch (err) {
+                                setFeedback(
+                                  err instanceof Error ? err.message : "Could not build room."
+                                );
+                              }
                             }}
                           >
                             ${sector.ethCostUsd}

@@ -1,10 +1,22 @@
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Cookie, Download, Eye, EyeOff, Heart, Sparkles } from "lucide-react";
+import {
+  Cookie,
+  Download,
+  Eye,
+  EyeOff,
+  Heart,
+  Sparkles,
+  Sun,
+  Volume2,
+  VolumeX
+} from "lucide-react";
 import { ArtworkCanvas } from "./components/ArtworkCanvas";
+import type { CameraPreset, LightingMood } from "./engine/alchemy3DRenderer";
 import { type LiveImpactState } from "./engine/alchemyRenderer";
 import { deriveTraitsFromSeed, normalizeSeed } from "./engine/prng";
 import { downloadPDBFromSnapshot, type ComputeSnapshot } from "./engine/researchCompute";
+import { soundEngine } from "./engine/soundEngine";
 import type { TamagotchiAction } from "./engine/tamagotchi";
 import { stageFromEth } from "./engine/traits";
 import {
@@ -17,6 +29,19 @@ import { fetchTokenLiveSnapshotOnChain, modeFromChainId } from "./web3/contractS
 import { countSectors } from "./web3/sectors";
 import "./styles/global.css";
 
+const LIGHTING_ORDER: LightingMood[] = ["daylight", "silver", "moonlit"];
+const LIGHTING_LABELS: Record<LightingMood, string> = {
+  daylight: "Day",
+  silver: "Silver",
+  moonlit: "Mist"
+};
+const CAM_PRESETS: Array<{ id: CameraPreset; label: string }> = [
+  { id: "iso", label: "3D" },
+  { id: "top", label: "Plan" },
+  { id: "pet", label: "Pet" },
+  { id: "molecule", label: "Fold" }
+];
+
 function StandaloneAnimationViewer() {
   const params = new URLSearchParams(window.location.search);
   const tokenId = Number(params.get("tokenId") || "1");
@@ -26,7 +51,7 @@ function StandaloneAnimationViewer() {
   const seed = normalizeSeed(rawSeed);
   const causeId = Math.max(0, Math.min(3, Number(params.get("cause") || "0")));
   const contractAddress = params.get("contract") || "";
-  const chainId = Number(params.get("chainId") || "1");
+  const chainId = Number(params.get("chainId") || "84532");
   const initialUsd = Math.max(1, Number(params.get("usd") || "1"));
   const initialTier = Math.max(
     1,
@@ -37,10 +62,14 @@ function StandaloneAnimationViewer() {
   const initialGlobalEth = Number(params.get("globalEth") || "5.41");
 
   const [showHud, setShowHud] = useState(true);
+  const [lightingMood, setLightingMood] = useState<LightingMood>("daylight");
+  const [soundOn, setSoundOn] = useState(() => soundEngine.isEnabled());
+  const [camPreset, setCamPreset] = useState<{ preset: CameraPreset; seq: number } | null>(null);
   const [liveSnap, setLiveSnap] = useState<ComputeSnapshot | null>(null);
   const [tamaSignal, setTamaSignal] = useState<{ action: TamagotchiAction; seq: number } | null>(
     null
   );
+  const [toast, setToast] = useState<string | null>(null);
   const [impact, setImpact] = useState<LiveImpactState>({
     tokenId,
     seed,
@@ -60,6 +89,12 @@ function StandaloneAnimationViewer() {
   });
 
   const traits = deriveTraitsFromSeed(impact.seed);
+
+  useEffect(() => {
+    if (!toast) return;
+    const id = window.setTimeout(() => setToast(null), 2600);
+    return () => window.clearTimeout(id);
+  }, [toast]);
 
   useEffect(() => {
     if (!contractAddress) return;
@@ -90,7 +125,7 @@ function StandaloneAnimationViewer() {
               : prev.lastPulseAt
         }));
       } catch {
-        // Keep last known state
+        // Keep last known state smoothly
       }
     };
     poll();
@@ -131,6 +166,19 @@ function StandaloneAnimationViewer() {
 
   const triggerCare = (action: TamagotchiAction) => {
     setTamaSignal((prev) => ({ action, seq: (prev?.seq || 0) + 1 }));
+    setToast(
+      action === "feed"
+        ? "Treats dropped on the patio."
+        : action === "pet"
+          ? "Your pet loved that."
+          : "Ball tossed. Watch them chase it."
+    );
+  };
+
+  const cycleLighting = () => {
+    const idx = (LIGHTING_ORDER.indexOf(lightingMood) + 1) % LIGHTING_ORDER.length;
+    setLightingMood(LIGHTING_ORDER[idx]);
+    soundEngine.playTap(987.77);
   };
 
   return (
@@ -148,8 +196,17 @@ function StandaloneAnimationViewer() {
         <ArtworkCanvas
           impact={impact}
           showHud={showHud}
+          cameraPreset={camPreset}
+          lightingMood={lightingMood}
           tamagotchiSignal={tamaSignal}
           onComputeSnapshot={setLiveSnap}
+          onInteractiveEvent={(ev) => {
+            setToast(
+              ev.kind === "pet-clicked"
+                ? "Your tap made the pet happy."
+                : "Popped a floating proton."
+            );
+          }}
         />
 
         <div
@@ -171,6 +228,26 @@ function StandaloneAnimationViewer() {
           >
             {showHud ? <EyeOff size={12} /> : <Eye size={12} />}
             {showHud ? "Clean" : "HUD"}
+          </button>
+
+          <button
+            type="button"
+            className="art-hud-badge clickable"
+            onClick={cycleLighting}
+            style={{ cursor: "pointer" }}
+          >
+            <Sun size={12} />
+            {LIGHTING_LABELS[lightingMood]}
+          </button>
+
+          <button
+            type="button"
+            className="art-hud-badge clickable"
+            onClick={() => setSoundOn(soundEngine.toggle())}
+            style={{ cursor: "pointer" }}
+          >
+            {soundOn ? <Volume2 size={12} /> : <VolumeX size={12} />}
+            {soundOn ? "Sound" : "Muted"}
           </button>
 
           <button
@@ -208,7 +285,7 @@ function StandaloneAnimationViewer() {
               type="button"
               className="art-hud-badge clickable"
               onClick={() => downloadPDBFromSnapshot(liveSnap)}
-              title="Download real .PDB Protein Data Bank structure computed by this NFT"
+              title="Download real .PDB structure computed by this lab"
               style={{ cursor: "pointer" }}
             >
               <Download size={12} />
@@ -221,7 +298,51 @@ function StandaloneAnimationViewer() {
           <div
             style={{
               position: "absolute",
-              bottom: 72,
+              top: 52,
+              left: 12,
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              zIndex: 10
+            }}
+          >
+            {CAM_PRESETS.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                className="art-hud-badge clickable"
+                onClick={() => {
+                  soundEngine.playTap(880);
+                  setCamPreset((prev) => ({ preset: c.id, seq: (prev?.seq || 0) + 1 }));
+                }}
+                style={{ cursor: "pointer" }}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {toast && (
+          <div
+            style={{
+              position: "absolute",
+              top: 52,
+              left: "50%",
+              transform: "translateX(-50%)",
+              zIndex: 12,
+              pointerEvents: "none"
+            }}
+          >
+            <span className="art-hud-badge">{toast}</span>
+          </div>
+        )}
+
+        {showHud && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: 74,
               left: 12,
               display: "flex",
               gap: 6,
@@ -232,7 +353,7 @@ function StandaloneAnimationViewer() {
             <span className="art-hud-badge">{traits.vessel}</span>
             <span className="art-hud-badge">{traits.familiar.name}</span>
             <span className="art-hud-badge">
-              {countSectors(impact.sectorsMask ?? 0)}/6 Wings
+              {countSectors(impact.sectorsMask ?? 0)}/6 Rooms
             </span>
           </div>
         )}

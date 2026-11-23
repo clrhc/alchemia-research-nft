@@ -5,6 +5,7 @@ export interface ResearchCauseInfo {
   category: string;
   summary: string;
   recipientLabel: string;
+  researchWallet?: string;
   raisedEth: number;
   mintCount: number;
   accent: string;

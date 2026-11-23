@@ -126,6 +126,7 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
     address payable public devWallet;
     address payable public liquidityVault;
     string public animationBaseUrl;
+    bool public metadataFrozen;
     bool public mintActive = true;
 
     // Automatic Liquidity Seeding Threshold
@@ -203,6 +204,9 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
     );
     event SupplyCapUpdated(uint256 previousMaxSupply, uint256 newMaxSupply);
     event SupplyConfigLocked(uint256 finalMaxSupply);
+    event MintConfigUpdated(uint256 newMintPriceWei, bool active);
+    event LiquidityConfigUpdated(uint256 thresholdWei, uint256 seedCoinsAmount, address indexed vault);
+    event MetadataFrozen(string finalAnimationBaseUrl);
 
     error MintPaused();
     error InvalidQuantity();
@@ -211,6 +215,7 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
     error InvalidCause();
     error CauseInactive();
     error SupplyAlreadyLocked();
+    error MetadataAlreadyFrozen();
     error CapBelowCurrentSupply();
     error ZeroAddress();
     error TokenDoesNotExist();
@@ -706,16 +711,28 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
         liquidityThresholdWei = thresholdWei;
         liquiditySeedCoins = seedCoinsAmount;
         liquidityVault = vault;
+        emit LiquidityConfigUpdated(thresholdWei, seedCoinsAmount, vault);
     }
 
     function setMintConfig(uint256 newMintPriceWei, bool active) external onlyOwner {
         mintPriceWei = newMintPriceWei;
         mintActive = active;
+        emit MintConfigUpdated(newMintPriceWei, active);
     }
 
     function setAnimationBaseUrl(string calldata newBaseUrl) external onlyOwner {
+        if (metadataFrozen) revert MetadataAlreadyFrozen();
         animationBaseUrl = newBaseUrl;
         emit BatchMetadataUpdate(1, type(uint256).max);
+    }
+
+    /**
+     * @notice Permanently locks animationBaseUrl on-chain (prevents any future metadata changes).
+     */
+    function freezeAnimationBaseUrl() external onlyOwner {
+        if (metadataFrozen) revert MetadataAlreadyFrozen();
+        metadataFrozen = true;
+        emit MetadataFrozen(animationBaseUrl);
     }
 
     function supportsInterface(bytes4 interfaceId)

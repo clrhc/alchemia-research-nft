@@ -6,9 +6,9 @@ import "@openzeppelin/contracts/utils/Base64.sol";
 
 /**
  * @title AlchemiaRenderer
- * @notice Standalone pure on-chain SVG & ERC-721 JSON metadata generator.
- *         Keeps AlchemiaImpactNFT lean on Ethereum Mainnet while reflecting live
- *         complexity tiers, built Sims-style lab sectors, and verified research work units.
+ * @notice Standalone pure on-chain Swiss Architectural Blueprint SVG & ERC-721 JSON renderer.
+ *         Keeps AlchemiaImpactNFT lean on Ethereum Mainnet & Base while visually reflecting
+ *         live complexity tiers, built 3D lab rooms, companion species, and verified folds.
  */
 contract AlchemiaRenderer {
     using Strings for uint256;
@@ -101,23 +101,23 @@ contract AlchemiaRenderer {
         string memory imageUri = string.concat("data:image/svg+xml;base64,", Base64.encode(bytes(svg)));
 
         string memory supplyLabel = p.maxSupply == 0
-            ? "Infinite"
+            ? "Open"
             : string.concat("Capped (", p.maxSupply.toString(), ")");
 
         uint256 sectorCount = _popcount(p.sectorsMask);
 
         string memory json = string.concat(
             '{"name":"Alchemia Lab #', p.tokenId.toString(),
-            '","description":"Living 3D Ethereum architectural alchemical laboratory funding real-world research, running live protein folding & $ALCH mining operations, and expandable with modular 3D lab wings. Cause: ',
+            '","description":"Interactive 3D glass laboratory that funds open science, folds real RCSB PDB mini-proteins, mines zero-tax ALCH coins, and grows with 6 buildable rooms. Cause: ',
             p.causeName, '.","image":"', imageUri,
             '","animation_url":"', p.animationUrl, '","attributes":[',
             '{"trait_type":"Vessel","value":"', t.vessel, '"},',
-            '{"trait_type":"Familiar","value":"', t.familiar, '"},',
+            '{"trait_type":"Pet","value":"', t.familiar, '"},',
             '{"trait_type":"Species","value":"', t.familiarKind, '"},',
             '{"trait_type":"Palette","value":"', t.palette, '"},',
             '{"trait_type":"Cause","value":"', p.causeName, '"},',
             '{"trait_type":"Supply","value":"', supplyLabel, '"},',
-            '{"trait_type":"Complexity Tier","value":"Tier ', uint256(p.complexityTier).toString(), '/5"},',
+            '{"trait_type":"Detail Level","value":"Level ', uint256(p.complexityTier).toString(), '/5"},',
             '{"display_type":"number","trait_type":"Built Lab Wings","value":', sectorCount.toString(), '},',
             '{"display_type":"number","trait_type":"Verified Research WUs","value":', uint256(p.workUnits).toString(), '}]}'
         );
@@ -128,55 +128,114 @@ contract AlchemiaRenderer {
     function _renderSVG(RenderParams calldata p, DerivedTraits memory t) private pure returns (string memory) {
         uint256 boost = (p.globalDonatedWei * 68) / 5 ether;
         if (boost > 68) boost = 68;
-        uint256 liqY = 395 - ((22 + boost) * 150) / 100;
+        uint256 liqY = 382 - ((24 + boost) * 140) / 100;
         string memory flaskD = _flaskD(t.vesselIdx);
 
         return string.concat(
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600">',
-            '<defs><linearGradient id="b" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#e8ecf2"/></linearGradient>',
-            '<linearGradient id="l" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="', t.primaryHex, '"/><stop offset="1" stop-color="', t.secondaryHex, '"/></linearGradient>',
+            '<defs>',
+            '<linearGradient id="b" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#edf1f7"/></linearGradient>',
+            '<linearGradient id="l" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="', t.secondaryHex, '"/><stop offset="1" stop-color="', t.primaryHex, '"/></linearGradient>',
+            '<pattern id="g" width="30" height="30" patternUnits="userSpaceOnUse"><path d="M30 0H0v30" fill="none" stroke="#cbd5e1" stroke-opacity=".35" stroke-width=".8"/></pattern>',
             '<clipPath id="c"><path d="', flaskD, '"/></clipPath></defs>',
-            '<rect width="600" height="600" fill="url(#b)"/>',
-            '<g fill="none" stroke="#c0c7d4"><circle cx="300" cy="285" r="210" stroke-dasharray="4 6"/><circle cx="300" cy="285" r="172"/>',
-            '<ellipse cx="300" cy="285" rx="198" ry="72" transform="rotate(-24 300 285)" stroke="', t.primaryHex, '" stroke-opacity=".5"/>',
-            '<ellipse cx="300" cy="285" rx="198" ry="72" transform="rotate(28 300 285)" stroke="', t.secondaryHex, '" stroke-opacity=".5"/></g>',
-            '<circle cx="136" cy="212" r="7" fill="', t.accentHex, '"/><circle cx="468" cy="356" r="6" fill="', t.primaryHex, '"/>',
-            '<g clip-path="url(#c)"><rect x="170" y="', liqY.toString(), '" width="260" height="260" fill="url(#l)"/>',
-            '<ellipse cx="300" cy="', liqY.toString(), '" rx="95" ry="9" fill="#fff" fill-opacity=".42"/></g>',
-            '<path d="', flaskD, '" fill="none" stroke="#64748b" stroke-width="3"/>',
-            _familiarSvg(t.familiarIdx, t.accentHex),
-            '<rect x="34" y="462" width="532" height="100" rx="18" fill="#fff" fill-opacity=".78" stroke="#d5dbe5"/>',
-            '<text x="56" y="494" font-family="sans-serif" font-size="14" font-weight="600" fill="#1e222b">ALCHEMIA #', p.tokenId.toString(), ' - ', t.familiar, '</text>',
-            '<text x="56" y="522" font-family="sans-serif" font-size="12" fill="#5b6475">Tier ', uint256(p.complexityTier).toString(), '/5 | ', _popcount(p.sectorsMask).toString(), ' Lab Wings | ', p.causeName, '</text>',
-            '<text x="56" y="546" font-family="monospace" font-size="12" fill="#2c3444">WU: ', uint256(p.workUnits).toString(), ' | LIVE RESEARCH: ', _formatEth3(p.globalDonatedWei), ' ETH</text></svg>'
+            '<rect width="600" height="600" fill="url(#b)"/><rect width="600" height="600" fill="url(#g)"/>',
+            _blueprintFrameAndPlinth(t, p.complexityTier),
+            _sectorNodesSvg(p.sectorsMask),
+            '<g clip-path="url(#c)"><rect x="170" y="', liqY.toString(), '" width="260" height="250" fill="url(#l)" fill-opacity=".88"/>',
+            '<ellipse cx="300" cy="', liqY.toString(), '" rx="95" ry="9" fill="#ffffff" fill-opacity=".5"/></g>',
+            '<path d="', flaskD, '" fill="none" stroke="#475569" stroke-width="2.6"/>',
+            '<path d="M286 178v72" stroke="#ffffff" stroke-opacity=".65" stroke-width="4" stroke-linecap="round"/>',
+            _familiarSvg(t.familiarIdx, p.sectorsMask, p.complexityTier, t.accentHex),
+            _titleBlockSvg(p, t),
+            '</svg>'
+        );
+    }
+
+    function _blueprintFrameAndPlinth(DerivedTraits memory t, uint8 tier) private pure returns (string memory) {
+        string memory tierArc = tier >= 3
+            ? string.concat('<circle cx="300" cy="272" r="204" fill="none" stroke="', t.primaryHex, '" stroke-opacity=".28" stroke-dasharray="2 8"/>')
+            : "";
+        return string.concat(
+            '<path d="M24 44V24h20M556 24h20v20M24 556v20h20M556 576h20v-20" fill="none" stroke="#94a3b8" stroke-width="1.5"/>',
+            '<ellipse cx="300" cy="398" rx="184" ry="34" fill="#ffffff" fill-opacity=".86" stroke="#cbd5e1" stroke-width="1.4"/>',
+            '<ellipse cx="300" cy="394" rx="150" ry="25" fill="', t.secondaryHex, '" fill-opacity=".16" stroke="', t.primaryHex, '" stroke-opacity=".42"/>',
+            '<g fill="none" stroke="#94a3b8" stroke-opacity=".5"><circle cx="300" cy="272" r="176" stroke-dasharray="4 6"/><circle cx="300" cy="272" r="144"/>',
+            '<ellipse cx="300" cy="272" rx="186" ry="62" transform="rotate(-24 300 272)" stroke="', t.primaryHex, '" stroke-opacity=".48"/>',
+            '<ellipse cx="300" cy="272" rx="186" ry="62" transform="rotate(26 300 272)" stroke="', t.secondaryHex, '" stroke-opacity=".48"/></g>',
+            tierArc,
+            '<circle cx="144" cy="196" r="6" fill="', t.accentHex, '"/><circle cx="458" cy="342" r="5" fill="', t.primaryHex, '"/>',
+            '<g transform="translate(300,104)" fill="none" stroke="', t.primaryHex, '" stroke-width="1.6" stroke-opacity=".8">',
+            '<path d="M-24 0c8-16 16-16 24 0s16 16 24 0"/><circle cx="-16" cy="-7" r="3" fill="', t.accentHex, '"/>',
+            '<circle cx="0" cy="0" r="3" fill="', t.primaryHex, '"/><circle cx="16" cy="7" r="3" fill="', t.secondaryHex, '"/></g>'
+        );
+    }
+
+    function _sectorNodesSvg(uint8 mask) private pure returns (string memory) {
+        string[6] memory coords = [
+            "106,158", "494,258", "106,338", "494,358", "494,158", "300,66"
+        ];
+        string[6] memory colors = [
+            "#38BDF8", "#6366F1", "#10B981", "#F472B6", "#8B5CF6", "#F59E0B"
+        ];
+        string[6] memory tags = ["CRYO", "MINE", "SOLR", "PETS", "SPIR", "DOME"];
+
+        string memory out = '<g font-family="monospace" font-size="8" text-anchor="middle">';
+        for (uint8 i = 0; i < 6; i++) {
+            bool built = (mask & (uint8(1) << i)) != 0;
+            out = string.concat(
+                out,
+                '<g transform="translate(', coords[i], ')">',
+                '<circle r="17" fill="#ffffff" fill-opacity="', built ? ".95" : ".5",
+                '" stroke="', built ? colors[i] : "#cbd5e1", '" stroke-width="', built ? "2" : "1", '"/>',
+                '<text y="3" fill="', built ? "#1e293b" : "#94a3b8", '">', tags[i], '</text></g>'
+            );
+        }
+        return string.concat(out, '</g>');
+    }
+
+    function _titleBlockSvg(RenderParams calldata p, DerivedTraits memory t) private pure returns (string memory) {
+        return string.concat(
+            '<rect x="34" y="464" width="532" height="98" rx="18" fill="#ffffff" fill-opacity=".84" stroke="#cbd5e1"/>',
+            '<text x="56" y="494" font-family="sans-serif" font-size="14" font-weight="600" fill="#1a1f2c">ALCHEMIA LAB #',
+            p.tokenId.toString(), ' - ', t.familiar, '</text>',
+            '<text x="56" y="520" font-family="sans-serif" font-size="12" fill="#5a6478">Level ',
+            uint256(p.complexityTier).toString(), '/5 | ', _popcount(p.sectorsMask).toString(),
+            '/6 Rooms | ', p.causeName, '</text>',
+            '<text x="56" y="544" font-family="monospace" font-size="11" fill="#334155">FOLDS: ',
+            uint256(p.workUnits).toString(), ' | LIVE RESEARCH: ', _formatEth3(p.globalDonatedWei), ' ETH</text>'
         );
     }
 
     function _flaskD(uint8 idx) private pure returns (string memory) {
         string[5] memory paths = [
-            "M276 155h48v67l72 146q8 27-18 27H222q-26 0-18-27l72-146z",
-            "M278 152h44v73a92 92 0 1 1-44 0z",
-            "M250 170h100l22 170-44 55h-56l-44-55z",
-            "M280 148h40v64c50 13 65 68 32 100 40 33 23 83-26 83h-52c-49 0-66-50-26-83-33-32-18-87 32-100z",
-            "M284 142h32v63l42 57-20 38 48 72q6 23-20 23H234q-26 0-20-23l48-72-20-38 42-57z"
+            "M276 146h48v64l70 142q8 26-18 26H224q-26 0-18-26l70-142z",
+            "M278 144h44v70a90 90 0 1 1-44 0z",
+            "M252 162h96l20 164-42 52h-52l-42-52z",
+            "M280 140h40v62c48 13 63 65 30 96 38 32 22 80-24 80h-52c-46 0-62-48-24-80-33-31-18-83 30-96z",
+            "M284 134h32v60l40 54-19 36 46 69q6 22-19 22H236q-25 0-19-22l46-69-19-36 40-54z"
         ];
         return paths[idx];
     }
 
-    function _familiarSvg(uint8 idx, string memory accentHex) private pure returns (string memory) {
+    function _familiarSvg(
+        uint8 idx,
+        uint8 sectorsMask,
+        uint8 tier,
+        string memory accentHex
+    ) private pure returns (string memory) {
         string memory cat = string.concat(
-            '<g transform="translate(394,316)" fill="#2a3140" fill-opacity=".88">',
+            '<g transform="translate(390,312)" fill="#252c3b" fill-opacity=".9">',
             '<path d="M18 32L12 8l18 12h18L66 8l-6 24c8 14 6 40-4 50H22c-10-10-12-36-4-50z"/>',
             '<circle cx="30" cy="38" r="3" fill="', accentHex, '"/><circle cx="48" cy="38" r="3" fill="', accentHex, '"/></g>'
         );
         string memory dog = string.concat(
-            '<g transform="translate(122,318)" fill="#2a3140" fill-opacity=".88">',
+            '<g transform="translate(124,314)" fill="#252c3b" fill-opacity=".9">',
             '<path d="M22 28L16 6l18 14h18l16-10-6 24c10 10 8 38-6 46H24c-12-10-12-36-2-52z"/>',
             '<circle cx="34" cy="38" r="3" fill="', accentHex, '"/><circle cx="50" cy="38" r="3" fill="', accentHex, '"/></g>'
         );
+        if (idx == 6 || tier >= 4 || (sectorsMask & 8) != 0) return string.concat(cat, dog);
         if (idx <= 2) return cat;
-        if (idx <= 5) return dog;
-        return string.concat(cat, dog);
+        return dog;
     }
 
     function _popcount(uint8 mask) private pure returns (uint256 c) {
