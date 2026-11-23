@@ -1879,7 +1879,6 @@ export class Alchemy3DRenderer {
       dispersion: 0.22,
       iridescence: 0.22,
       iridescenceIOR: 1.3,
-      iridescenceThicknessRange: [120, 380],
       specularIntensity: 1.0,
       attenuationColor: new THREE.Color("#e8f1fb"),
       attenuationDistance: 1.35,
@@ -3256,7 +3255,6 @@ export class Alchemy3DRenderer {
       dispersion: 0.42,
       iridescence: 0.34,
       iridescenceIOR: 1.32,
-      iridescenceThicknessRange: [140, 440],
       transparent: true,
       opacity: 0.68
     });
