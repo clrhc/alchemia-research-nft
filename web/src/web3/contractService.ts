@@ -346,6 +346,35 @@ export function clearSelectedWalletProvider() {
   activeEip1193Provider = null;
 }
 
+export function subscribeWalletEvents(
+  onAccountsChanged: (accounts: string[]) => void,
+  onChainChanged: (chainId: number) => void
+): () => void {
+  const eth = getSelectedProvider() as
+    | (ethers.Eip1193Provider & {
+        on?: (event: string, listener: (...args: unknown[]) => void) => void;
+        removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
+      })
+    | undefined;
+  if (!eth?.on) return () => {};
+
+  const handleAccounts = (raw: unknown) => {
+    const arr = Array.isArray(raw) ? raw.map((a) => String(a)) : [];
+    onAccountsChanged(arr);
+  };
+  const handleChain = (raw: unknown) => {
+    const parsed = typeof raw === "string" ? Number.parseInt(raw, 16) : Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) onChainChanged(parsed);
+  };
+
+  eth.on("accountsChanged", handleAccounts);
+  eth.on("chainChanged", handleChain);
+  return () => {
+    eth.removeListener?.("accountsChanged", handleAccounts);
+    eth.removeListener?.("chainChanged", handleChain);
+  };
+}
+
 export async function ensureTargetNetwork(
   targetChainId: number,
   customProvider?: unknown

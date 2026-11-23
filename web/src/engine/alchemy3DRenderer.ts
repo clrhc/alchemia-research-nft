@@ -1202,8 +1202,15 @@ export class Alchemy3DRenderer {
     this.lastTime = -1;
     this.onComputeTick?.(this.compute.getSnapshot());
     const loop = (now: number) => {
+      if (typeof document !== "undefined" && document.hidden) {
+        this.lastTime = -1;
+        this.rafId = requestAnimationFrame(loop);
+        return;
+      }
       if (this.startTime < 0) {
         this.startTime = now;
+        this.lastTime = now;
+      } else if (this.lastTime < 0) {
         this.lastTime = now;
       }
       const dt = Math.max(0.0001, Math.min(0.05, (now - this.lastTime) / 1000));

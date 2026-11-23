@@ -44,6 +44,7 @@ import {
   loadInitialCollectionState,
   saveChainCache,
   saveDemoState,
+  subscribeWalletEvents,
   type CollectionState,
   type MintedVessel
 } from "./web3/contractService";
@@ -107,10 +108,46 @@ export function App() {
     }
   }, [state.vessels]);
 
+  // Sync browser address bar ?lab=<tokenId> cleanly when inspecting a lab in Gallery Single View
+  const selectGalleryVessel = (vessel: MintedVessel | null) => {
+    setExploreSelected(vessel);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (vessel) url.searchParams.set("lab", String(vessel.tokenId));
+      else url.searchParams.delete("lab");
+      window.history.replaceState({}, "", url.toString());
+    }
+  };
+
+  const navigateTab = (nextPage: PageTab) => {
+    setPage(nextPage);
+    if (nextPage !== "explore") {
+      selectGalleryVessel(null);
+    }
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+    }
+  };
+
+  // Subscribe to EIP-1193 MetaMask/Rabby/Coinbase account & chain switch events
+  useEffect(() => {
+    if (!state.walletAddress) return;
+    return subscribeWalletEvents(
+      (accounts) => {
+        const nextAddr = accounts[0] || null;
+        setState((prev) => ({ ...prev, walletAddress: nextAddr }));
+      },
+      (nextChainId) => {
+        setState((prev) => ({ ...prev, chainId: nextChainId }));
+      }
+    );
+  }, [state.walletAddress]);
+
   useEffect(() => {
     if (!state.contractAddress) return;
     let active = true;
     const sync = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
       try {
         const snap = await fetchOnChainCollectionSnapshot(
           state.contractAddress,
@@ -592,24 +629,21 @@ export function App() {
           <button
             type="button"
             className={`nav-link clickable ${page === "mint" ? "active" : ""}`}
-            onClick={() => {
-              setPage("mint");
-              setExploreSelected(null);
-            }}
+            onClick={() => navigateTab("mint")}
           >
             Home
           </button>
           <button
             type="button"
             className={`nav-link clickable ${page === "explore" ? "active" : ""}`}
-            onClick={() => setPage("explore")}
+            onClick={() => navigateTab("explore")}
           >
             Gallery
           </button>
           <button
             type="button"
             className={`nav-link clickable ${page === "mylabs" ? "active" : ""}`}
-            onClick={() => setPage("mylabs")}
+            onClick={() => navigateTab("mylabs")}
           >
             My Labs
           </button>
@@ -714,10 +748,10 @@ export function App() {
               state={state}
               lastPulseAt={lastPulseAt}
               selectedVessel={exploreSelected}
-              onSelectVessel={setExploreSelected}
+              onSelectVessel={selectGalleryVessel}
               onOpenInMyLabs={(v) => {
                 setMyLabTokenId(v.tokenId);
-                setPage("mylabs");
+                navigateTab("mylabs");
               }}
             />
           </Suspense>

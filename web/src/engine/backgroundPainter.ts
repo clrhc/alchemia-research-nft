@@ -96,9 +96,15 @@ export class AlchemicalBackgroundPainter {
   }
 
   public start() {
-    this.lastTime = performance.now();
+    this.lastTime = -1;
     const loop = (now: number) => {
-      const dt = Math.min(0.05, (now - this.lastTime) / 1000);
+      if (typeof document !== "undefined" && document.hidden) {
+        this.lastTime = -1;
+        this.rafId = requestAnimationFrame(loop);
+        return;
+      }
+      if (this.lastTime < 0) this.lastTime = now;
+      const dt = Math.max(0.0001, Math.min(0.05, (now - this.lastTime) / 1000));
       this.lastTime = now;
       this.update(dt, now);
       this.render(now);
