@@ -681,35 +681,6 @@ async function fetchCollectionWithProvider(
     }
   }
 
-  // Fetch recent on-chain ResearchDiscoveryAnchored logs cleanly within public RPC limits
-  let recentDiscoveries: ResearchDiscoveryLog[] = [];
-  try {
-    const latestBlock = await provider.getBlockNumber();
-    const fromBlock = Math.max(0, latestBlock - 5000);
-    const logs = await contract.queryFilter(
-      contract.filters.ResearchDiscoveryAnchored(),
-      fromBlock,
-      latestBlock
-    );
-    recentDiscoveries = logs
-      .slice(-8)
-      .reverse()
-      .map((log) => {
-        const parsed = contract.interface.parseLog(log);
-        return {
-          tokenId: Number(parsed?.args?.tokenId || 0),
-          contributor: String(parsed?.args?.contributor || ""),
-          proofHash: String(parsed?.args?.proofHash || ""),
-          bestEnergy: Number(parsed?.args?.bestEnergyMicro || 0n) / 1e6,
-          addedWorkUnits: Number(parsed?.args?.addedWorkUnits || 0),
-          txHash: log.transactionHash,
-          blockNumber: log.blockNumber
-        };
-      });
-  } catch {
-    // Public RPC log range limits are non-fatal
-  }
-
   return {
     connectedMode: modeFromChainId(chainId),
     chainSynced: true,
@@ -730,9 +701,53 @@ async function fetchCollectionWithProvider(
       Number(ethers.formatEther(totalCoinsTithed)) + directCoinDonations,
     reactionStage: Number(reactionStage),
     causes,
-    vessels,
-    recentDiscoveries
+    vessels
   };
+}
+
+/**
+ * Fetches recent on-chain ResearchDiscoveryAnchored proof events independently
+ * so initial Home / Gallery hydration stays sub-second (~300ms via Multicall3).
+ */
+export async function fetchRecentResearchDiscoveries(
+  contractAddress: string,
+  chainId: number
+): Promise<ResearchDiscoveryLog[]> {
+  if (!contractAddress || !ethers.isAddress(contractAddress)) return [];
+  const candidates = Array.from(
+    new Set([CHAIN_RPC_URLS[chainId] || CHAIN_RPC_URLS[1], ...(CHAIN_RPC_FALLBACKS[chainId] || [])])
+  );
+  for (const rpcUrl of candidates) {
+    try {
+      const provider = getReadProvider(chainId, rpcUrl);
+      const contract = new Contract(contractAddress, ALCHEMIA_ABI, provider);
+      const latestBlock = await provider.getBlockNumber();
+      const fromBlock = Math.max(0, latestBlock - 5000);
+      const logs = await contract.queryFilter(
+        contract.filters.ResearchDiscoveryAnchored(),
+        fromBlock,
+        latestBlock
+      );
+      return logs
+        .slice(-8)
+        .reverse()
+        .map((log) => {
+          const parsed = contract.interface.parseLog(log);
+          return {
+            tokenId: Number(parsed?.args?.tokenId || 0),
+            contributor: String(parsed?.args?.contributor || ""),
+            proofHash: String(parsed?.args?.proofHash || ""),
+            bestEnergy: Number(parsed?.args?.bestEnergyMicro || 0n) / 1e6,
+            addedWorkUnits: Number(parsed?.args?.addedWorkUnits || 0),
+            txHash: log.transactionHash,
+            blockNumber: log.blockNumber
+          };
+        });
+    } catch {
+      // Try next fallback RPC silently
+    }
+  }
+  return [];
 }
 
 export async function fetchTokenLiveSnapshotOnChain(

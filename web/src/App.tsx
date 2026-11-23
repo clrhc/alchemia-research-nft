@@ -39,6 +39,7 @@ import {
   executeOnChainSubmitResearchProof,
   executeOnChainUpgradeVessel,
   fetchOnChainCollectionSnapshot,
+  fetchRecentResearchDiscoveries,
   loadInitialCollectionState,
   saveChainCache,
   saveDemoState,
@@ -132,6 +133,15 @@ export function App() {
       } catch {
         // Keep current view smoothly if public RPC throttles
       }
+      // Load optional proof-ledger logs asynchronously without blocking live Home/Gallery hydration
+      fetchRecentResearchDiscoveries(state.contractAddress, state.chainId)
+        .then((logs) => {
+          if (!active || logs.length === 0) return;
+          setState((prev) => ({ ...prev, recentDiscoveries: logs }));
+        })
+        .catch(() => {
+          // non-fatal
+        });
     };
     sync();
     const id = window.setInterval(sync, 20000);
