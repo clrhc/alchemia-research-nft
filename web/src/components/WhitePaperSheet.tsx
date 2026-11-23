@@ -129,6 +129,23 @@ export function WhitePaperSheet({
                   </button>
                 )}
             </div>
+
+            {state.causes.length > 0 && (
+              <div className="wp-causes-grid">
+                {state.causes.map((c) => (
+                  <div key={c.id} className="wp-cause-item">
+                    <span>
+                      <span
+                        className="cause-dot"
+                        style={{ background: c.accent, marginRight: 6 }}
+                      />
+                      {c.shortName}
+                    </span>
+                    <strong>{c.raisedEth.toFixed(4)} ETH</strong>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div>

@@ -108,6 +108,26 @@ function StandaloneAnimationViewer() {
     return () => window.clearTimeout(id);
   }, [toast]);
 
+  // Whisper-quiet keyboard shortcuts for full-screen / OpenSea iframe viewing
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === "1") setCamPreset((p) => ({ preset: "iso", seq: (p?.seq || 0) + 1 }));
+      else if (e.key === "2") setCamPreset((p) => ({ preset: "top", seq: (p?.seq || 0) + 1 }));
+      else if (e.key === "3") setCamPreset((p) => ({ preset: "pet", seq: (p?.seq || 0) + 1 }));
+      else if (e.key === "4") setCamPreset((p) => ({ preset: "molecule", seq: (p?.seq || 0) + 1 }));
+      else if (e.key.toLowerCase() === "m") setSoundOn(soundEngine.toggle());
+      else if (e.key.toLowerCase() === "h") setShowHud((v) => !v);
+      else if (e.code === "Space" && tag !== "BUTTON" && tag !== "A") {
+        e.preventDefault();
+        setTamaSignal((prev) => ({ action: "play", seq: (prev?.seq || 0) + 1 }));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   useEffect(() => {
     if (!contractAddress) return;
     let active = true;

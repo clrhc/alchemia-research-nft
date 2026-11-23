@@ -81,30 +81,27 @@ body {
   position: fixed;
   top: 0;
   left: 0;
-  width: 38px;
-  height: 38px;
-  margin-left: -19px;
-  margin-top: -19px;
+  width: 36px;
+  height: 36px;
+  margin-left: -18px;
+  margin-top: -18px;
   border-radius: 50%;
-  border: 1.25px solid rgba(115, 130, 156, 0.55);
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.18), rgba(203, 213, 225, 0.08));
-  backdrop-filter: blur(2px);
-  box-shadow: inset 0 0 8px rgba(255, 255, 255, 0.72);
+  border: 1.2px solid rgba(115, 130, 156, 0.45);
+  background: transparent;
   will-change: transform;
   transition: width 0.22s cubic-bezier(0.22, 1, 0.36, 1),
     height 0.22s cubic-bezier(0.22, 1, 0.36, 1),
     margin 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-    border-color 0.2s ease,
-    background 0.2s ease;
+    border-color 0.2s ease;
 }
 
 .cursor-ring.is-hover {
-  width: 54px;
-  height: 54px;
-  margin-left: -27px;
-  margin-top: -27px;
-  border-color: rgba(71, 85, 105, 0.72);
-  background: rgba(255, 255, 255, 0.26);
+  width: 48px;
+  height: 48px;
+  margin-left: -24px;
+  margin-top: -24px;
+  border-color: rgba(71, 85, 105, 0.65);
+  background: rgba(91, 141, 239, 0.04);
 }
 
 .cursor-ring.is-pressed {
@@ -1836,6 +1833,33 @@ body {
   border: 1px solid rgba(16, 185, 129, 0.28);
   padding: 4px 10px;
   border-radius: 999px;
+}
+
+.wp-causes-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.wp-cause-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 12px;
+  background: rgba(244, 247, 252, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  font-size: 0.74rem;
+  color: var(--ink-secondary);
+}
+
+.wp-cause-item strong {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--ink-primary);
+  flex-shrink: 0;
 }
 
 /* Clean Keyboard Accessibility Focus Rings */
