@@ -102,9 +102,9 @@ export function complexityTierFromUsd(usd: number): 1 | 2 | 3 | 4 | 5 {
 }
 
 export const COMPLEXITY_TIER_NAMES: Record<number, string> = {
-  1: "I · Grand Atelier",
-  2: "II · Harmonic Synthesis",
-  3: "III · Celestial Observatory",
-  4: "IV · Sovereign Transmutation",
-  5: "V · Philosopher's Magnum Opus"
+  1: "Level 1 Lab",
+  2: "Level 2 Lab",
+  3: "Level 3 Lab",
+  4: "Level 4 Lab",
+  5: "Level 5 Lab"
 };

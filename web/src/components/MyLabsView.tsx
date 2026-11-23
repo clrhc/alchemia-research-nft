@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   ArrowUpRight,
+  Award,
   Building2,
   Check,
   Coins,
@@ -14,6 +15,7 @@ import {
   Wallet
 } from "lucide-react";
 import { ArtworkCanvas } from "./ArtworkCanvas";
+import type { CameraPreset } from "../engine/alchemy3DRenderer";
 import { deriveTraitsFromSeed } from "../engine/prng";
 import { downloadPDBFromSnapshot, type ComputeSnapshot } from "../engine/researchCompute";
 import {
@@ -47,10 +49,18 @@ interface MyLabsViewProps {
   onClaimCoins: (vessel: MintedVessel, amount: number, researchTithePct: number) => Promise<void>;
   onDonateCoins: (vessel: MintedVessel, amount: number) => Promise<void>;
   onAnchorProof: (vessel: MintedVessel, snap: ComputeSnapshot) => Promise<void>;
+  onAwardPlayBonus: (coins: number) => void;
   onConnectWallet: () => Promise<void>;
   onSpendCoinsForTreat: (cost: number) => boolean;
   onGoMint: () => void;
 }
+
+const CAMERA_BUTTONS: Array<{ id: CameraPreset; label: string }> = [
+  { id: "iso", label: "3D View" },
+  { id: "top", label: "Top Plan" },
+  { id: "pet", label: "Pet" },
+  { id: "molecule", label: "Protein" }
+];
 
 export function MyLabsView({
   state,
@@ -61,6 +71,7 @@ export function MyLabsView({
   onClaimCoins,
   onDonateCoins,
   onAnchorProof,
+  onAwardPlayBonus,
   onConnectWallet,
   onSpendCoinsForTreat,
   onGoMint
@@ -74,6 +85,7 @@ export function MyLabsView({
   const [tithePct, setTithePct] = useState(20);
   const [liveSnap, setLiveSnap] = useState<ComputeSnapshot | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
+  const [camPreset, setCamPreset] = useState<{ preset: CameraPreset; seq: number } | null>(null);
   const [vitals, setVitals] = useState<CompanionVitals>(() =>
     loadCompanionVitals(selected?.tokenId ?? 1)
   );
@@ -83,12 +95,9 @@ export function MyLabsView({
   const [feedback, setFeedback] = useState<string | null>(null);
 
   useEffect(() => {
-    if (selected) {
-      setVitals(loadCompanionVitals(selected.tokenId));
-    }
+    if (selected) setVitals(loadCompanionVitals(selected.tokenId));
   }, [selected?.tokenId]);
 
-  // Smooth real-time ticker for live $ALCH mining counter
   useEffect(() => {
     const id = window.setInterval(() => setNowTick(Date.now()), 1000);
     return () => window.clearInterval(id);
@@ -97,14 +106,14 @@ export function MyLabsView({
   if (!selected) {
     return (
       <section className="subpage-shell" style={{ textAlign: "center", paddingTop: 60 }}>
-        <h2 className="subpage-title">No Labs Owned Yet</h2>
+        <h2 className="subpage-title">No labs yet</h2>
         <p className="subpage-sub" style={{ margin: "10px auto 24px" }}>
-          Mint your first living 3D architectural laboratory starting from $1 to unlock Sims-style
-          modular expansions, $ALCH coin mining, and companion care.
+          Mint your first 3D lab starting at $1 to build rooms, mine ALCH coins, and care for your
+          pet.
         </p>
         <button type="button" className="btn-mint-minimal clickable" onClick={onGoMint}>
           <Sparkles size={16} />
-          Mint Your First Lab
+          Mint your first lab
         </button>
       </section>
     );
@@ -115,8 +124,8 @@ export function MyLabsView({
   const tamaBoost = companionBoostMultiplier(vitals);
   const baseRate = computeMiningRatePerHour(tier, selected.sectorsMask, selected.workUnits);
   const effectiveMiningRate = Number((baseRate * tamaBoost).toFixed(1));
+  const builtCount = countSectors(selected.sectorsMask);
 
-  // Real-time accruing $ALCH coins (accelerated gently in local preview so mining feels alive!)
   const elapsedHours = Math.max(0, (nowTick - selected.lastClaimMs) / 3600000);
   const pendingCoins = Number(
     (effectiveMiningRate * Math.max(0.05, elapsedHours * (state.contractAddress ? 1 : 6))).toFixed(2)
@@ -139,14 +148,14 @@ export function MyLabsView({
     if (action === "feed") {
       const ok = onSpendCoinsForTreat(5);
       if (!ok) {
-        setFeedback("Need 5 $ALCH for an Elixir Treat — claim your mined coins first.");
+        setFeedback("You need 5 ALCH for a treat. Claim your mined coins first.");
         return;
       }
-      setFeedback("Fed an Elixir Treat! Vitality & lab efficiency boosted.");
+      setFeedback("Treat given. Your pet has more energy now.");
     } else if (action === "pet") {
-      setFeedback("Your companion purrs and wags happily — Mood boosted!");
+      setFeedback("Your pet loved that. Mood went up.");
     } else {
-      setFeedback("Launched a proton catch game — Curiosity & discovery speed boosted!");
+      setFeedback("Tossed a glowing ball onto the patio. Watch them play!");
     }
     const next = applyTamagotchiAction(vitals, action);
     setVitals(next);
@@ -154,9 +163,16 @@ export function MyLabsView({
     setTamaSignal((prev) => ({ action, seq: (prev?.seq || 0) + 1 }));
   };
 
+  // Playful interactive lab badges
+  const badges = [
+    { label: "First Room", earned: builtCount >= 1 },
+    { label: "Pet Keeper", earned: vitals.careStreak >= 3 },
+    { label: "Research Helper", earned: selected.workUnits >= 5 },
+    { label: "Full Campus", earned: builtCount === 6 }
+  ];
+
   return (
-    <section className="subpage-shell" aria-label="My Labs Builder and Mining Studio">
-      {/* User's NFT Switcher + Wallet + $ALCH Coin Balance */}
+    <section className="subpage-shell" aria-label="My Labs">
       <div className="mylabs-topbar">
         <div className="mylabs-switcher">
           {displayVessels.map((v) => (
@@ -174,7 +190,7 @@ export function MyLabsView({
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <div className="coin-balance-pill">
             <Coins size={14} />
-            <strong>{state.userCoinBalance.toFixed(1)} $ALCH</strong>
+            <strong>{state.userCoinBalance.toFixed(1)} ALCH</strong>
           </div>
           {!state.walletAddress ? (
             <button
@@ -183,7 +199,7 @@ export function MyLabsView({
               onClick={() => void onConnectWallet()}
             >
               <Wallet size={13} />
-              Connect Wallet
+              Connect wallet
             </button>
           ) : (
             <span className="coin-balance-pill" style={{ fontSize: "0.75rem" }}>
@@ -196,7 +212,7 @@ export function MyLabsView({
       {isPreviewLab && (
         <div className="mylabs-feedback" role="status">
           <span>
-            Previewing live Base Sepolia Lab #{selected.tokenId}. Connect your wallet or{" "}
+            Trying live Base Sepolia Lab #{selected.tokenId}. Connect your wallet or{" "}
             <button
               type="button"
               onClick={onGoMint}
@@ -209,7 +225,7 @@ export function MyLabsView({
             >
               mint your own for $1
             </button>{" "}
-            to save upgrades on-chain.
+            to keep your rooms on-chain.
           </span>
         </div>
       )}
@@ -224,13 +240,26 @@ export function MyLabsView({
       )}
 
       <div className="mylabs-grid">
-        {/* Left: Live 3D Architectural Lab + Tamagotchi Care Bar */}
+        {/* Left: Interactive 3D Lab + Camera Presets + Pet Care */}
         <div className="mylabs-left">
           <div className="floating-model-card">
             <ArtworkCanvas
               showHud
+              cameraPreset={camPreset}
               tamagotchiSignal={tamaSignal}
               onComputeSnapshot={setLiveSnap}
+              onInteractiveEvent={(ev) => {
+                if (ev.kind === "pet-clicked") {
+                  const next = applyTamagotchiAction(vitals, "pet");
+                  setVitals(next);
+                  saveCompanionVitals(selected.tokenId, next);
+                  onAwardPlayBonus(ev.bonusCoins);
+                  setFeedback(`Petted in 3D! Mood up and +${ev.bonusCoins} ALCH spark.`);
+                } else {
+                  onAwardPlayBonus(ev.bonusCoins);
+                  setFeedback(`Popped a floating proton! +${ev.bonusCoins} ALCH spark.`);
+                }
+              }}
               impact={{
                 tokenId: selected.tokenId,
                 seed: selected.seed,
@@ -251,18 +280,34 @@ export function MyLabsView({
             />
           </div>
 
-          {/* Tamagotchi Familiar Care Panel */}
+          {/* Architect Camera Presets */}
+          <div className="camera-bar">
+            {CAMERA_BUTTONS.map((btn) => (
+              <button
+                key={btn.id}
+                type="button"
+                className="preset-chip clickable"
+                onClick={() =>
+                  setCamPreset((prev) => ({ preset: btn.id, seq: (prev?.seq || 0) + 1 }))
+                }
+              >
+                {btn.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Pet Care Card */}
           <div className="glass-panel tama-card">
             <div className="tama-head">
               <div>
                 <div className="tama-title">
                   {tier >= 4 || hasSector(selected.sectorsMask, 3)
-                    ? "Harmonic Cat & Dog Duo"
+                    ? "Cat & Dog"
                     : traits.familiar.name}
                 </div>
                 <div className="tama-sub">
-                  Lv.{vitals.level} · {companionMoodLabel(vitals)} ·{" "}
-                  <strong>{tamaBoost}x</strong> research &amp; mining boost
+                  Level {vitals.level} · {companionMoodLabel(vitals)} ·{" "}
+                  <strong>{tamaBoost}x</strong> lab speed
                 </div>
               </div>
               <a
@@ -272,26 +317,26 @@ export function MyLabsView({
                 className="subtle-pill-btn clickable"
                 style={{ textDecoration: "none", padding: "7px 12px", fontSize: "0.75rem" }}
               >
-                Live 3D
+                Full screen
                 <ArrowUpRight size={12} />
               </a>
             </div>
 
             <div className="tama-bars">
               <div className="tama-bar-item">
-                <span>Vitality</span>
+                <span>Food</span>
                 <div className="mini-track">
                   <div className="mini-fill" style={{ width: `${vitals.energy}%`, background: "#10b981" }} />
                 </div>
               </div>
               <div className="tama-bar-item">
-                <span>Mood</span>
+                <span>Happy</span>
                 <div className="mini-track">
                   <div className="mini-fill" style={{ width: `${vitals.mood}%`, background: "#f472b6" }} />
                 </div>
               </div>
               <div className="tama-bar-item">
-                <span>Curiosity</span>
+                <span>Play</span>
                 <div className="mini-track">
                   <div className="mini-fill" style={{ width: `${vitals.curiosity}%`, background: "#5b8def" }} />
                 </div>
@@ -305,7 +350,7 @@ export function MyLabsView({
                 onClick={() => handleTamagotchi("feed")}
               >
                 <Cookie size={13} />
-                Feed Treat (5 $ALCH)
+                Feed (5 ALCH)
               </button>
               <button
                 type="button"
@@ -321,33 +366,41 @@ export function MyLabsView({
                 onClick={() => handleTamagotchi("play")}
               >
                 <Sparkles size={13} />
-                Play Proton
+                Play
               </button>
+            </div>
+
+            <div className="badge-row">
+              {badges.map((b) => (
+                <span key={b.label} className={`badge-chip ${b.earned ? "earned" : ""}`}>
+                  <Award size={11} />
+                  {b.label}
+                </span>
+              ))}
             </div>
           </div>
         </div>
 
-        {/* Right: $ALCH Coin Mining Operations + Sims-Style 3D Architectural Wing Builder */}
+        {/* Right: Coin Mining + Build New Rooms */}
         <div className="mylabs-right">
-          {/* Mining Console */}
           <div className="glass-panel mining-panel">
             <div className="mining-head">
               <div>
                 <div className="single-kicker">
                   <Pickaxe size={12} style={{ verticalAlign: "-2px", marginRight: 5 }} />
-                  Active $ALCH Mining &amp; Open-Science Folding
+                  Coin Mining &amp; Protein Folding
                 </div>
                 <div className="mining-big">
-                  {pendingCoins.toFixed(2)} <span>$ALCH ready</span>
+                  {pendingCoins.toFixed(2)} <span>ALCH ready</span>
                 </div>
               </div>
-              <div className="mining-rate-badge">{effectiveMiningRate} $ALCH/hr</div>
+              <div className="mining-rate-badge">{effectiveMiningRate} ALCH / hr</div>
             </div>
 
             <div className="tithe-slider-row">
               <div className="tithe-label">
-                <span>Share mined coins with researchers</span>
-                <strong>{tithePct}% → Research Wallet</strong>
+                <span>Send part of your claim to researchers</span>
+                <strong>{tithePct}% to research</strong>
               </div>
               <input
                 type="range"
@@ -357,7 +410,7 @@ export function MyLabsView({
                 value={tithePct}
                 onChange={(e) => setTithePct(Number(e.target.value))}
                 className="silver-slider"
-                aria-label="Percentage of mined coins donated to researchers"
+                aria-label="Percent of mined coins shared with researchers"
               />
             </div>
 
@@ -369,15 +422,15 @@ export function MyLabsView({
                 onClick={async () => {
                   await onClaimCoins(selected, pendingCoins, tithePct);
                   setFeedback(
-                    `Claimed ${(pendingCoins * (1 - tithePct / 100)).toFixed(1)} $ALCH (+${(
+                    `Claimed ${(pendingCoins * (1 - tithePct / 100)).toFixed(1)} ALCH and sent ${(
                       pendingCoins *
                       (tithePct / 100)
-                    ).toFixed(1)} $ALCH sent to researchers)!`
+                    ).toFixed(1)} ALCH to researchers.`
                   );
                 }}
               >
                 <Coins size={15} />
-                Claim Mined $ALCH
+                Claim ALCH
               </button>
 
               <button
@@ -385,15 +438,15 @@ export function MyLabsView({
                 className="subtle-pill-btn clickable"
                 onClick={async () => {
                   if (state.userCoinBalance < 25) {
-                    setFeedback("Claim at least 25 $ALCH first to donate coins to researchers.");
+                    setFeedback("Claim at least 25 ALCH first to donate.");
                     return;
                   }
                   await onDonateCoins(selected, 25);
-                  setFeedback("Donated 25 $ALCH straight to the research wallet!");
+                  setFeedback("Sent 25 ALCH straight to the research wallet.");
                 }}
               >
                 <HeartHandshake size={14} />
-                Donate 25 $ALCH
+                Donate 25 ALCH
               </button>
 
               {liveSnap && (
@@ -404,7 +457,7 @@ export function MyLabsView({
                     onClick={() => downloadPDBFromSnapshot(liveSnap)}
                   >
                     <Download size={14} />
-                    .PDB Fold
+                    Download .PDB
                   </button>
                   <button
                     type="button"
@@ -413,30 +466,30 @@ export function MyLabsView({
                       try {
                         await onAnchorProof(selected, liveSnap);
                         setFeedback(
-                          `Anchored SHA-256 fold proof (${liveSnap.proofHash.slice(0, 12)}…) on-chain!`
+                          `Saved fold proof (${liveSnap.proofHash.slice(0, 12)}…) on-chain.`
                         );
                       } catch (err) {
                         setFeedback(
-                          err instanceof Error ? err.message : "Connect token owner wallet to anchor proof."
+                          err instanceof Error ? err.message : "Connect the owner wallet to save on-chain."
                         );
                       }
                     }}
                   >
                     <ShieldCheck size={14} />
-                    Anchor Proof
+                    Save proof
                   </button>
                 </>
               )}
             </div>
           </div>
 
-          {/* Sims-Style Modular 3D Wing Expansion Builder */}
+          {/* Sims-Style Room Builder */}
           <div className="glass-panel builder-panel">
             <div className="builder-head">
               <h3>
-                <Building2 size={16} /> Build New Lab Wings
+                <Building2 size={16} /> Build new rooms
               </h3>
-              <span>{countSectors(selected.sectorsMask)} / 6 built</span>
+              <span>{builtCount} of 6 built</span>
             </div>
 
             <div className="sector-grid">
@@ -445,16 +498,13 @@ export function MyLabsView({
                 const canAffordCoins = state.userCoinBalance >= sector.coinCost;
 
                 return (
-                  <div
-                    key={sector.id}
-                    className={`sector-card ${built ? "is-built" : ""}`}
-                  >
+                  <div key={sector.id} className={`sector-card ${built ? "is-built" : ""}`}>
                     <div className="sector-top">
                       <span className="sector-name">
                         <span className="cause-dot" style={{ background: sector.accent }} />
                         {sector.name}
                       </span>
-                      <span className="sector-bonus">+{sector.miningBonusPerHour} $ALCH/hr</span>
+                      <span className="sector-bonus">+{sector.miningBonusPerHour} ALCH/hr</span>
                     </div>
 
                     <p className="sector-desc">{sector.role}</p>
@@ -463,7 +513,7 @@ export function MyLabsView({
                       <span className="sector-effect">{sector.researchEffect}</span>
                       {built ? (
                         <span className="built-pill">
-                          <Check size={12} /> Built in 3D
+                          <Check size={12} /> Built
                         </span>
                       ) : (
                         <div style={{ display: "flex", gap: 6 }}>
@@ -473,17 +523,17 @@ export function MyLabsView({
                             disabled={!canAffordCoins}
                             onClick={async () => {
                               await onBuildSector(selected, sector.id, true);
-                              setFeedback(`Constructed ${sector.name} right onto Lab #${selected.tokenId}!`);
+                              setFeedback(`Added ${sector.name} to Lab #${selected.tokenId}.`);
                             }}
                           >
-                            {sector.coinCost} $ALCH
+                            {sector.coinCost} ALCH
                           </button>
                           <button
                             type="button"
                             className="sector-btn eth clickable"
                             onClick={async () => {
                               await onBuildSector(selected, sector.id, false);
-                              setFeedback(`Built ${sector.name} with $${sector.ethCostUsd} ETH!`);
+                              setFeedback(`Added ${sector.name} to Lab #${selected.tokenId}.`);
                             }}
                           >
                             ${sector.ethCostUsd}

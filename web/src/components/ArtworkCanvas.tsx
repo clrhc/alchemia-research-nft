@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Cpu, Move3d, Pause, Play } from "lucide-react";
-import { Alchemy3DRenderer } from "../engine/alchemy3DRenderer";
+import {
+  Alchemy3DRenderer,
+  type CameraPreset,
+  type InteractiveEvent
+} from "../engine/alchemy3DRenderer";
 import { type LiveImpactState } from "../engine/alchemyRenderer";
 import type { ComputeSnapshot } from "../engine/researchCompute";
 import type { TamagotchiAction } from "../engine/tamagotchi";
@@ -9,8 +13,10 @@ interface ArtworkCanvasProps {
   impact: LiveImpactState;
   showHud?: boolean;
   compact?: boolean;
+  cameraPreset?: { preset: CameraPreset; seq: number } | null;
   tamagotchiSignal?: { action: TamagotchiAction; seq: number } | null;
   onComputeSnapshot?: (snap: ComputeSnapshot) => void;
+  onInteractiveEvent?: (ev: InteractiveEvent) => void;
   onPulseClick?: () => void;
 }
 
@@ -18,24 +24,36 @@ export function ArtworkCanvas({
   impact,
   showHud = false,
   compact = false,
+  cameraPreset = null,
   tamagotchiSignal = null,
   onComputeSnapshot,
+  onInteractiveEvent,
   onPulseClick
 }: ArtworkCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<Alchemy3DRenderer | null>(null);
   const onComputeRef = useRef(onComputeSnapshot);
   onComputeRef.current = onComputeSnapshot;
+  const onInteractRef = useRef(onInteractiveEvent);
+  onInteractRef.current = onInteractiveEvent;
+
   const [computeSnap, setComputeSnap] = useState<ComputeSnapshot | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
 
-    const renderer = new Alchemy3DRenderer(host, impact, (snap) => {
-      setComputeSnap(snap);
-      onComputeRef.current?.(snap);
-    });
+    const renderer = new Alchemy3DRenderer(
+      host,
+      impact,
+      (snap) => {
+        setComputeSnap(snap);
+        onComputeRef.current?.(snap);
+      },
+      (ev) => {
+        onInteractRef.current?.(ev);
+      }
+    );
     rendererRef.current = renderer;
     renderer.start();
 
@@ -75,6 +93,12 @@ export function ArtworkCanvas({
     }
   }, [tamagotchiSignal]);
 
+  useEffect(() => {
+    if (cameraPreset && cameraPreset.seq > 0) {
+      rendererRef.current?.setCameraPreset(cameraPreset.preset);
+    }
+  }, [cameraPreset]);
+
   const toggleCompute = (e: React.MouseEvent) => {
     e.stopPropagation();
     const nextActive = !(computeSnap?.active ?? true);
@@ -111,15 +135,15 @@ export function ArtworkCanvas({
               <Cpu size={11} />
               {computeSnap?.active === false
                 ? "Paused"
-                : `Folding · ${computeSnap?.discoveries ?? 0} finds`}
+                : `${computeSnap?.pdbBenchmarkId || "1L2Y"} · ${computeSnap?.discoveries ?? 0} folds`}
               {computeSnap?.active === false ? <Play size={10} /> : <Pause size={10} />}
             </button>
 
             <span className="art-hud-badge">
               <Move3d size={11} />
               {compact
-                ? `Tier ${impact.complexityTier}`
-                : `Drag 3D · Tier ${impact.complexityTier}`}
+                ? `Level ${impact.complexityTier}`
+                : `Drag to turn · Level ${impact.complexityTier}`}
             </span>
           </div>
 
@@ -127,8 +151,7 @@ export function ArtworkCanvas({
             <div className="art-hud-bottom">
               <div>
                 <div style={{ fontWeight: 600, color: "#1a1f2c", fontSize: "0.78rem" }}>
-                  {computeSnap?.taskTitle || "3D AB-Model Protein Fold"} · WU #
-                  {computeSnap?.workUnitsCompleted ?? 0}
+                  {computeSnap?.taskTitle || "Trp-cage Mini-Protein (1L2Y)"}
                 </div>
                 <div
                   style={{
@@ -138,7 +161,7 @@ export function ArtworkCanvas({
                     marginTop: 2
                   }}
                 >
-                  {computeSnap?.lastDiscoveryLabel || "Annealing 3D molecular conformation…"}
+                  {computeSnap?.lastDiscoveryLabel || "Folding 3D protein chain…"}
                 </div>
               </div>
               <div

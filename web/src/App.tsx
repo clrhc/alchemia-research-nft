@@ -442,6 +442,17 @@ export function App() {
     setBgPulseSignal((n) => n + 1);
   };
 
+  const handleAwardPlayBonus = (coins: number) => {
+    setState((prev) => {
+      const next = {
+        ...prev,
+        userCoinBalance: Number((prev.userCoinBalance + coins).toFixed(2))
+      };
+      saveDemoState(next);
+      return next;
+    });
+  };
+
   const handleSpendCoinsForTreat = (cost: number): boolean => {
     if (state.userCoinBalance < cost) return false;
     setState((prev) => {
@@ -471,14 +482,14 @@ export function App() {
               setExploreSelected(null);
             }}
           >
-            Mint
+            Home
           </button>
           <button
             type="button"
             className={`nav-link clickable ${page === "explore" ? "active" : ""}`}
             onClick={() => setPage("explore")}
           >
-            Explore
+            Gallery
           </button>
           <button
             type="button"
@@ -504,40 +515,45 @@ export function App() {
         {page === "mint" && (
           <main className="open-stack">
             {/* 1. Interactive 3D Architectural Model Card on Top */}
-            <div className="floating-model-card" aria-label="Interactive 3D living alchemical artwork">
+            <div className="floating-model-card" aria-label="Interactive 3D lab model">
               <ArtworkCanvas
                 impact={previewImpact}
                 showHud={false}
                 onComputeSnapshot={setLiveCompute}
+                onInteractiveEvent={(ev) => {
+                  setNotice(
+                    ev.kind === "pet-clicked"
+                      ? "You petted the lab companion."
+                      : "Nice catch! You popped a floating proton."
+                  );
+                }}
                 onPulseClick={() => setBgPulseSignal((n) => n + 1)}
               />
             </div>
 
-            {/* 2. Running Total + Hero + Human-Legible Explainer (No Panels) */}
+            {/* 2. Running Total + Hero + Plain Human Explainer (No Panels) */}
             <header className="open-hero">
               <div className="running-total-line" aria-live="polite">
                 <span className="live-dot" />
-                <span>{formattedResearchTotal} raised for research so far</span>
+                <span>{formattedResearchTotal} sent to research</span>
               </div>
 
               <h1 className="open-hero-title">
-                Help fund <em>real research.</em>
+                Art that <em>funds science.</em>
               </h1>
 
               <p className="open-explainer">
-                Turn and explore your own living 3D alchemical laboratory—complete with sculpted
-                glass vessels, a small companion you can care for, and real molecular folding
-                quietly running inside. Start with a dollar, or slide higher to build an even
-                richer world in a single piece.
+                Start at $1. Slide up to add more detail to one 3D lab. Every piece comes with a
+                pet you can play with, rooms you can build, and live protein folding running inside.
               </p>
             </header>
 
-            {/* 3. Pure Silvery Slider ($1 -> $500) + Mint Button Underneath (No Box, No Preset Buttons) */}
+            {/* 3. Pure Silvery Slider ($1 -> $500) + Mint Button Underneath */}
             <div className="open-mint-area">
               <div className="slider-wrap">
                 <div className="slider-readout">
                   <span className="slider-dollar">${amountUsd}</span>
-                  <span className="slider-hint">slide to grow complexity</span>
+                  <span className="slider-hint">Drag for more detail</span>
                 </div>
                 <input
                   type="range"
@@ -547,7 +563,7 @@ export function App() {
                   value={sliderIndex}
                   onChange={(e) => setSliderIndex(Number(e.target.value))}
                   className="silver-slider"
-                  aria-label="Choose contribution from $1 to $500"
+                  aria-label="Choose price from $1 to $500"
                 />
                 <div className="slider-bounds">
                   <span>$1</span>
@@ -593,6 +609,7 @@ export function App() {
             onClaimCoins={handleClaimCoins}
             onDonateCoins={handleDonateCoins}
             onAnchorProof={handleAnchorProof}
+            onAwardPlayBonus={handleAwardPlayBonus}
             onConnectWallet={handleConnectWallet}
             onSpendCoinsForTreat={handleSpendCoinsForTreat}
             onGoMint={() => setPage("mint")}

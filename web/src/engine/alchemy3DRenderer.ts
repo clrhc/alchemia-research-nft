@@ -57,6 +57,13 @@ interface CompanionRig {
   isDog: boolean;
 }
 
+export type CameraPreset = "iso" | "top" | "pet" | "molecule";
+
+export interface InteractiveEvent {
+  kind: "pet-clicked" | "atom-popped";
+  bonusCoins: number;
+}
+
 const UP_AXIS = new THREE.Vector3(0, 1, 0);
 
 /**
@@ -90,6 +97,13 @@ export class Alchemy3DRenderer {
   private impact: LiveImpactState;
   private compute: ResearchComputeEngine;
   private onComputeTick?: (snap: ComputeSnapshot) => void;
+  private onInteractiveEvent?: (ev: InteractiveEvent) => void;
+
+  private raycaster = new THREE.Raycaster();
+  private pointerDownPos = { x: 0, y: 0 };
+  private desiredCamPos: THREE.Vector3 | null = null;
+  private desiredCamTarget: THREE.Vector3 | null = null;
+  private toyBall: { mesh: THREE.Mesh; vel: THREE.Vector3; life: number } | null = null;
 
   private rootGroup = new THREE.Group();
   private dynamicGroup = new THREE.Group();
@@ -150,11 +164,13 @@ export class Alchemy3DRenderer {
   constructor(
     container: HTMLElement,
     initialState: LiveImpactState,
-    onComputeTick?: (snap: ComputeSnapshot) => void
+    onComputeTick?: (snap: ComputeSnapshot) => void,
+    onInteractiveEvent?: (ev: InteractiveEvent) => void
   ) {
     this.container = container;
     this.impact = { ...initialState };
     this.onComputeTick = onComputeTick;
+    this.onInteractiveEvent = onInteractiveEvent;
     this.traits = deriveTraitsFromSeed(initialState.seed);
     this.compute = new ResearchComputeEngine(
       initialState.seed,
@@ -210,10 +226,16 @@ export class Alchemy3DRenderer {
     this.controls.addEventListener("start", () => {
       this.userDragging = true;
       this.controls.autoRotate = false;
+      this.desiredCamPos = null;
+      this.desiredCamTarget = null;
     });
     this.controls.addEventListener("end", () => {
       this.userDragging = false;
     });
+
+    // Click-to-Interact 3D Raycasting: tap the 3D cat/dog to pet them, or pop floating protons!
+    this.renderer.domElement.addEventListener("pointerdown", this.handlePointerDown);
+    this.renderer.domElement.addEventListener("pointerup", this.handlePointerUp);
 
     this.setupArchitecturalStudioLighting();
     this.scene.add(this.rootGroup);
@@ -302,11 +324,63 @@ export class Alchemy3DRenderer {
     return this.compute.getSnapshot();
   }
 
-  public resetCamera() {
-    this.camera.position.set(5.45, 4.3, 6.25);
-    this.controls.target.set(0, 1.55, 0);
-    this.controls.update();
+  public setCameraPreset(preset: CameraPreset) {
+    if (preset === "top") {
+      this.desiredCamPos = new THREE.Vector3(0.01, 8.2, 2.2);
+      this.desiredCamTarget = new THREE.Vector3(0, 0.8, 0);
+    } else if (preset === "pet") {
+      const target =
+        this.companions.length > 0
+          ? this.companions[0].group.position.clone().add(new THREE.Vector3(0, 0.45, 0))
+          : new THREE.Vector3(1.1, 0.8, 0.7);
+      this.desiredCamPos = target.clone().add(new THREE.Vector3(1.6, 1.15, 2.35));
+      this.desiredCamTarget = target;
+    } else if (preset === "molecule") {
+      this.desiredCamPos = new THREE.Vector3(2.4, 3.65, 2.7);
+      this.desiredCamTarget = new THREE.Vector3(0, 3.05, 0);
+    } else {
+      this.desiredCamPos = new THREE.Vector3(5.45, 4.3, 6.25);
+      this.desiredCamTarget = new THREE.Vector3(0, 1.55, 0);
+    }
   }
+
+  public resetCamera() {
+    this.setCameraPreset("iso");
+  }
+
+  private handlePointerDown = (e: PointerEvent) => {
+    this.pointerDownPos = { x: e.clientX, y: e.clientY };
+  };
+
+  private handlePointerUp = (e: PointerEvent) => {
+    // Only count as a tap/click (not an orbit drag)
+    if (Math.hypot(e.clientX - this.pointerDownPos.x, e.clientY - this.pointerDownPos.y) > 7) return;
+
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+
+    // 1. Did the user click directly on the 3D Cat or Dog? -> Instant joyful pet!
+    const petTargets = this.companions.map((c) => c.group);
+    if (petTargets.length > 0 && this.raycaster.intersectObjects(petTargets, true).length > 0) {
+      this.triggerTamagotchiReaction("pet");
+      this.onInteractiveEvent?.({ kind: "pet-clicked", bonusCoins: 1 });
+      return;
+    }
+
+    // 2. Did the user tap a floating 3D Proton / Atom? -> Pop it for bonus spark!
+    const atomTargets = this.floatingAtoms.map((a) => a.group);
+    const hits = this.raycaster.intersectObjects(atomTargets, true);
+    if (hits.length > 0) {
+      const hitPoint = hits[0].point.clone();
+      this.spawnColoredBurst(hitPoint, 14, [this.traits.palette.electron, this.traits.palette.proton, "#ffffff"]);
+      this.excitement = Math.min(1.6, this.excitement + 0.55);
+      this.onInteractiveEvent?.({ kind: "atom-popped", bonusCoins: 2 });
+    }
+  };
 
   public updateState(next: Partial<LiveImpactState>) {
     const prevGlobal = this.impact.globalImpactEth;
@@ -373,7 +447,32 @@ export class Alchemy3DRenderer {
     } else {
       this.spawnColoredBurst(origin, 18, ["#38bdf8", "#818cf8", "#f472b6"]);
       this.shockwaveLife = 0.85;
+      this.launchBouncingToyBall(origin);
     }
+  }
+
+  private launchBouncingToyBall(nearPet: THREE.Vector3) {
+    if (this.toyBall) {
+      this.dynamicGroup.remove(this.toyBall.mesh);
+      this.toyBall = null;
+    }
+    const ball = new THREE.Mesh(
+      new THREE.SphereGeometry(0.11, 18, 18),
+      new THREE.MeshStandardMaterial({
+        color: "#38bdf8",
+        emissive: "#6366f1",
+        emissiveIntensity: 1.0,
+        roughness: 0.12
+      })
+    );
+    ball.add(this.makeGlowSprite("#38bdf8", 0.42, 0.72));
+    ball.position.set(nearPet.x * 0.5, 1.85, nearPet.z + 0.3);
+    this.dynamicGroup.add(ball);
+    this.toyBall = {
+      mesh: ball,
+      vel: new THREE.Vector3((Math.random() - 0.5) * 2.2, 1.4, (Math.random() - 0.5) * 1.8),
+      life: 5.5
+    };
   }
 
   private spawnColoredBurst(origin: THREE.Vector3, count: number, paletteColors: string[]) {
@@ -469,6 +568,8 @@ export class Alchemy3DRenderer {
 
   public stop() {
     cancelAnimationFrame(this.rafId);
+    this.renderer.domElement.removeEventListener("pointerdown", this.handlePointerDown);
+    this.renderer.domElement.removeEventListener("pointerup", this.handlePointerUp);
     this.clearDynamicGroup();
     this.terrazzoTex.dispose();
     this.titaniumTex.dispose();
@@ -2304,6 +2405,40 @@ export class Alchemy3DRenderer {
     const snap = this.compute.getSnapshot();
 
     if (!this.userDragging) this.controls.autoRotate = true;
+
+    // Smooth architect-app camera fly-to animation when switching view presets
+    if (this.desiredCamPos && this.desiredCamTarget) {
+      const k = Math.min(1, dt * 6.5);
+      this.camera.position.lerp(this.desiredCamPos, k);
+      this.controls.target.lerp(this.desiredCamTarget, k);
+      if (
+        this.camera.position.distanceTo(this.desiredCamPos) < 0.04 &&
+        this.controls.target.distanceTo(this.desiredCamTarget) < 0.04
+      ) {
+        this.desiredCamPos = null;
+        this.desiredCamTarget = null;
+      }
+    }
+
+    // Real bouncing 3D proton toy ball physics on the architectural terrace!
+    if (this.toyBall) {
+      this.toyBall.life -= dt;
+      this.toyBall.vel.y -= 5.8 * dt;
+      this.toyBall.mesh.position.addScaledVector(this.toyBall.vel, dt);
+      if (this.toyBall.mesh.position.y < 0.5) {
+        this.toyBall.mesh.position.y = 0.5;
+        this.toyBall.vel.y = Math.abs(this.toyBall.vel.y) * 0.78;
+      }
+      const rDist = Math.hypot(this.toyBall.mesh.position.x, this.toyBall.mesh.position.z);
+      if (rDist > 1.68) {
+        this.toyBall.vel.x *= -0.82;
+        this.toyBall.vel.z *= -0.82;
+      }
+      if (this.toyBall.life <= 0) {
+        this.dynamicGroup.remove(this.toyBall.mesh);
+        this.toyBall = null;
+      }
+    }
 
     this.displayFill += (this.targetFill - this.displayFill) * Math.min(1, dt * 2.6);
     this.excitement = Math.max(0, this.excitement - dt * 0.42);

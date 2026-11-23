@@ -50,26 +50,23 @@ export function WhitePaperSheet({
 
         <div className="details-sheet-body">
           <div>
-            <h3>1. Two-Phase Funding Split &amp; Automatic $ALCH Liquidity Threshold</h3>
+            <h3>1. Where the money goes</h3>
             <p>
-              To launch deep, fair liquidity for <strong>$ALCH</strong> without taking taxes on
-              token trades, mint and upgrade proceeds follow an automated two-phase on-chain split:
+              Every mint and upgrade splits ETH directly inside the smart contract in two phases:
             </p>
             <ul className="wp-list">
               <li>
-                <strong>Phase 1 (Bootstrapping Liquidity):</strong> <strong>60%</strong> goes
-                immediately to the verified Research Wallet, <strong>25%</strong> immediately to
-                the Dev Wallet, and <strong>15%</strong> accumulates inside the contract&apos;s
-                on-chain Liquidity Reserve until the activation threshold (
-                {state.liquidityThresholdEth} ETH ≈ $
-                {Math.round(ethToUsd(state.liquidityThresholdEth)).toLocaleString()}) is reached.
+                <strong>Phase 1 (Building coin liquidity):</strong> <strong>60%</strong> goes
+                straight to the research wallet, <strong>25%</strong> goes straight to the dev
+                wallet, and <strong>15%</strong> fills the ALCH liquidity reserve until it reaches{" "}
+                {state.liquidityThresholdEth} ETH (~$
+                {Math.round(ethToUsd(state.liquidityThresholdEth)).toLocaleString()}).
               </li>
               <li>
-                <strong>Phase 2 (Post-Liquidity Seeding):</strong> Once{" "}
-                <code>seedLiquidity()</code> pairs the reserve ETH with initial <code>$ALCH</code>{" "}
-                directly into the Liquidity Vault, every mint and upgrade automatically shifts to{" "}
-                <strong>66.67% immediate Research</strong> and <strong>33.33% immediate Dev</strong>{" "}
-                with 0 ETH retained in contract.
+                <strong>Phase 2 (After liquidity is live):</strong> Once the reserve is paired with
+                ALCH in the liquidity pool, every mint switches automatically to{" "}
+                <strong>66.67% research</strong> and <strong>33.33% dev</strong>, with zero ETH
+                left sitting in the contract.
               </li>
             </ul>
 
@@ -77,11 +74,11 @@ export function WhitePaperSheet({
               <div className="wp-lp-row">
                 <span>
                   {state.liquiditySeeded
-                    ? "Liquidity Pool Seeded — Phase 2 (66.67% / 33.33%) Active"
-                    : "Phase 1 Liquidity Reserve Progress"}
+                    ? "Liquidity live (66.67% research / 33.33% dev)"
+                    : "Liquidity pool progress"}
                 </span>
                 <strong>
-                  {state.liquidityReserveEth.toFixed(3)} / {state.liquidityThresholdEth.toFixed(2)}{" "}
+                  {state.liquidityReserveEth.toFixed(4)} / {state.liquidityThresholdEth.toFixed(2)}{" "}
                   ETH
                 </strong>
               </div>
@@ -94,53 +91,40 @@ export function WhitePaperSheet({
           <div>
             <h3>
               <ShieldCheck size={14} style={{ verticalAlign: "-2px", marginRight: 5 }} />
-              2. Zero-Tax, Blockaid-Safe $ALCH Coin &amp; Lab Mining Game
+              2. Clean, zero-tax ALCH coin
             </h3>
             <p>
-              <code>AlchemiaCoin ($ALCH)</code> is a pure standard OpenZeppelin ERC-20 +
-              ERC-20Burnable + ERC-20Permit contract with <strong>0% buy tax, 0% sell tax, and 0%
-              transfer tax</strong>, no blacklists, no pause switches, an immutable 100M max supply,
-              and a one-time locked NFT minter binding so security scanners verify clean transfers.
-              Labs mine <code>$ALCH</code> according to their complexity tier, built architectural
-              wings, verified research work units, and Tamagotchi companion care—with an optional
-              research tithe on claims and direct researcher coin donations (
-              <strong>{state.totalCoinsDonatedToResearch.toLocaleString()} $ALCH</strong> donated so
+              <code>AlchemiaCoin (ALCH)</code> is a plain OpenZeppelin ERC-20 with{" "}
+              <strong>0% buy tax, 0% sell tax, and 0% transfer tax</strong>. There are no
+              blacklists, pause switches, or hidden transfer hooks, and the 100M max supply and
+              minter link are locked permanently. Labs earn ALCH over time, and you can send part of
+              every claim or donate coins directly to researchers (
+              <strong>{state.totalCoinsDonatedToResearch.toLocaleString()} ALCH</strong> shared so
               far).
             </p>
           </div>
 
           <div>
-            <h3>3. Real Open-Science Technology Inside Every NFT</h3>
+            <h3>3. Real protein folding inside each piece</h3>
             <p>
-              Each Alchemia Lab claims a deterministic scientific parameter slice from its on-chain
-              seed and runs genuine <strong>Stillinger 3D Off-Lattice AB-Model Protein Folding</strong>{" "}
-              (Lennard-Jones 12-6 + backbone bending energy minimization via Metropolis-Hastings
-              simulated annealing) right inside its interactive 3D artwork. Results export as
-              standard <strong>.PDB (Protein Data Bank)</strong> coordinate files openable in PyMOL,
-              UCSF ChimeraX, and RCSB Mol*, hashed via Web Crypto <code>SHA-256</code> and
-              anchorable on-chain through <code>submitResearchProof(...)</code>—designed to bridge
-              into open DeSci repositories (BOINC, Folding@home, IPFS datasets).
+              Each lab folds real published mini-protein benchmarks from the Protein Data Bank—such
+              as <strong>Trp-cage (1L2Y)</strong>, <strong>GB1 (1GB1)</strong>,{" "}
+              <strong>Chignolin (1UAO)</strong>, and <strong>CLN025 (2RVD)</strong>—using a 3D
+              Lennard-Jones + backbone-bending energy model. You can download a real{" "}
+              <strong>.PDB file</strong> openable in PyMOL or ChimeraX, and anchor its SHA-256 hash
+              on-chain. Metadata uses <strong>EIP-4906</strong> so wallets and marketplaces refresh
+              automatically whenever you upgrade a lab.
             </p>
           </div>
 
           <div>
-            <h3>4. Sims-Style 3D Modular Wings &amp; Tamagotchi Companions</h3>
+            <h3>4. Rooms, pets, and supply</h3>
             <p>
-              Every $1 mint is already a full, grand 3D architectural model. Sliding higher at mint
-              or adding 6 modular wings inside <strong>My Labs</strong> (Cryo-Folding Wing, Quantum
-              Mining Pavilion, Solar Catalysis Dome, Companion Sanctuary, Proton Accelerator Spire,
-              Philosopher Observatory) physically expands the 3D building, increases real folding
-              throughput, and powers up <code>$ALCH</code> mining. Feeding, petting, and playing with
-              your 3D Cat or Dog familiar grants up to a <strong>1.4x</strong> laboratory boost.
-            </p>
-          </div>
-
-          <div>
-            <h3>5. Supply Architecture</h3>
-            <p>
-              Supports either infinite open-edition minting (<code>maxSupply = 0</code>) or a strict
-              supply cap, permanently freezeable on-chain via <code>lockSupplyConfig()</code>.
-              Ready for Ethereum Mainnet and Base Sepolia testing.
+              A $1 piece is already a full 3D lab. Sliding higher adds extra detail on a single
+              piece, and in <strong>My Labs</strong> you can add 6 rooms (Cold Room, Mining Room,
+              Greenhouse, Pet Lounge, Particle Tower, Glass Dome) and feed, pet, or play with your
+              cat or dog for up to a 1.4x speed boost. The contract supports either open infinite
+              supply or a fixed cap that can be locked permanently on-chain.
             </p>
           </div>
 
@@ -152,7 +136,7 @@ export function WhitePaperSheet({
                 onClick={() => downloadPDBFromSnapshot(liveCompute)}
               >
                 <Download size={13} />
-                Download Live .PDB Dataset
+                Download .PDB ({liveCompute.pdbBenchmarkId})
               </button>
             )}
             <a
@@ -162,7 +146,7 @@ export function WhitePaperSheet({
               className="subtle-pill-btn clickable"
               style={{ textDecoration: "none" }}
             >
-              Open standalone 3D animation_url
+              Open full-screen 3D view
               <ArrowUpRight size={13} />
             </a>
           </div>

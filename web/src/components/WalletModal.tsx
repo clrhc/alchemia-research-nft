@@ -169,12 +169,12 @@ export function WalletModal({
         </div>
 
         <h2 className="wallet-modal-title">
-          {walletAddress ? "Your Lab Wallet" : "Step Into the Lab"}
+          {walletAddress ? "Your wallet" : "Connect a wallet"}
         </h2>
         <p className="wallet-modal-sub">
           {walletAddress
             ? `Connected on ${CHAIN_NAMES[chainId] || `Chain ${chainId}`}`
-            : `Choose a wallet to mint on ${CHAIN_NAMES[TARGET_CHAIN_ID] || "Base Sepolia"} & grow your 3D lab.`}
+            : `Pick a wallet to mint and build on ${CHAIN_NAMES[TARGET_CHAIN_ID] || "Base Sepolia"}.`}
         </p>
 
         {walletAddress ? (
@@ -276,8 +276,7 @@ export function WalletModal({
         {error && <p className="wallet-error">{error}</p>}
 
         <div className="wallet-footnote">
-          Auto-switches to <strong>{CHAIN_NAMES[TARGET_CHAIN_ID] || "Base Sepolia"}</strong> ·
-          Zero-tax ERC-20 &amp; verified transfers
+          Switches to <strong>{CHAIN_NAMES[TARGET_CHAIN_ID] || "Base Sepolia"}</strong> automatically.
         </div>
       </div>
     </div>

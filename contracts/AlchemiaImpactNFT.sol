@@ -148,6 +148,12 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
     mapping(uint256 => ResearchProof) public researchProofs;
     uint256 private _nextTokenId = 1;
 
+    // EIP-4906 ERC-721 Metadata Update Extension (auto-refreshes OpenSea / wallets on upgrade!)
+    bytes4 private constant _INTERFACE_ID_ERC4906 = 0x49064906;
+
+    event MetadataUpdate(uint256 _tokenId);
+    event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
+
     event VesselMinted(
         address indexed minter,
         uint256 indexed tokenId,
@@ -363,6 +369,7 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
             complexityTierForValue(rec.totalValueWei),
             totalDonatedWei
         );
+        emit MetadataUpdate(tokenId);
     }
 
     function _splitAndRoute(uint8 causeId, uint256 value)
@@ -507,6 +514,7 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
 
         rec.sectorsMask |= bit;
         emit LabSectorBuilt(tokenId, sectorId, rec.sectorsMask, true);
+        emit MetadataUpdate(tokenId);
     }
 
     /**
@@ -529,6 +537,7 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
         rec.sectorsMask |= bit;
 
         emit LabSectorBuilt(tokenId, sectorId, rec.sectorsMask, false);
+        emit MetadataUpdate(tokenId);
     }
 
     // -------------------------------------------------------------------------
@@ -565,6 +574,7 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
             addedWorkUnits,
             datasetUri
         );
+        emit MetadataUpdate(tokenId);
     }
 
     // -------------------------------------------------------------------------
@@ -705,6 +715,7 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
 
     function setAnimationBaseUrl(string calldata newBaseUrl) external onlyOwner {
         animationBaseUrl = newBaseUrl;
+        emit BatchMetadataUpdate(1, type(uint256).max);
     }
 
     function supportsInterface(bytes4 interfaceId)
@@ -713,6 +724,6 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
         override(ERC721Enumerable, ERC2981)
         returns (bool)
     {
-        return super.supportsInterface(interfaceId);
+        return interfaceId == _INTERFACE_ID_ERC4906 || super.supportsInterface(interfaceId);
     }
 }

@@ -6,9 +6,9 @@ export interface LabSectorDef {
   wingPosition: string;
   role: string;
   researchEffect: string;
-  miningBonusPerHour: number; // $ALCH / hr
-  coinCost: number;           // $ALCH to build
-  ethCostUsd: number;         // Alternative USD equivalent in ETH
+  miningBonusPerHour: number;
+  coinCost: number;
+  ethCostUsd: number;
   accent: string;
 }
 
@@ -16,11 +16,11 @@ export const LAB_SECTORS: readonly LabSectorDef[] = [
   {
     id: 0,
     bit: 1 << 0,
-    name: "Cryo-Folding Wing",
-    shortName: "Cryo Wing",
-    wingPosition: "North-West Terrace",
-    role: "Accelerates 3D AB-model protein folding & deeper low-energy conformation discovery.",
-    researchEffect: "+1.5x Folding Speed",
+    name: "Cold Room",
+    shortName: "Cold Room",
+    wingPosition: "North-West",
+    role: "Cools your lab gear so protein folding runs 1.6x faster.",
+    researchEffect: "1.6x faster folding",
     miningBonusPerHour: 4,
     coinCost: 150,
     ethCostUsd: 5,
@@ -29,11 +29,11 @@ export const LAB_SECTORS: readonly LabSectorDef[] = [
   {
     id: 1,
     bit: 1 << 1,
-    name: "Quantum Mining Pavilion",
-    shortName: "Mining Rig",
-    wingPosition: "East Terrace",
-    role: "Installs spinning crystalline compute blades that launch active $ALCH coin mining operations.",
-    researchEffect: "Starts Active Coin Rig",
+    name: "Mining Room",
+    shortName: "Mining Room",
+    wingPosition: "East Side",
+    role: "Adds spinning mining blades that steadily earn ALCH coins.",
+    researchEffect: "Big coin boost",
     miningBonusPerHour: 14,
     coinCost: 220,
     ethCostUsd: 10,
@@ -42,11 +42,11 @@ export const LAB_SECTORS: readonly LabSectorDef[] = [
   {
     id: 2,
     bit: 1 << 2,
-    name: "Solar Catalysis Dome",
-    shortName: "Solar Dome",
-    wingPosition: "South-West Terrace",
-    role: "Geodesic glass greenhouse powering clean-energy catalyst searches & passive yield.",
-    researchEffect: "+Clean Catalysis",
+    name: "Greenhouse",
+    shortName: "Greenhouse",
+    wingPosition: "South-West",
+    role: "A glass dome that brings clean solar power and steady coins.",
+    researchEffect: "Clean power + coins",
     miningBonusPerHour: 8,
     coinCost: 300,
     ethCostUsd: 15,
@@ -55,11 +55,11 @@ export const LAB_SECTORS: readonly LabSectorDef[] = [
   {
     id: 3,
     bit: 1 << 3,
-    name: "Companion Sanctuary",
-    shortName: "Sanctuary",
-    wingPosition: "South-East Terrace",
-    role: "Glass lounge pavilion pairing both Cat & Dog familiars to boost animal biology resonance.",
-    researchEffect: "Pairs Cat + Dog",
+    name: "Pet Lounge",
+    shortName: "Pet Lounge",
+    wingPosition: "South-East",
+    role: "A cozy glass patio that brings both a cat and dog to your lab.",
+    researchEffect: "Cat & dog pair",
     miningBonusPerHour: 6,
     coinCost: 420,
     ethCostUsd: 25,
@@ -68,11 +68,11 @@ export const LAB_SECTORS: readonly LabSectorDef[] = [
   {
     id: 4,
     bit: 1 << 4,
-    name: "Proton Accelerator Spire",
-    shortName: "Proton Spire",
-    wingPosition: "North-East Tower",
-    role: "Vertical glass-and-titanium subatomic collider spire unlocking peak physics proofs & coin yield.",
-    researchEffect: "+Particle Proofs",
+    name: "Particle Tower",
+    shortName: "Particle Tower",
+    wingPosition: "North-East",
+    role: "A tall glass spire with orbiting rings for faster coin mining.",
+    researchEffect: "Orbiting rings + coins",
     miningBonusPerHour: 18,
     coinCost: 650,
     ethCostUsd: 50,
@@ -81,11 +81,11 @@ export const LAB_SECTORS: readonly LabSectorDef[] = [
   {
     id: 5,
     bit: 1 << 5,
-    name: "Philosopher Observatory",
-    shortName: "Observatory",
-    wingPosition: "Upper Crown",
-    role: "Crowning skylight dome with a rotating 4D crystalline hypercube for maximum research & mining.",
-    researchEffect: "+4D Hypercube Crown",
+    name: "Glass Dome",
+    shortName: "Glass Dome",
+    wingPosition: "Roof Top",
+    role: "Crowns your whole lab with a spinning crystal cube and top output.",
+    researchEffect: "Max folding + coins",
     miningBonusPerHour: 28,
     coinCost: 1000,
     ethCostUsd: 100,
@@ -114,9 +114,7 @@ export function computeMiningRatePerHour(
 ): number {
   let rate = Math.max(1, complexityTier) * 5;
   for (const s of LAB_SECTORS) {
-    if (hasSector(sectorsMask, s.id)) {
-      rate += s.miningBonusPerHour;
-    }
+    if (hasSector(sectorsMask, s.id)) rate += s.miningBonusPerHour;
   }
   rate += Math.min(40, workUnits * 0.5);
   return Number(rate.toFixed(1));

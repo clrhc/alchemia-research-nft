@@ -1399,6 +1399,46 @@ body {
   margin-top: 2px;
 }
 
+.camera-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tap-toast {
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+}
+
+.badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.badge-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.71rem;
+  color: var(--ink-muted);
+  background: rgba(244, 247, 252, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.badge-chip.earned {
+  color: #1a1f2c;
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(91, 141, 239, 0.52);
+  font-weight: 500;
+}
+
 @media (max-width: 900px) {
   .single-view-grid,
   .mylabs-grid {

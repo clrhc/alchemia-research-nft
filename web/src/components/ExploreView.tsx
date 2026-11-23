@@ -1,13 +1,10 @@
 import { useState } from "react";
 import { ArrowLeft, ArrowUpRight, Building2, Coins, Download, FlaskConical } from "lucide-react";
 import { ArtworkCanvas } from "./ArtworkCanvas";
+import type { CameraPreset } from "../engine/alchemy3DRenderer";
 import { deriveTraitsFromSeed } from "../engine/prng";
 import { downloadPDBFromSnapshot, type ComputeSnapshot } from "../engine/researchCompute";
-import {
-  COMPLEXITY_TIER_NAMES,
-  complexityTierFromUsd,
-  usdToEth
-} from "../web3/config";
+import { complexityTierFromUsd } from "../web3/config";
 import {
   buildAnimationUrl,
   type CollectionState,
@@ -28,6 +25,13 @@ interface ExploreViewProps {
   onOpenInMyLabs: (vessel: MintedVessel) => void;
 }
 
+const CAMERA_BUTTONS: Array<{ id: CameraPreset; label: string }> = [
+  { id: "iso", label: "3D View" },
+  { id: "top", label: "Top Plan" },
+  { id: "pet", label: "Pet" },
+  { id: "molecule", label: "Protein" }
+];
+
 export function ExploreView({
   state,
   lastPulseAt,
@@ -36,8 +40,9 @@ export function ExploreView({
   onOpenInMyLabs
 }: ExploreViewProps) {
   const [liveCompute, setLiveCompute] = useState<ComputeSnapshot | null>(null);
+  const [camPreset, setCamPreset] = useState<{ preset: CameraPreset; seq: number } | null>(null);
+  const [tapNote, setTapNote] = useState<string | null>(null);
 
-  // Single NFT Detail View showing live interactive 3D animation_url
   if (selectedVessel) {
     const traits = deriveTraitsFromSeed(selectedVessel.seed);
     const tier = complexityTierFromUsd(selectedVessel.valueUsd);
@@ -60,7 +65,7 @@ export function ExploreView({
     });
 
     return (
-      <section className="subpage-shell" aria-label={`Single view for Lab #${selectedVessel.tokenId}`}>
+      <section className="subpage-shell" aria-label={`Lab #${selectedVessel.tokenId}`}>
         <div className="subpage-top-row">
           <button
             type="button"
@@ -68,7 +73,7 @@ export function ExploreView({
             onClick={() => onSelectVessel(null)}
           >
             <ArrowLeft size={14} />
-            All Labs
+            Back to gallery
           </button>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -80,7 +85,7 @@ export function ExploreView({
                 onClick={() => onOpenInMyLabs(selectedVessel)}
               >
                 <Building2 size={14} />
-                Upgrade in My Labs
+                Open in My Labs
               </button>
             )}
             <a
@@ -90,73 +95,98 @@ export function ExploreView({
               className="subtle-pill-btn clickable"
               style={{ textDecoration: "none" }}
             >
-              Open animation_url
+              Open full screen
               <ArrowUpRight size={13} />
             </a>
           </div>
         </div>
 
         <div className="single-view-grid">
-          <div className="floating-model-card">
-            <ArtworkCanvas
-              showHud
-              onComputeSnapshot={setLiveCompute}
-              impact={{
-                tokenId: selectedVessel.tokenId,
-                seed: selectedVessel.seed,
-                causeId: selectedVessel.causeId,
-                causeName: selectedVessel.causeName,
-                tokenValueUsd: selectedVessel.valueUsd,
-                complexityTier: tier,
-                sectorsMask: selectedVessel.sectorsMask,
-                tokenImpactEth: selectedVessel.impactEth,
-                causeImpactEth: state.causes[selectedVessel.causeId]?.raisedEth || 0,
-                globalImpactEth: state.globalDonatedEth,
-                totalSupply: state.totalSupply,
-                maxSupply: state.maxSupply,
-                reactionStage: state.reactionStage,
-                mode: state.connectedMode,
-                lastPulseAt
-              }}
-            />
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div className="floating-model-card">
+              <ArtworkCanvas
+                showHud
+                cameraPreset={camPreset}
+                onComputeSnapshot={setLiveCompute}
+                onInteractiveEvent={(ev) => {
+                  setTapNote(
+                    ev.kind === "pet-clicked"
+                      ? "Your tap made the pet happy!"
+                      : "Nice catch! You popped a floating proton."
+                  );
+                }}
+                impact={{
+                  tokenId: selectedVessel.tokenId,
+                  seed: selectedVessel.seed,
+                  causeId: selectedVessel.causeId,
+                  causeName: selectedVessel.causeName,
+                  tokenValueUsd: selectedVessel.valueUsd,
+                  complexityTier: tier,
+                  sectorsMask: selectedVessel.sectorsMask,
+                  tokenImpactEth: selectedVessel.impactEth,
+                  causeImpactEth: state.causes[selectedVessel.causeId]?.raisedEth || 0,
+                  globalImpactEth: state.globalDonatedEth,
+                  totalSupply: state.totalSupply,
+                  maxSupply: state.maxSupply,
+                  reactionStage: state.reactionStage,
+                  mode: state.connectedMode,
+                  lastPulseAt
+                }}
+              />
+            </div>
+
+            <div className="camera-bar">
+              {CAMERA_BUTTONS.map((btn) => (
+                <button
+                  key={btn.id}
+                  type="button"
+                  className="preset-chip clickable"
+                  onClick={() =>
+                    setCamPreset((prev) => ({ preset: btn.id, seq: (prev?.seq || 0) + 1 }))
+                  }
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
+            {tapNote && <div className="tap-toast">{tapNote}</div>}
           </div>
 
           <div className="glass-panel single-info-panel">
             <div className="single-kicker">
-              Alchemia Lab #{selectedVessel.tokenId} · Owned by {selectedVessel.minter}
+              Lab #{selectedVessel.tokenId} · Owner {selectedVessel.minter}
             </div>
             <h2 className="single-title">
-              {traits.vessel} &amp;{" "}
+              {traits.vessel} with{" "}
               {tier >= 4 || hasSector(selectedVessel.sectorsMask, 3)
-                ? "Harmonic Cat & Dog Duo"
+                ? "Cat & Dog"
                 : traits.familiar.name}
             </h2>
             <p className="single-desc">
-              This living 3D architectural lab contributes to{" "}
-              <strong>{selectedVessel.causeName}</strong> while continuously computing real
-              open-science 3D protein folding conformations and mining <strong>$ALCH</strong>.
+              Supports <strong>{selectedVessel.causeName}</strong>. Tap the pet or floating
+              particles right inside the 3D scene, or spin the camera to look around every room.
             </p>
 
             <div className="single-stats-row">
               <div className="mini-stat">
-                <span>Contribution</span>
+                <span>Put in</span>
                 <strong>${selectedVessel.valueUsd}</strong>
               </div>
               <div className="mini-stat">
-                <span>Complexity</span>
-                <strong>{COMPLEXITY_TIER_NAMES[tier]}</strong>
+                <span>Detail level</span>
+                <strong>Level {tier} of 5</strong>
               </div>
               <div className="mini-stat">
-                <span>Mining Output</span>
-                <strong>{miningRate} $ALCH/hr</strong>
+                <span>Coin rate</span>
+                <strong>{miningRate} ALCH / hr</strong>
               </div>
               <div className="mini-stat">
-                <span>Built Wings</span>
-                <strong>{countSectors(selectedVessel.sectorsMask)} / 6</strong>
+                <span>Rooms built</span>
+                <strong>{countSectors(selectedVessel.sectorsMask)} of 6</strong>
               </div>
             </div>
 
-            <div className="single-section-label">Installed Architectural Wings</div>
+            <div className="single-section-label">Rooms in this lab</div>
             <div className="wing-tags">
               {LAB_SECTORS.map((sec) => {
                 const built = hasSector(selectedVessel.sectorsMask, sec.id);
@@ -169,16 +199,18 @@ export function ExploreView({
               })}
             </div>
 
-            <div className="single-section-label">Live Open-Science Research Export</div>
+            <div className="single-section-label">Live protein folding data</div>
             <div className="research-export-box">
               <div className="research-proof-line">
                 <span>
                   {liveCompute
-                    ? `ΔG ${liveCompute.bestEnergy.toFixed(2)} kcal/mol · Rg ${liveCompute.radiusOfGyration.toFixed(1)}Å · ${liveCompute.opsPerSecond} evals/s`
-                    : "Running 3D AB-Model Protein Folding…"}
+                    ? `${liveCompute.taskTitle} · Best ${liveCompute.bestEnergy.toFixed(2)} kcal/mol`
+                    : "Starting 3D fold…"}
                 </span>
                 {liveCompute && (
-                  <code>SHA-256: {liveCompute.proofHash.slice(0, 18)}…</code>
+                  <code>
+                    {liveCompute.opsPerSecond} steps/sec · Proof {liveCompute.proofHash.slice(0, 14)}…
+                  </code>
                 )}
               </div>
               {liveCompute && (
@@ -188,12 +220,12 @@ export function ExploreView({
                   onClick={() => downloadPDBFromSnapshot(liveCompute)}
                 >
                   <Download size={13} />
-                  Download .PDB Structure
+                  Download .PDB
                 </button>
               )}
             </div>
 
-            <div className="single-section-label">Direct ERC-721 animation_url</div>
+            <div className="single-section-label">Live animation link</div>
             <div className="url-readout">{animationUrl}</div>
           </div>
         </div>
@@ -201,14 +233,12 @@ export function ExploreView({
     );
   }
 
-  // All NFTs Gallery Grid
   return (
-    <section className="subpage-shell" aria-label="Explore all Alchemia Labs">
+    <section className="subpage-shell" aria-label="Gallery">
       <header className="subpage-header">
-        <h2 className="subpage-title">Explore All Living Labs</h2>
+        <h2 className="subpage-title">Gallery</h2>
         <p className="subpage-sub">
-          Click any laboratory to open its live interactive 3D artwork, inspect its built wings, and
-          download its real computed protein-folding data.
+          Click any lab to spin it in 3D, check its rooms, or download its live protein fold.
         </p>
       </header>
 
@@ -233,7 +263,6 @@ export function ExploreView({
                 }
               }}
             >
-              {/* Crisp Stylized Architectural Card Preview Swatch */}
               <div
                 className="explore-swatch"
                 style={{
@@ -245,7 +274,6 @@ export function ExploreView({
                   <span className="swatch-pill">${vessel.valueUsd}</span>
                 </div>
 
-                {/* Minimal Architectural Concentric Orb & Wing Indicator */}
                 <div className="explore-orb-visual" aria-hidden="true">
                   <div
                     className="explore-orb-ring"
@@ -263,7 +291,7 @@ export function ExploreView({
 
                 <div className="explore-swatch-bottom">
                   <span className="swatch-pill">
-                    <Building2 size={11} /> {builtCount}/6 Wings
+                    <Building2 size={11} /> {builtCount}/6 rooms
                   </span>
                   <span className="swatch-pill">
                     <Coins size={11} /> {rate}/hr
@@ -278,13 +306,12 @@ export function ExploreView({
                 </div>
                 <div className="explore-card-meta">
                   {tier >= 4 || hasSector(vessel.sectorsMask, 3)
-                    ? "Harmonic Cat & Dog Duo"
-                    : traits.familiar.name}{" "}
-                  · {vessel.causeName.split(" ")[0]}
+                    ? "Cat & Dog"
+                    : traits.familiar.name}
                 </div>
                 <div className="explore-card-foot">
-                  <span>Tier {tier}/5</span>
-                  <span>{(usdToEth(vessel.valueUsd) * 0.6).toFixed(4)} ETH → lab</span>
+                  <span>Level {tier}</span>
+                  <span>{vessel.workUnits} folds saved</span>
                 </div>
               </div>
             </article>

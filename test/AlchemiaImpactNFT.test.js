@@ -161,7 +161,7 @@ describe("Alchemia Ecosystem ($ALCH Coin + Liquidity Threshold + Sims-Style Lab 
     expect(metadata.attributes.some((a) => a.trait_type === "Built Lab Wings" && a.value === 1)).to.equal(true);
   });
 
-  it("supports capped & infinite supply locking and ERC-2981 royalties", async function () {
+  it("supports capped & infinite supply locking, ERC-2981 royalties, and EIP-4906 live metadata refresh", async function () {
     const { contract, minter, research0, mintPrice } = await deployFixture(0n);
     await contract.connect(minter).mint(2, 1, { value: mintPrice * 2n });
     await contract.setMaxSupply(2);
@@ -171,6 +171,12 @@ describe("Alchemia Ecosystem ($ALCH Coin + Liquidity Threshold + Sims-Style Lab 
     );
     await contract.lockSupplyConfig();
     await expect(contract.setMaxSupply(0)).to.be.revertedWithCustomError(contract, "SupplyAlreadyLocked");
+
+    // EIP-4906 interface support + MetadataUpdate event on upgrade
+    expect(await contract.supportsInterface("0x49064906")).to.equal(true);
+    await expect(contract.connect(minter).upgradeVessel(1, { value: mintPrice * 5n }))
+      .to.emit(contract, "MetadataUpdate")
+      .withArgs(1);
 
     const [receiver, royalty] = await contract.royaltyInfo(1, ethers.parseEther("1"));
     expect(receiver).to.equal(research0.address);
