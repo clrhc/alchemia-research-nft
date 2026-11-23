@@ -235,13 +235,29 @@ export function buildAnimationUrl(params: {
   return url.toString();
 }
 
-export async function ensureTargetNetwork(targetChainId: number): Promise<void> {
-  const eth = (window as unknown as {
-    ethereum?: ethers.Eip1193Provider & {
-      request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-    };
-  }).ethereum;
-  if (!eth) return;
+let activeEip1193Provider: ethers.Eip1193Provider | null = null;
+
+function getSelectedProvider(): ethers.Eip1193Provider | undefined {
+  return (
+    activeEip1193Provider ||
+    (window as unknown as { ethereum?: ethers.Eip1193Provider }).ethereum
+  );
+}
+
+export function clearSelectedWalletProvider() {
+  activeEip1193Provider = null;
+}
+
+export async function ensureTargetNetwork(
+  targetChainId: number,
+  customProvider?: unknown
+): Promise<void> {
+  const eth = (customProvider || getSelectedProvider()) as
+    | (ethers.Eip1193Provider & {
+        request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+      })
+    | undefined;
+  if (!eth?.request) return;
 
   const hexChain = `0x${targetChainId.toString(16)}`;
   try {
@@ -268,16 +284,17 @@ export async function ensureTargetNetwork(targetChainId: number): Promise<void> 
   }
 }
 
-export async function connectInjectedWallet(): Promise<{
+export async function connectInjectedWallet(customProvider?: unknown): Promise<{
   address: string;
   chainId: number;
   provider: BrowserProvider;
 }> {
-  const eth = (window as unknown as { ethereum?: ethers.Eip1193Provider }).ethereum;
+  const eth = (customProvider || getSelectedProvider()) as ethers.Eip1193Provider | undefined;
   if (!eth) {
-    throw new Error("No Ethereum wallet detected. Install MetaMask or Rabby to interact on-chain.");
+    throw new Error("No Ethereum wallet detected. Install Coinbase Wallet, MetaMask, or Rabby.");
   }
-  await ensureTargetNetwork(TARGET_CHAIN_ID);
+  activeEip1193Provider = eth;
+  await ensureTargetNetwork(TARGET_CHAIN_ID, eth);
   const provider = new BrowserProvider(eth);
   await provider.send("eth_requestAccounts", []);
   const signer = await provider.getSigner();
@@ -446,7 +463,7 @@ export async function executeOnChainMint(params: {
   causeId: number;
   totalEth: number;
 }): Promise<{ txHash: string; tokenId: number; seed: `0x${string}` }> {
-  const eth = (window as unknown as { ethereum?: ethers.Eip1193Provider }).ethereum;
+  const eth = getSelectedProvider();
   if (!eth) throw new Error("Ethereum wallet not connected");
 
   const provider = new BrowserProvider(eth);
@@ -484,7 +501,7 @@ export async function executeOnChainBuildSector(params: {
   coinCost?: number;
   ethAmount?: number;
 }): Promise<string> {
-  const eth = (window as unknown as { ethereum?: ethers.Eip1193Provider }).ethereum;
+  const eth = getSelectedProvider();
   if (!eth) throw new Error("Ethereum wallet not connected");
 
   const provider = new BrowserProvider(eth);
@@ -517,7 +534,7 @@ export async function executeOnChainClaimCoins(params: {
   tokenId: number;
   researchTithePct: number;
 }): Promise<string> {
-  const eth = (window as unknown as { ethereum?: ethers.Eip1193Provider }).ethereum;
+  const eth = getSelectedProvider();
   if (!eth) throw new Error("Ethereum wallet not connected");
 
   const provider = new BrowserProvider(eth);
@@ -534,7 +551,7 @@ export async function executeOnChainDonateCoins(params: {
   researchWallet: string;
   amountCoins: number;
 }): Promise<string> {
-  const eth = (window as unknown as { ethereum?: ethers.Eip1193Provider }).ethereum;
+  const eth = getSelectedProvider();
   if (!eth) throw new Error("Ethereum wallet not connected");
 
   const provider = new BrowserProvider(eth);
@@ -555,7 +572,7 @@ export async function executeOnChainSubmitResearchProof(params: {
   bestEnergy: number;
   workUnits: number;
 }): Promise<string> {
-  const eth = (window as unknown as { ethereum?: ethers.Eip1193Provider }).ethereum;
+  const eth = getSelectedProvider();
   if (!eth) throw new Error("Ethereum wallet not connected");
 
   const provider = new BrowserProvider(eth);

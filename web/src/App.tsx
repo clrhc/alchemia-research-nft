@@ -5,6 +5,7 @@ import { BackgroundCanvas } from "./components/BackgroundCanvas";
 import { CustomCursor } from "./components/CustomCursor";
 import { ExploreView } from "./components/ExploreView";
 import { MyLabsView } from "./components/MyLabsView";
+import { WalletModal } from "./components/WalletModal";
 import { WhitePaperSheet } from "./components/WhitePaperSheet";
 import { type LiveImpactState } from "./engine/alchemyRenderer";
 import { randomSeedHex } from "./engine/prng";
@@ -18,6 +19,7 @@ import {
 } from "./web3/config";
 import {
   buildAnimationUrl,
+  clearSelectedWalletProvider,
   connectInjectedWallet,
   executeOnChainBuildSector,
   executeOnChainClaimCoins,
@@ -48,6 +50,9 @@ export function App() {
   const [liveCompute, setLiveCompute] = useState<ComputeSnapshot | null>(null);
 
   const [showWhitePaper, setShowWhitePaper] = useState(false);
+  const [showWalletModal, setShowWalletModal] = useState(false);
+  const [walletConnecting, setWalletConnecting] = useState(false);
+  const [walletError, setWalletError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [lastPulseAt, setLastPulseAt] = useState(() => Date.now());
   const [bgPulseSignal, setBgPulseSignal] = useState(0);
@@ -179,6 +184,11 @@ export function App() {
 
   const handleMint = async () => {
     if (busy) return;
+    if (state.contractAddress && !state.walletAddress) {
+      setWalletError(null);
+      setShowWalletModal(true);
+      return;
+    }
     setBusy(true);
     setNotice(null);
 
@@ -255,12 +265,27 @@ export function App() {
   };
 
   const handleConnectWallet = async () => {
+    setWalletError(null);
+    setShowWalletModal(true);
+  };
+
+  const handleConnectProvider = async (selectedProvider?: unknown) => {
+    setWalletConnecting(true);
+    setWalletError(null);
     try {
-      const { address, chainId } = await connectInjectedWallet();
+      const { address, chainId } = await connectInjectedWallet(selectedProvider);
       setState((prev) => ({ ...prev, walletAddress: address, chainId }));
+      setShowWalletModal(false);
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Wallet connection cancelled.");
+      setWalletError(err instanceof Error ? err.message : "Wallet connection cancelled.");
+    } finally {
+      setWalletConnecting(false);
     }
+  };
+
+  const handleDisconnectWallet = () => {
+    clearSelectedWalletProvider();
+    setState((prev) => ({ ...prev, walletAddress: null }));
   };
 
   const handleAnchorProof = async (vessel: MintedVessel, snap: ComputeSnapshot) => {
@@ -462,6 +487,18 @@ export function App() {
           >
             My Labs
           </button>
+          <button
+            type="button"
+            className="nav-link clickable"
+            onClick={() => {
+              setWalletError(null);
+              setShowWalletModal(true);
+            }}
+          >
+            {state.walletAddress
+              ? `${state.walletAddress.slice(0, 6)}…${state.walletAddress.slice(-4)}`
+              : "Connect"}
+          </button>
         </nav>
 
         {page === "mint" && (
@@ -580,6 +617,17 @@ export function App() {
         state={state}
         animationUrl={previewAnimationUrl}
         liveCompute={liveCompute}
+      />
+
+      <WalletModal
+        open={showWalletModal}
+        onClose={() => setShowWalletModal(false)}
+        walletAddress={state.walletAddress}
+        chainId={state.chainId}
+        connecting={walletConnecting}
+        error={walletError}
+        onConnectProvider={handleConnectProvider}
+        onDisconnect={handleDisconnectWallet}
       />
     </>
   );
