@@ -47,7 +47,7 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
     lightingMood = "daylight",
     atmosphereMode = "clear",
     highlightedResidueIdx = null,
-    showBestFold = false,
+    showBestFold = true,
     autoRotate,
     benchmarkIndex = null,
     foldSignal = null,

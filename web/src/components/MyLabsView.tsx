@@ -216,7 +216,7 @@ export function MyLabsView({
     }
   });
   const [showContactMap, setShowContactMap] = useState(false);
-  const [showBestFold, setShowBestFold] = useState(false);
+  const [showBestFold, setShowBestFold] = useState(true);
   const [highlightedResidueIdx, setHighlightedResidueIdx] = useState<number | null>(null);
   const [showGoals, setShowGoals] = useState(false);
   const [goals, setGoals] = useState<Record<GoalKey, boolean>>(() => loadGoals());
@@ -1125,9 +1125,9 @@ export function MyLabsView({
                       setShowBestFold((v) => !v);
                       soundEngine.playTap(987.77);
                     }}
-                    title="Switch 3D cage between lowest-energy best fold and live search"
+                    title="Switch 3D cage between calm best fold and live search motion"
                   >
-                    {showBestFold ? "Viewing best" : "Show best"}
+                    {showBestFold ? "Best fold" : "Live search"}
                   </button>
                   <button
                     type="button"

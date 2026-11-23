@@ -13,7 +13,7 @@ import {
 import { SeededRNG, deriveTraitsFromSeed } from "./prng";
 import type { ComputeSnapshot, ResidueNode } from "./researchCompute";
 import { ResearchComputeRunner } from "./researchRunner";
-import { assignSecondaryStructurePSEA } from "./structuralAnalysis";
+import { assignSecondaryStructurePSEA, type SecondaryCode } from "./structuralAnalysis";
 import { soundEngine } from "./soundEngine";
 import { hasSector } from "../web3/sectors";
 import { stageFromEth, type AlchemyTraits } from "./traits";
@@ -164,7 +164,14 @@ export class Alchemy3DRenderer {
   private proteinChainLength = -1;
   private proteinRibbonMesh: THREE.Mesh | null = null;
   private proteinRibbonCurvePts: THREE.Vector3[] = [];
+  private smoothResiduePos: THREE.Vector3[] = [];
+  private lastRibbonSnapshotPos: THREE.Vector3[] = [];
+  private proteinInitialized = false;
+  private cachedSSCodes: SecondaryCode[] = [];
+  private cachedSSEnergyKey = "";
+  private proteinMorphBoost = 0;
   private lastRibbonUpdateMs = 0;
+  private staticPreview = false;
   private causticShaderMat: THREE.ShaderMaterial | null = null;
   private cryoHelixes: THREE.Object3D[] = [];
   private greenhouseStems: THREE.Object3D[] = [];
@@ -205,7 +212,7 @@ export class Alchemy3DRenderer {
   private builtWingGroups: Array<{ sectorId: number; name: string; group: THREE.Group }> = [];
   private highlightedResidueIdx: number | null = null;
   private highlightHalo: THREE.Sprite | null = null;
-  private showBestFold = false;
+  private showBestFold = true;
   private bursts: Burst3D[] = [];
   private shockwaveRing: THREE.Mesh | null = null;
   private waterRipples: Array<{ mesh: THREE.Mesh; life: number }> = [];
@@ -219,6 +226,7 @@ export class Alchemy3DRenderer {
   private targetFill = 0.44;
   private excitement = 0;
   private discoveryFlash = 0;
+  private lastDiscoveryVisualMs = 0;
   private shockwaveLife = 0;
   private lastSleepBubbleAt = 0;
   private builtSeed = "";
@@ -227,18 +235,21 @@ export class Alchemy3DRenderer {
   private builtAccessoryRank = -1;
   private userDragging = false;
 
-  // Scratch vectors for zero-GC bond cylinder alignment
+  // Scratch vectors for zero-GC bond cylinder alignment & smooth protein damping
   private tmpMid = new THREE.Vector3();
   private tmpDir = new THREE.Vector3();
+  private tmpTarget = new THREE.Vector3();
   private tmpQuat = new THREE.Quaternion();
 
   constructor(
     container: HTMLElement,
     initialState: LiveImpactState,
     onComputeTick?: (snap: ComputeSnapshot) => void,
-    onInteractiveEvent?: (ev: InteractiveEvent) => void
+    onInteractiveEvent?: (ev: InteractiveEvent) => void,
+    options?: { staticPreview?: boolean }
   ) {
     this.container = container;
+    this.staticPreview = Boolean(options?.staticPreview);
     this.impact = { ...initialState };
     this.onComputeTick = onComputeTick;
     this.onInteractiveEvent = onInteractiveEvent;
@@ -254,7 +265,8 @@ export class Alchemy3DRenderer {
           this.lastUiEmit = now;
           this.onComputeTick?.(snap);
         }
-      }
+      },
+      this.staticPreview
     );
 
     this.terrazzoTex = createAlabasterTerrazzoTexture();
@@ -312,9 +324,11 @@ export class Alchemy3DRenderer {
     });
 
     // Click-to-Interact + Hover Feedback 3D Raycasting
-    this.renderer.domElement.addEventListener("pointerdown", this.handlePointerDown);
-    this.renderer.domElement.addEventListener("pointerup", this.handlePointerUp);
-    this.renderer.domElement.addEventListener("pointermove", this.handlePointerMove);
+    if (!this.staticPreview) {
+      this.renderer.domElement.addEventListener("pointerdown", this.handlePointerDown);
+      this.renderer.domElement.addEventListener("pointerup", this.handlePointerUp);
+      this.renderer.domElement.addEventListener("pointermove", this.handlePointerMove);
+    }
 
     this.setupArchitecturalStudioLighting();
     this.scene.add(this.rootGroup);
@@ -410,6 +424,7 @@ export class Alchemy3DRenderer {
 
   public setShowBestFold(showBest: boolean) {
     this.showBestFold = showBest;
+    this.cachedSSEnergyKey = "";
     this.lastRibbonUpdateMs = 0; // force immediate Mol* ribbon refresh
   }
 
@@ -419,12 +434,16 @@ export class Alchemy3DRenderer {
 
   public selectBenchmark(benchmarkIndex: number) {
     this.compute.selectBenchmark(benchmarkIndex);
+    this.proteinInitialized = false;
+    this.cachedSSEnergyKey = "";
     this.onComputeTick?.(this.compute.getSnapshot());
     this.triggerCatalyticPulse(0.7);
   }
 
   public triggerFoldAction(action: "wiggle" | "shake" | "bury") {
     this.compute.triggerFoldAction(action);
+    this.proteinMorphBoost = 1.5;
+    this.cachedSSEnergyKey = "";
     this.discoveryFlash = 1.0;
     this.excitement = Math.min(1.5, this.excitement + (action === "shake" ? 0.75 : 0.48));
     this.spawnBurst(new THREE.Vector3(0, 3.06, 0), action === "shake" ? 14 : 10);
@@ -493,6 +512,73 @@ export class Alchemy3DRenderer {
    */
   public captureSnapshotDataUrl(): string {
     this.renderer.render(this.scene, this.camera);
+    return this.renderer.domElement.toDataURL("image/png");
+  }
+
+  /**
+   * Renders a crisp hero studio portrait of any lab configuration using this
+   * single offscreen WebGL context (used to upgrade Gallery cards to true 3D renders).
+   */
+  public renderStaticPortrait(state: LiveImpactState): string {
+    const prevSeed = this.impact.seed;
+    const prevCause = this.impact.causeId;
+    this.impact = { ...this.impact, ...state };
+    if (!state.reactionStage) {
+      this.impact.reactionStage = stageFromEth(this.impact.globalImpactEth);
+    }
+
+    if (state.seed !== prevSeed || state.causeId !== prevCause) {
+      this.traits = deriveTraitsFromSeed(state.seed);
+      this.compute.reseed(state.seed, this.impact.causeId, this.impact.tokenId, 72);
+    }
+
+    this.syncFillTarget();
+    this.displayFill = this.targetFill;
+    this.buildPopScale = 1;
+    this.dynamicGroup.scale.setScalar(1);
+    this.excitement = 0.08;
+    this.discoveryFlash = 0;
+    this.shockwaveLife = 0;
+    this.desiredCamPos = null;
+    this.desiredCamTarget = null;
+    this.showBestFold = true;
+    this.proteinInitialized = false;
+    this.cachedSSEnergyKey = "";
+    this.lastRibbonUpdateMs = 0;
+
+    const nextSectors = this.impact.sectorsMask ?? 0;
+    const nextAccRank = this.getAccessoryRank();
+    if (
+      this.impact.seed !== this.builtSeed ||
+      this.impact.complexityTier !== this.builtTier ||
+      nextSectors !== this.builtSectorsMask ||
+      nextAccRank !== this.builtAccessoryRank
+    ) {
+      this.rebuild3DModel();
+    }
+
+    // Frame the studio shot with clean museum margins so gyro rings, protein, pets & rooms never clip
+    let builtCount = 0;
+    for (let i = 0; i < 6; i++) {
+      if ((nextSectors & (1 << i)) !== 0) builtCount++;
+    }
+    const zoomOut = builtCount >= 3 || (this.impact.complexityTier || 1) >= 4 ? 1.14 : 1.05;
+    this.camera.fov = 31;
+    this.camera.aspect = 1;
+    this.camera.updateProjectionMatrix();
+    this.camera.position.set(5.15 * zoomOut, 4.08 * zoomOut, 5.95 * zoomOut);
+    this.controls.target.set(0, 1.66, 0);
+    this.controls.autoRotate = false;
+    this.camera.lookAt(0, 1.66, 0);
+
+    const prevActive = this.compute.isActive();
+    this.compute.setActive(false);
+    this.step(0.016, 1.65, 2400);
+    this.compute.setActive(prevActive);
+    this.renderer.render(this.scene, this.camera);
+
+    const webp = this.renderer.domElement.toDataURL("image/webp", 0.92);
+    if (webp.startsWith("data:image/webp")) return webp;
     return this.renderer.domElement.toDataURL("image/png");
   }
 
@@ -1142,10 +1228,14 @@ export class Alchemy3DRenderer {
   }
 
   private onResearchDiscovery() {
-    this.discoveryFlash = 1.0;
-    this.excitement = Math.min(1.3, this.excitement + 0.45);
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    // Rate-limit visual discovery fireworks so rapid initial folds stay calm and refined
+    if (now - this.lastDiscoveryVisualMs < 2400) return;
+    this.lastDiscoveryVisualMs = now;
+    this.discoveryFlash = 0.65;
+    this.excitement = Math.min(1.2, this.excitement + 0.3);
     this.triggerWaterRipple();
-    this.spawnBurst(new THREE.Vector3(0, 3.05, 0), 10);
+    this.spawnBurst(new THREE.Vector3(0, 3.05, 0), 6);
     if (this.companions.length > 0 && this.moodBubbles.length < 2) {
       this.spawnMoodBubble(
         this.companions[0].group.position.clone().add(new THREE.Vector3(0, 0.85, 0)),
@@ -2352,7 +2442,7 @@ export class Alchemy3DRenderer {
     cGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(120 * 6), 3));
     const cLines = new THREE.LineSegments(
       cGeo,
-      new THREE.LineBasicMaterial({ color: pal.accent, transparent: true, opacity: 0.65 })
+      new THREE.LineBasicMaterial({ color: pal.accent, transparent: true, opacity: 0.36 })
     );
     this.contactLines = cLines;
     pGroup.add(cLines);
@@ -2392,6 +2482,11 @@ export class Alchemy3DRenderer {
     this.residueMeshes = [];
     this.bondCylinders = [];
     this.proteinRibbonCurvePts = residues.map(() => new THREE.Vector3());
+    this.smoothResiduePos = residues.map(() => new THREE.Vector3());
+    this.lastRibbonSnapshotPos = residues.map(() => new THREE.Vector3(999, 999, 999));
+    this.proteinInitialized = false;
+    this.cachedSSCodes = [];
+    this.cachedSSEnergyKey = "";
     this.proteinChainLength = residues.length;
     this.lastRibbonUpdateMs = 0;
 
@@ -3632,77 +3727,150 @@ export class Alchemy3DRenderer {
       posAttr.needsUpdate = true;
     }
 
-    // Real 3D Ball-and-Stick Protein Folding Update (Angstroms -> 3D Scene Units)
+    // Real 3D Ball-and-Stick Protein Folding Update (Centroid-Normalized, Smoothly Damped, Zero Jitter)
     const displayResidues =
       this.showBestFold && snap.bestResidues.length === snap.residues.length
         ? snap.bestResidues
         : snap.residues;
-    if (this.proteinGroup && this.residueMeshes.length === displayResidues.length) {
-      this.proteinGroup.rotation.y = t * 0.48;
-      // Scale cleanly whether folding 10-aa Chignolin or 36-aa Villin HP36
-      const angstromScale = displayResidues.length > 26 ? 0.039 : displayResidues.length > 16 ? 0.05 : 0.062;
+    this.proteinMorphBoost = Math.max(0, this.proteinMorphBoost - dt * 1.15);
+    if (this.proteinGroup && this.residueMeshes.length === displayResidues.length && displayResidues.length > 0) {
+      // Serene museum orbit above the bottle neck
+      this.proteinGroup.rotation.y = t * 0.24;
+
+      // Compute centroid & bounding radius so the protein stays centered cleanly inside its glass halo
+      let cx = 0;
+      let cy = 0;
+      let cz = 0;
+      for (let i = 0; i < displayResidues.length; i++) {
+        cx += displayResidues[i].x;
+        cy += displayResidues[i].y;
+        cz += displayResidues[i].z;
+      }
+      cx /= displayResidues.length;
+      cy /= displayResidues.length;
+      cz /= displayResidues.length;
+
+      let maxDist = 1e-4;
+      for (let i = 0; i < displayResidues.length; i++) {
+        const d = Math.hypot(
+          displayResidues[i].x - cx,
+          displayResidues[i].y - cy,
+          displayResidues[i].z - cz
+        );
+        if (d > maxDist) maxDist = d;
+      }
+
+      const baseScale = displayResidues.length > 26 ? 0.038 : displayResidues.length > 16 ? 0.048 : 0.058;
+      const angstromScale = Math.min(baseScale, 0.43 / maxDist);
+
+      // Frame-rate-independent exponential smoothing prevents Monte Carlo jumps from twitching
+      const dampRate = (this.showBestFold ? 3.2 : 1.9) * (1 + this.proteinMorphBoost);
+      const lerpAlpha = 1 - Math.exp(-dt * dampRate);
 
       for (let i = 0; i < displayResidues.length; i++) {
         const r = displayResidues[i];
         const mesh = this.residueMeshes[i];
-        mesh.position.set(r.x * angstromScale, r.y * angstromScale, r.z * angstromScale);
-        const baseScale = r.aromatic ? 1.15 : r.hydrophobic ? 1.05 : 0.92;
+        const sp = this.smoothResiduePos[i];
+        this.tmpTarget.set(
+          (r.x - cx) * angstromScale,
+          (r.y - cy) * angstromScale,
+          (r.z - cz) * angstromScale
+        );
+
+        if (!this.proteinInitialized) {
+          sp.copy(this.tmpTarget);
+        } else {
+          sp.lerp(this.tmpTarget, lerpAlpha);
+        }
+
+        // Subtle calm molecular float (0.004 units) so the folded crystal feels gently buoyant, never erratic
+        const breath = this.staticPreview ? 0 : 0.004;
+        mesh.position.set(
+          sp.x + Math.sin(t * 1.15 + i * 0.42) * breath,
+          sp.y + Math.cos(t * 1.02 + i * 0.37) * breath,
+          sp.z + Math.sin(t * 0.92 + i * 0.51) * breath
+        );
+
+        const baseNodeScale = r.aromatic ? 1.15 : r.hydrophobic ? 1.05 : 0.92;
         const isSpotlit = this.highlightedResidueIdx === i;
-        mesh.scale.setScalar(isSpotlit ? baseScale * 1.75 : baseScale);
+        mesh.scale.setScalar(isSpotlit ? baseNodeScale * 1.75 : baseNodeScale);
         if (this.proteinRibbonCurvePts[i]) {
           this.proteinRibbonCurvePts[i].copy(mesh.position);
         }
       }
+      this.proteinInitialized = true;
 
       if (this.highlightHalo) {
         const hi = this.highlightedResidueIdx;
         if (hi !== null && hi >= 0 && hi < this.residueMeshes.length) {
           this.highlightHalo.visible = true;
           this.highlightHalo.position.copy(this.residueMeshes[hi].position);
-          const pulse = 0.28 + Math.sin(t * 7.5) * 0.05;
+          const pulse = 0.28 + Math.sin(t * 5.2) * 0.04;
           this.highlightHalo.scale.set(pulse, pulse, 1);
         } else {
           this.highlightHalo.visible = false;
         }
       }
 
-      // Leak-free smooth CatmullRom spline ribbon with live Mol* P-SEA secondary-structure vertex colors!
-      if (
-        this.proteinRibbonMesh &&
-        this.proteinRibbonCurvePts.length >= 4 &&
-        now - this.lastRibbonUpdateMs > 140
-      ) {
-        this.lastRibbonUpdateMs = now;
-        const curve = new THREE.CatmullRomCurve3(this.proteinRibbonCurvePts);
-        const tubularSegs = Math.min(72, this.proteinRibbonCurvePts.length * 3);
-        const radialSegs = 6;
-        const nextGeo = new THREE.TubeGeometry(curve, tubularSegs, 0.023, radialSegs, false);
-        const ssCodes = assignSecondaryStructurePSEA(displayResidues).codes;
-        const posCount = nextGeo.attributes.position.count;
-        const colArr = new Float32Array(posCount * 3);
-        const ringStride = radialSegs + 1;
-        for (let s = 0; s <= tubularSegs; s++) {
-          const rIdx = Math.min(
-            ssCodes.length - 1,
-            Math.round((s / Math.max(1, tubularSegs)) * (ssCodes.length - 1))
-          );
-          const code = ssCodes[rIdx];
-          // Mol* standard secondary structure palette: Helix = Rose Pink, Sheet = Warm Amber, Coil = Silver
-          const cr = code === "H" ? 0.96 : code === "E" ? 0.98 : 0.78;
-          const cg = code === "H" ? 0.45 : code === "E" ? 0.74 : 0.83;
-          const cb = code === "H" ? 0.71 : code === "E" ? 0.18 : 0.9;
-          for (let r = 0; r < ringStride; r++) {
-            const vi = (s * ringStride + r) * 3;
-            if (vi + 2 < colArr.length) {
-              colArr[vi] = cr;
-              colArr[vi + 1] = cg;
-              colArr[vi + 2] = cb;
-            }
+      // Leak-free centripetal CatmullRom spline ribbon — rebuilt only when residues actually move!
+      if (this.proteinRibbonMesh && this.proteinRibbonCurvePts.length >= 4) {
+        let maxMovedSq = 0;
+        for (let i = 0; i < this.proteinRibbonCurvePts.length; i++) {
+          const prevPt = this.lastRibbonSnapshotPos[i];
+          if (prevPt) {
+            const dSq = this.proteinRibbonCurvePts[i].distanceToSquared(prevPt);
+            if (dSq > maxMovedSq) maxMovedSq = dSq;
           }
         }
-        nextGeo.setAttribute("color", new THREE.BufferAttribute(colArr, 3));
-        this.proteinRibbonMesh.geometry.dispose();
-        this.proteinRibbonMesh.geometry = nextGeo;
+        const needRibbonRebuild =
+          this.lastRibbonUpdateMs === 0 ||
+          (maxMovedSq > 0.000018 && now - this.lastRibbonUpdateMs > 95);
+
+        if (needRibbonRebuild) {
+          this.lastRibbonUpdateMs = now;
+          for (let i = 0; i < this.proteinRibbonCurvePts.length; i++) {
+            this.lastRibbonSnapshotPos[i]?.copy(this.proteinRibbonCurvePts[i]);
+          }
+
+          const ssKey = this.showBestFold
+            ? `B:${displayResidues.length}:${snap.bestEnergy.toFixed(2)}:${snap.discoveries}`
+            : `L:${displayResidues.length}:${Math.floor(now / 650)}`;
+          if (ssKey !== this.cachedSSEnergyKey || this.cachedSSCodes.length !== displayResidues.length) {
+            this.cachedSSEnergyKey = ssKey;
+            this.cachedSSCodes = assignSecondaryStructurePSEA(displayResidues).codes;
+          }
+
+          const curve = new THREE.CatmullRomCurve3(this.proteinRibbonCurvePts, false, "centripetal", 0.5);
+          const tubularSegs = Math.min(84, this.proteinRibbonCurvePts.length * 4);
+          const radialSegs = 8;
+          const nextGeo = new THREE.TubeGeometry(curve, tubularSegs, 0.021, radialSegs, false);
+          const ssCodes = this.cachedSSCodes;
+          const posCount = nextGeo.attributes.position.count;
+          const colArr = new Float32Array(posCount * 3);
+          const ringStride = radialSegs + 1;
+          for (let s = 0; s <= tubularSegs; s++) {
+            const rIdx = Math.min(
+              ssCodes.length - 1,
+              Math.round((s / Math.max(1, tubularSegs)) * (ssCodes.length - 1))
+            );
+            const code = ssCodes[rIdx];
+            // Mol* standard secondary structure palette: Helix = Rose Pink, Sheet = Warm Amber, Coil = Silver
+            const cr = code === "H" ? 0.96 : code === "E" ? 0.98 : 0.78;
+            const cg = code === "H" ? 0.45 : code === "E" ? 0.74 : 0.83;
+            const cb = code === "H" ? 0.71 : code === "E" ? 0.18 : 0.9;
+            for (let r = 0; r < ringStride; r++) {
+              const vi = (s * ringStride + r) * 3;
+              if (vi + 2 < colArr.length) {
+                colArr[vi] = cr;
+                colArr[vi + 1] = cg;
+                colArr[vi + 2] = cb;
+              }
+            }
+          }
+          nextGeo.setAttribute("color", new THREE.BufferAttribute(colArr, 3));
+          this.proteinRibbonMesh.geometry.dispose();
+          this.proteinRibbonMesh.geometry = nextGeo;
+        }
       }
 
       // Orient real 3D cylindrical covalent bonds between sequential residues
@@ -3725,17 +3893,17 @@ export class Alchemy3DRenderer {
       if (this.contactLines) {
         const cPos = this.contactLines.geometry.getAttribute("position") as THREE.BufferAttribute;
         let ptr = 0;
-        for (let i = 0; i < snap.residues.length; i++) {
-          const ri = snap.residues[i];
+        for (let i = 0; i < displayResidues.length; i++) {
+          const ri = displayResidues[i];
           const a = this.residueMeshes[i].position;
-          for (let j = i + 3; j < snap.residues.length; j++) {
-            const rj = snap.residues[j];
+          for (let j = i + 3; j < displayResidues.length; j++) {
+            const rj = displayResidues[j];
             const isContactPair =
               (ri.hydrophobic && rj.hydrophobic) ||
               (ri.charge !== 0 && rj.charge !== 0 && ri.charge * rj.charge < 0);
             if (!isContactPair) continue;
             const b = this.residueMeshes[j].position;
-            if (a.distanceTo(b) < 0.36 && ptr < 116) {
+            if (a.distanceTo(b) < 0.34 && ptr < 116) {
               cPos.setXYZ(ptr * 2, a.x, a.y, a.z);
               cPos.setXYZ(ptr * 2 + 1, b.x, b.y, b.z);
               ptr++;
@@ -3747,11 +3915,11 @@ export class Alchemy3DRenderer {
       }
 
       if (this.workUnitRing) {
-        this.workUnitRing.scale.setScalar(0.96 + Math.sin(t * 3.5) * 0.02 + this.discoveryFlash * 0.16);
+        this.workUnitRing.scale.setScalar(0.98 + Math.sin(t * 1.8) * 0.01 + this.discoveryFlash * 0.06);
       }
       for (let g = 0; g < this.gyroRings.length; g++) {
-        this.gyroRings[g].rotation.x += dt * (g === 0 ? 0.65 : -0.5);
-        this.gyroRings[g].rotation.y += dt * (g === 0 ? 0.45 : -0.7);
+        this.gyroRings[g].rotation.x += dt * (g === 0 ? 0.26 : -0.2);
+        this.gyroRings[g].rotation.y += dt * (g === 0 ? 0.18 : -0.24);
       }
     }
 

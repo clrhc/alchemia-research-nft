@@ -17,7 +17,7 @@ import {
   VolumeX
 } from "lucide-react";
 import { ArtworkCanvas, type ArtworkCanvasHandle } from "./ArtworkCanvas";
-import { LabThumbnailSvg } from "./LabThumbnailSvg";
+import { LabPortrait } from "./LabPortrait";
 import type { AtmosphereMode, CameraPreset, LightingMood } from "../engine/alchemy3DRenderer";
 import { deriveTraitsFromSeed } from "../engine/prng";
 import {
@@ -552,19 +552,26 @@ export function ExploreView({
                   }
                 }}
               >
-                <div
-                  className="explore-swatch"
-                  style={{
-                    background: `radial-gradient(circle at 30% 25%, #ffffff 0%, ${traits.palette.bgBottom} 58%, ${traits.palette.liquidTop}44 100%)`
-                  }}
-                >
+                <div className="explore-swatch">
+                  <LabPortrait
+                    traits={traits}
+                    tier={tier}
+                    alt={`${traits.vessel} #${vessel.tokenId}`}
+                    request={{
+                      tokenId: vessel.tokenId,
+                      seed: vessel.seed,
+                      causeId: vessel.causeId,
+                      valueUsd: vessel.valueUsd,
+                      sectorsMask: vessel.sectorsMask,
+                      workUnits: vessel.workUnits,
+                      globalImpactEth: state.globalDonatedEth,
+                      totalSupply: state.totalSupply
+                    }}
+                  />
+
                   <div className="explore-swatch-top">
                     <span className="swatch-pill">#{vessel.tokenId}</span>
                     <span className="swatch-pill">${vessel.valueUsd}</span>
-                  </div>
-
-                  <div className="explore-thumb-stage">
-                    <LabThumbnailSvg traits={traits} tier={tier} sectorsMask={vessel.sectorsMask} />
                   </div>
 
                   <div className="explore-swatch-bottom">

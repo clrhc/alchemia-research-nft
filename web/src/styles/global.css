@@ -505,19 +505,29 @@ body {
   aspect-ratio: 1 / 1;
   border-radius: 20px;
   border: 1px solid rgba(148, 163, 184, 0.24);
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  padding: 12px;
+  background: radial-gradient(circle at 50% 42%, #ffffff 0%, #eef2f8 100%);
   overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .explore-swatch-top,
 .explore-swatch-bottom {
+  position: absolute;
+  left: 10px;
+  right: 10px;
   display: flex;
   justify-content: space-between;
   gap: 6px;
-  z-index: 2;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.explore-swatch-top {
+  top: 10px;
+}
+
+.explore-swatch-bottom {
+  bottom: 10px;
 }
 
 .swatch-pill {
@@ -526,9 +536,10 @@ body {
   gap: 4px;
   padding: 4px 10px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.95);
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.96);
+  box-shadow: 0 4px 12px -4px rgba(15, 23, 42, 0.12);
   font-family: var(--font-mono);
   font-size: 0.7rem;
   color: var(--ink-primary);
@@ -1711,19 +1722,43 @@ body {
   border-color: rgba(71, 85, 105, 0.45);
 }
 
-/* Gallery Miniature Architectural SVG Stage */
-.explore-thumb-stage {
-  flex: 1;
-  display: grid;
-  place-items: center;
-  padding: 2px 0;
+/* Gallery Full-Bleed 3D Studio Portrait & Isometric Fallback */
+.lab-portrait-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.explore-card:hover .lab-portrait-frame {
+  transform: scale(1.045);
 }
 
 .lab-thumb-svg {
   width: 100%;
-  max-width: 210px;
-  height: auto;
+  height: 100%;
   display: block;
+  object-fit: cover;
+}
+
+.lab-portrait-3d {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  animation: portraitReveal 0.36s ease-out both;
+}
+
+@keyframes portraitReveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* 2D Structural Biology Contact Map */

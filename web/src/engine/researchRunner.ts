@@ -19,13 +19,20 @@ export class ResearchComputeRunner {
     causeId: number,
     tokenId: number,
     onDiscovery?: (snap: ComputeSnapshot) => void,
-    onSnapshot?: (snap: ComputeSnapshot) => void
+    onSnapshot?: (snap: ComputeSnapshot) => void,
+    syncOnly = false
   ) {
     this.onDiscovery = onDiscovery;
     this.onSnapshot = onSnapshot;
 
     // Build an immediate initial snapshot synchronously so the 3D scene has residue coordinates on frame 0
     const bootstrap = new ResearchComputeEngine(seedHex, causeId, undefined, tokenId);
+    if (syncOnly) {
+      bootstrap.stepCompute(72);
+      this.latestSnapshot = bootstrap.getSnapshot();
+      this.fallback = bootstrap;
+      return;
+    }
     this.latestSnapshot = bootstrap.getSnapshot();
 
     if (typeof Worker !== "undefined") {
@@ -73,15 +80,17 @@ export class ResearchComputeRunner {
     }
   }
 
-  public reseed(seedHex: string, causeId: number, tokenId: number) {
+  public reseed(seedHex: string, causeId: number, tokenId: number, warmupSteps = 0) {
     if (this.worker) {
       this.inFlight = false;
       this.worker.postMessage({ type: "reseed", seedHex, causeId, tokenId });
       // Also update immediate local coords so 3D protein switches instantaneously
       const quick = new ResearchComputeEngine(seedHex, causeId, undefined, tokenId);
+      if (warmupSteps > 0) quick.stepCompute(warmupSteps);
       this.latestSnapshot = quick.getSnapshot();
     } else if (this.fallback) {
       this.fallback.reseed(seedHex, causeId, tokenId);
+      if (warmupSteps > 0) this.fallback.stepCompute(warmupSteps);
       this.latestSnapshot = this.fallback.getSnapshot();
     }
   }
