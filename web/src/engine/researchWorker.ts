@@ -8,7 +8,8 @@ type WorkerInMessage =
   | { type: "active"; active: boolean }
   | { type: "step"; iterations: number }
   | { type: "wiggle" }
-  | { type: "shake" };
+  | { type: "shake" }
+  | { type: "bury" };
 
 type WorkerOutMessage = {
   type: "snapshot";
@@ -75,6 +76,13 @@ self.onmessage = (event: MessageEvent<WorkerInMessage>) => {
     } satisfies WorkerOutMessage);
   } else if (msg.type === "shake") {
     const discovered = engine.shakePerturb();
+    self.postMessage({
+      type: "snapshot",
+      snapshot: engine.getSnapshot(),
+      discovered
+    } satisfies WorkerOutMessage);
+  } else if (msg.type === "bury") {
+    const discovered = engine.buryCore();
     self.postMessage({
       type: "snapshot",
       snapshot: engine.getSnapshot(),

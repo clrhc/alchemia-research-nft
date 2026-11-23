@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   PROTEIN_BENCHMARKS,
   ResearchComputeEngine,
-  buildPDBTextFromSnapshot
+  buildPDBTextFromSnapshot,
+  getDailyFoldingChallenge
 } from "../researchCompute";
 import {
   assignSecondaryStructurePSEA,
@@ -15,7 +16,9 @@ import {
   applyTamagotchiAction,
   companionBoostMultiplier,
   companionMoodLabel,
+  cycleCompanionAccessory,
   setCompanionPetName,
+  toggleCompanionSleep,
   type CompanionVitals
 } from "../tamagotchi";
 import { deriveTraitsFromSeed, normalizeSeed } from "../prng";
@@ -44,9 +47,10 @@ describe("Open-Science Protein Folding Engine (20-AA Kyte-Doolittle + 4-Replica 
     // Initial compact globule should already have physically reasonable Rg (not stretched off-frame!)
     expect(initialSnap.radiusOfGyration).toBeLessThan(15);
 
-    // Run 600 Monte Carlo + pivot + replica exchange steps + Foldit wiggle/shake
+    // Run 600 Monte Carlo + pivot + replica exchange steps + Foldit wiggle/shake/buryCore
     engine.stepCompute(600);
     engine.shakePerturb();
+    engine.buryCore();
     engine.wigglePolish();
     const afterSnap = engine.getSnapshot();
 
@@ -131,6 +135,15 @@ describe("Open-Science Protein Folding Engine (20-AA Kyte-Doolittle + 4-Replica 
     // All 17 mandatory _atom_site columns present per row
     expect(atomRows[0].split(/\s+/)).toHaveLength(17);
   });
+
+  it("generates a deterministic UTC daily folding challenge with realistic negative energy target", () => {
+    const c1 = getDailyFoldingChallenge(Date.parse("2026-11-23T08:00:00Z"));
+    const c2 = getDailyFoldingChallenge(Date.parse("2026-11-23T22:45:00Z"));
+    const cNext = getDailyFoldingChallenge(Date.parse("2026-11-24T01:00:00Z"));
+    expect(c1).toEqual(c2);
+    expect(c1.benchmarkIndex).not.toBe(cNext.benchmarkIndex);
+    expect(c1.targetEnergyKcal).toBeLessThan(0);
+  });
 });
 
 describe("Tamagotchi Vitals, Daily Streaks & Boost Multiplier", () => {
@@ -143,6 +156,8 @@ describe("Tamagotchi Vitals, Daily Streaks & Boost Multiplier", () => {
     dailyStreak: 1,
     lastCareDay: "2026-11-22",
     petName: "",
+    accessory: "auto",
+    sleeping: false,
     lastUpdatedMs: Date.parse("2026-11-22T12:00:00Z")
   };
 
@@ -152,6 +167,20 @@ describe("Tamagotchi Vitals, Daily Streaks & Boost Multiplier", () => {
     expect(decayed.mood).toBe(22);
     expect(decayed.curiosity).toBe(20);
     expect(companionMoodLabel(decayed)).toBe("Sleepy");
+  });
+
+  it("pauses vitals decay during nap mode and cycles 3D wardrobe styles cleanly", () => {
+    const napping = toggleCompanionSleep(baseVitals, Date.parse("2026-11-22T12:00:00Z"));
+    expect(napping.sleeping).toBe(true);
+    expect(companionMoodLabel(napping)).toBe("Napping");
+    const after24h = applyGentleDecay(napping, Date.parse("2026-11-23T12:00:00Z"));
+    expect(after24h.energy).toBe(60);
+    expect(after24h.mood).toBe(60);
+
+    const styled1 = cycleCompanionAccessory(napping);
+    const styled2 = cycleCompanionAccessory(styled1);
+    expect(styled1.accessory).toBe("bowtie");
+    expect(styled2.accessory).toBe("beret");
   });
 
   it("increments daily streak on consecutive day care and calculates 1.0x–1.4x lab boost", () => {

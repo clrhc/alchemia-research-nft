@@ -1995,6 +1995,36 @@ select:focus-visible,
   z-index: 2;
 }
 
+/* Foldit-Inspired Daily Folding Challenge Pill */
+.daily-fold-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-radius: 13px;
+  background: rgba(244, 247, 252, 0.82);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  font-size: 0.76rem;
+  color: var(--ink-secondary);
+}
+
+.daily-fold-bar.completed {
+  background: rgba(236, 253, 245, 0.85);
+  border-color: rgba(16, 185, 129, 0.34);
+  color: #065f46;
+}
+
+.daily-fold-bar strong {
+  color: var(--ink-primary);
+  font-weight: 600;
+}
+
+.daily-fold-bar.completed strong {
+  color: #047857;
+}
+
 @media (max-width: 900px) {
   .single-view-grid,
   .mylabs-grid {

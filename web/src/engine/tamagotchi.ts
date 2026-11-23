@@ -5,6 +5,28 @@
  * both in demo mode and while connected to Base Sepolia / Ethereum Mainnet.
  */
 
+export type PetAccessory = "auto" | "bowtie" | "beret" | "goggles" | "halo" | "crown" | "none";
+
+export const PET_ACCESSORY_ORDER: readonly PetAccessory[] = [
+  "auto",
+  "bowtie",
+  "beret",
+  "goggles",
+  "halo",
+  "crown",
+  "none"
+];
+
+export const PET_ACCESSORY_LABELS: Record<PetAccessory, string> = {
+  auto: "Auto",
+  bowtie: "Bowtie",
+  beret: "Beret",
+  goggles: "Goggles",
+  halo: "Halo",
+  crown: "Crown",
+  none: "Plain"
+};
+
 export interface CompanionVitals {
   energy: number; // 0..100 (Food)
   mood: number; // 0..100 (Happy)
@@ -14,6 +36,8 @@ export interface CompanionVitals {
   dailyStreak: number;
   lastCareDay: string; // YYYY-MM-DD
   petName: string;
+  accessory: PetAccessory;
+  sleeping: boolean;
   lastUpdatedMs: number;
 }
 
@@ -65,6 +89,8 @@ export function loadCompanionVitals(tokenId: number, nowMs = Date.now()): Compan
     dailyStreak: 1,
     lastCareDay: todayKey(nowMs),
     petName: "",
+    accessory: "auto",
+    sleeping: false,
     lastUpdatedMs: nowMs
   };
   if (typeof window === "undefined") return fallback;
@@ -99,6 +125,10 @@ export function saveCompanionVitals(tokenId: number, vitals: CompanionVitals) {
  * Gentle, cozy time decay (pets never die—they just get sleepy until you visit again).
  */
 export function applyGentleDecay(v: CompanionVitals, nowMs = Date.now()): CompanionVitals {
+  // Classic cozy Tamagotchi sleep: napping pauses vitals decay so your pet rests peacefully!
+  if (v.sleeping) {
+    return { ...v, lastUpdatedMs: nowMs };
+  }
   const hoursElapsed = Math.max(0, (nowMs - v.lastUpdatedMs) / 3600000);
   if (hoursElapsed < 0.01) return v;
 
@@ -117,6 +147,7 @@ export function applyTamagotchiAction(
   nowMs = Date.now()
 ): CompanionVitals {
   const next = applyGentleDecay(current, nowMs);
+  next.sleeping = false;
 
   if (action === "feed") {
     next.energy = Math.min(100, next.energy + 28);
@@ -150,6 +181,21 @@ export function setCompanionPetName(current: CompanionVitals, rawName: string): 
   return { ...current, petName: cleaned };
 }
 
+export function toggleCompanionSleep(current: CompanionVitals, nowMs = Date.now()): CompanionVitals {
+  const decayed = applyGentleDecay(current, nowMs);
+  return {
+    ...decayed,
+    sleeping: !decayed.sleeping,
+    lastUpdatedMs: nowMs
+  };
+}
+
+export function cycleCompanionAccessory(current: CompanionVitals): CompanionVitals {
+  const idx = PET_ACCESSORY_ORDER.indexOf(current.accessory || "auto");
+  const next = PET_ACCESSORY_ORDER[(idx + 1) % PET_ACCESSORY_ORDER.length];
+  return { ...current, accessory: next };
+}
+
 export function companionAverageScore(v: CompanionVitals): number {
   return Math.round((v.energy + v.mood + v.curiosity) / 3);
 }
@@ -161,6 +207,7 @@ export function companionBoostMultiplier(v: CompanionVitals): number {
 }
 
 export function companionMoodLabel(v: CompanionVitals): string {
+  if (v.sleeping) return "Napping";
   const avg = companionAverageScore(v);
   if (avg >= 85) return "Playful";
   if (avg >= 62) return "Happy";

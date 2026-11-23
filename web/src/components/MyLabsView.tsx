@@ -19,11 +19,14 @@ import {
   Heart,
   HeartHandshake,
   ListChecks,
+  Moon,
   Pencil,
   Pickaxe,
   ShieldCheck,
   Sparkles,
   Sun,
+  Tag,
+  Trophy,
   Volume2,
   VolumeX,
   Wallet
@@ -37,6 +40,7 @@ import {
   PROTEIN_BENCHMARKS,
   downloadPDBFromSnapshot,
   downloadScienceCertificateFromSnapshot,
+  getDailyFoldingChallenge,
   type ComputeSnapshot
 } from "../engine/researchCompute";
 import {
@@ -47,12 +51,15 @@ import {
 } from "../engine/structuralAnalysis";
 import { soundEngine } from "../engine/soundEngine";
 import {
+  PET_ACCESSORY_LABELS,
   applyTamagotchiAction,
   companionBoostMultiplier,
   companionMoodLabel,
+  cycleCompanionAccessory,
   loadCompanionVitals,
   saveCompanionVitals,
   setCompanionPetName,
+  toggleCompanionSleep,
   type CompanionVitals,
   type TamagotchiAction
 } from "../engine/tamagotchi";
@@ -193,9 +200,19 @@ export function MyLabsView({
   const [soundOn, setSoundOn] = useState(() => soundEngine.isEnabled());
   const [previewSectorId, setPreviewSectorId] = useState<number | null>(null);
   const [selectedBenchmark, setSelectedBenchmark] = useState<number | null>(null);
-  const [foldSignal, setFoldSignal] = useState<{ action: "wiggle" | "shake"; seq: number } | null>(
-    null
-  );
+  const [foldSignal, setFoldSignal] = useState<{
+    action: "wiggle" | "shake" | "bury";
+    seq: number;
+  } | null>(null);
+  const dailyChallenge = useMemo(() => getDailyFoldingChallenge(), []);
+  const [dailyDone, setDailyDone] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem("alchemia.daily.fold.v1") === dailyChallenge.dateKey;
+    } catch {
+      return false;
+    }
+  });
   const [showContactMap, setShowContactMap] = useState(false);
   const [highlightedResidueIdx, setHighlightedResidueIdx] = useState<number | null>(null);
   const [showGoals, setShowGoals] = useState(false);
@@ -261,6 +278,27 @@ export function MyLabsView({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  useEffect(() => {
+    if (
+      !dailyDone &&
+      liveSnap &&
+      liveSnap.benchmarkIndex === dailyChallenge.benchmarkIndex &&
+      liveSnap.bestEnergy <= dailyChallenge.targetEnergyKcal
+    ) {
+      setDailyDone(true);
+      try {
+        window.localStorage.setItem("alchemia.daily.fold.v1", dailyChallenge.dateKey);
+      } catch {
+        // ignore storage restrictions
+      }
+      onAwardPlayBonus(15);
+      soundEngine.playBuildRoom();
+      setFeedback(
+        `Finished today's ${dailyChallenge.shortName} folding goal (${liveSnap.bestEnergy.toFixed(1)} kcal/mol). +15 sparks.`
+      );
+    }
+  }, [dailyDone, liveSnap, dailyChallenge, onAwardPlayBonus]);
 
   const structuralStats = useMemo(() => {
     const coords = liveSnap?.bestResidues?.length ? liveSnap.bestResidues : liveSnap?.residues || [];
@@ -356,6 +394,26 @@ export function MyLabsView({
     saveCompanionVitals(selected.tokenId, next);
     setEditingPetName(false);
     soundEngine.playTap(1046.5);
+  };
+
+  const handleToggleSleep = () => {
+    const next = toggleCompanionSleep(vitals);
+    setVitals(next);
+    saveCompanionVitals(selected.tokenId, next);
+    soundEngine.playTap(next.sleeping ? 523.25 : 987.77);
+    setFeedback(
+      next.sleeping
+        ? `${petDisplayName} curled up for a nap. Care bars pause while resting.`
+        : `${petDisplayName} woke up refreshed and ready to help.`
+    );
+  };
+
+  const handleCycleStyle = () => {
+    const next = cycleCompanionAccessory(vitals);
+    setVitals(next);
+    saveCompanionVitals(selected.tokenId, next);
+    soundEngine.playTap(1174.66);
+    setFeedback(`Switched ${petDisplayName}'s style to ${PET_ACCESSORY_LABELS[next.accessory]}.`);
   };
 
   const cycleLighting = () => {
@@ -517,6 +575,8 @@ export function MyLabsView({
                 sectorsMask: selected.sectorsMask,
                 petLevel: vitals.level,
                 petMoodScore,
+                petAccessory: vitals.accessory,
+                petSleeping: vitals.sleeping,
                 workUnits: selected.workUnits,
                 tokenImpactEth: selected.impactEth,
                 causeImpactEth: state.causes[selected.causeId]?.raisedEth || 0,
@@ -678,6 +738,23 @@ export function MyLabsView({
               >
                 <Sparkles size={13} />
                 Play
+              </button>
+              <button
+                type="button"
+                className="subtle-pill-btn clickable"
+                onClick={handleToggleSleep}
+              >
+                {vitals.sleeping ? <Sun size={13} /> : <Moon size={13} />}
+                {vitals.sleeping ? "Wake" : "Nap"}
+              </button>
+              <button
+                type="button"
+                className="subtle-pill-btn clickable"
+                onClick={handleCycleStyle}
+                title="Try on 3D pet accessories"
+              >
+                <Tag size={13} />
+                {PET_ACCESSORY_LABELS[vitals.accessory || "auto"]}
               </button>
             </div>
 
@@ -860,6 +937,34 @@ export function MyLabsView({
                   {PROTEIN_BENCHMARKS[liveSnap.benchmarkIndex]?.humanSummary}
                 </p>
 
+                <div className={`daily-fold-bar ${dailyDone ? "completed" : ""}`}>
+                  <span>
+                    <Trophy size={12} style={{ verticalAlign: "-2px", marginRight: 5 }} />
+                    {dailyDone ? (
+                      <>
+                        Today&apos;s fold done: <strong>{dailyChallenge.shortName}</strong> (+15 sparks)
+                      </>
+                    ) : (
+                      <>
+                        Today&apos;s fold: <strong>{dailyChallenge.shortName}</strong> · reach{" "}
+                        <strong>{dailyChallenge.targetEnergyKcal} kcal/mol</strong>
+                      </>
+                    )}
+                  </span>
+                  {!dailyDone && liveSnap.benchmarkIndex !== dailyChallenge.benchmarkIndex && (
+                    <button
+                      type="button"
+                      className="sector-btn eth clickable"
+                      onClick={() => {
+                        setSelectedBenchmark(dailyChallenge.benchmarkIndex);
+                        soundEngine.playTap(987.77);
+                      }}
+                    >
+                      Try today&apos;s fold
+                    </button>
+                  )}
+                </div>
+
                 <div className="science-metrics-row">
                   <div className="science-metric">
                     <span>Best energy</span>
@@ -941,6 +1046,19 @@ export function MyLabsView({
                     }}
                   >
                     Shake
+                  </button>
+                  <button
+                    type="button"
+                    className="sector-btn eth clickable"
+                    onClick={() => {
+                      setFoldSignal((prev) => ({ action: "bury", seq: (prev?.seq || 0) + 1 }));
+                      onAwardPlayBonus(1);
+                      markGoalDone("fold");
+                      setFeedback("Pulled hydrophobic residues inward toward the core. +1 spark.");
+                    }}
+                    title="Foldit-style core compaction pulling hydrophobic amino acids inward"
+                  >
+                    Bury core
                   </button>
                   <button
                     type="button"

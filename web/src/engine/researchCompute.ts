@@ -573,6 +573,45 @@ export class ResearchComputeEngine {
     return this.wigglePolish();
   }
 
+  /**
+   * Foldit-inspired Hydrophobic Core Compaction ("Bury Core"):
+   * Gently draws hydrophobic residues inward toward the protein core and
+   * nudges polar/charged residues outward toward solvent, then relaxes steric clashes.
+   */
+  public buryCore(): boolean {
+    if (this.replicas.length === 0) return false;
+    const cold = this.replicas[0];
+    const chain = cold.residues;
+    this.recenterChain(chain);
+
+    const saved = chain.map((r) => ({ x: r.x, y: r.y, z: r.z }));
+    for (const r of chain) {
+      const dist = Math.hypot(r.x, r.y, r.z);
+      if (dist < 0.4) continue;
+      // Hydrophobic residues pull 11% inward; polar/charged drift 5% outward
+      const factor = r.hydrophobic ? 0.89 : r.charge !== 0 ? 1.05 : 1.02;
+      r.x *= factor;
+      r.y *= factor;
+      r.z *= factor;
+    }
+    this.recenterChain(chain);
+    cold.energy = this.evaluateProteinEnergy(chain);
+    const improved = this.wigglePolish();
+
+    // If compaction caused a net clash worse than +6 kcal/mol, gently blend back
+    if (cold.energy > this.bestEnergy + 6) {
+      for (let i = 0; i < chain.length; i++) {
+        chain[i].x = (chain[i].x + saved[i].x) * 0.5;
+        chain[i].y = (chain[i].y + saved[i].y) * 0.5;
+        chain[i].z = (chain[i].z + saved[i].z) * 0.5;
+      }
+      this.recenterChain(chain);
+      cold.energy = this.evaluateProteinEnergy(chain);
+      return this.wigglePolish() || improved;
+    }
+    return improved;
+  }
+
   private recenterChain(chain: ResidueNode[]) {
     let mx = 0;
     let my = 0;
@@ -1038,6 +1077,33 @@ export function downloadPDBFromSnapshot(snap: ComputeSnapshot) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+export interface DailyFoldingChallenge {
+  dateKey: string;
+  benchmarkIndex: number;
+  pdbId: string;
+  shortName: string;
+  targetEnergyKcal: number;
+}
+
+/**
+ * Deterministic UTC daily citizen-science protein folding puzzle (Foldit-style).
+ */
+export function getDailyFoldingChallenge(nowMs = Date.now()): DailyFoldingChallenge {
+  const dateKey = new Date(nowMs).toISOString().slice(0, 10);
+  const dayNum = Math.floor(Date.parse(`${dateKey}T00:00:00Z`) / 86400000);
+  const idx = ((dayNum % PROTEIN_BENCHMARKS.length) + PROTEIN_BENCHMARKS.length) % PROTEIN_BENCHMARKS.length;
+  const bench = PROTEIN_BENCHMARKS[idx];
+  // Scale realistic thermodynamic goal to sequence length (e.g. -8 kcal/mol for 10-aa, -32 for 36-aa)
+  const targetEnergyKcal = -Math.round(bench.sequence.length * 0.85);
+  return {
+    dateKey,
+    benchmarkIndex: idx,
+    pdbId: bench.pdbId,
+    shortName: bench.shortName,
+    targetEnergyKcal
+  };
 }
 
 export function downloadScienceCertificateFromSnapshot(

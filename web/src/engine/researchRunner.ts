@@ -97,13 +97,17 @@ export class ResearchComputeRunner {
     }
   }
 
-  public triggerFoldAction(action: "wiggle" | "shake") {
+  public triggerFoldAction(action: "wiggle" | "shake" | "bury") {
     if (this.worker) {
       this.inFlight = false;
       this.worker.postMessage({ type: action });
     } else if (this.fallback) {
       const discovered =
-        action === "wiggle" ? this.fallback.wigglePolish() : this.fallback.shakePerturb();
+        action === "wiggle"
+          ? this.fallback.wigglePolish()
+          : action === "bury"
+            ? this.fallback.buryCore()
+            : this.fallback.shakePerturb();
       this.latestSnapshot = this.fallback.getSnapshot();
       this.onSnapshot?.(this.latestSnapshot);
       if (discovered) this.onDiscovery?.(this.latestSnapshot);

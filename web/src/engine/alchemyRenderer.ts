@@ -12,6 +12,8 @@ export interface LiveImpactState {
   sectorsMask?: number;    // 6-bit mask of Sims-style built 3D architectural lab wings
   petLevel?: number;       // Tamagotchi care level unlocking cozy lab accessories
   petMoodScore?: number;   // 0..100 average vitals for sleepy zzz / energetic AI
+  petAccessory?: string;   // "auto" | "bowtie" | "beret" | "goggles" | "halo" | "crown" | "none"
+  petSleeping?: boolean;   // Cozy nap mode pausing vitals decay + zzz animation
   workUnits?: number;      // Verified protein folding rounds unlocking milestone halo
   tokenImpactEth: number;
   causeImpactEth: number;

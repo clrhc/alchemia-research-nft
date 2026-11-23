@@ -26,7 +26,7 @@ interface ArtworkCanvasProps {
   atmosphereMode?: AtmosphereMode;
   highlightedResidueIdx?: number | null;
   benchmarkIndex?: number | null;
-  foldSignal?: { action: "wiggle" | "shake"; seq: number } | null;
+  foldSignal?: { action: "wiggle" | "shake" | "bury"; seq: number } | null;
   onComputeSnapshot?: (snap: ComputeSnapshot) => void;
   onInteractiveEvent?: (ev: InteractiveEvent) => void;
   onPulseClick?: () => void;
@@ -107,6 +107,8 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
     impact.sectorsMask,
     impact.petLevel,
     impact.petMoodScore,
+    impact.petAccessory,
+    impact.petSleeping,
     impact.workUnits,
     impact.tokenImpactEth,
     impact.causeImpactEth,

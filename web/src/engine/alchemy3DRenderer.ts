@@ -410,12 +410,13 @@ export class Alchemy3DRenderer {
     this.triggerCatalyticPulse(0.7);
   }
 
-  public triggerFoldAction(action: "wiggle" | "shake") {
+  public triggerFoldAction(action: "wiggle" | "shake" | "bury") {
     this.compute.triggerFoldAction(action);
     this.discoveryFlash = 1.0;
-    this.excitement = Math.min(1.5, this.excitement + (action === "shake" ? 0.75 : 0.45));
-    this.spawnBurst(new THREE.Vector3(0, 3.06, 0), action === "shake" ? 14 : 9);
+    this.excitement = Math.min(1.5, this.excitement + (action === "shake" ? 0.75 : 0.48));
+    this.spawnBurst(new THREE.Vector3(0, 3.06, 0), action === "shake" ? 14 : 10);
     if (action === "shake") soundEngine.playProtonPop(2);
+    else if (action === "bury") soundEngine.playProtonPop(4);
     else soundEngine.playTap(1318.51);
   }
 
@@ -757,7 +758,162 @@ export class Alchemy3DRenderer {
   private getAccessoryRank(): number {
     const petLvl = this.impact.petLevel ?? 1;
     const wus = this.impact.workUnits ?? 0;
-    return (petLvl >= 2 ? 1 : 0) + (wus >= 10 ? 2 : 0);
+    const accMap: Record<string, number> = {
+      auto: 0,
+      bowtie: 1,
+      beret: 2,
+      goggles: 3,
+      halo: 4,
+      crown: 5,
+      none: 6
+    };
+    const accCode = accMap[this.impact.petAccessory || "auto"] ?? 0;
+    return accCode * 8 + (petLvl >= 2 ? 1 : 0) + (wus >= 10 ? 2 : 0);
+  }
+
+  private addPetWardrobe3D(
+    head: THREE.Group,
+    bodyGroup: THREE.Group,
+    collarY: number,
+    isDog: boolean,
+    variant: string
+  ) {
+    const pal = this.traits.palette;
+    const acc = this.impact.petAccessory || "auto";
+    if (acc === "none") return;
+
+    const showHalo =
+      acc === "halo" ||
+      (acc === "auto" &&
+        (!isDog
+          ? variant === "siamese-cat" ||
+            this.traits.sub.companionAccessory === "halo" ||
+            (this.impact.workUnits ?? 0) >= 10
+          : (this.impact.workUnits ?? 0) >= 10));
+
+    const showGoggles =
+      acc === "goggles" ||
+      (acc === "auto" &&
+        (isDog
+          ? variant === "shiba-dog" ||
+            this.traits.sub.companionAccessory === "goggles" ||
+            (this.impact.petLevel ?? 1) >= 2
+          : (this.impact.petLevel ?? 1) >= 2));
+
+    const showCrown =
+      acc === "crown" ||
+      (acc === "auto" &&
+        ((this.impact.sectorsMask ?? 0) === 0b111111 || (this.impact.complexityTier || 1) >= 5));
+
+    const showBowtie = acc === "bowtie";
+    const showBeret = acc === "beret";
+
+    if (showHalo) {
+      const halo = new THREE.Mesh(
+        new THREE.TorusGeometry(0.16, 0.014, 10, 32),
+        new THREE.MeshStandardMaterial({
+          color: pal.accent,
+          emissive: pal.accent,
+          emissiveIntensity: 0.9,
+          metalness: 0.78
+        })
+      );
+      halo.rotation.x = Math.PI / 2;
+      halo.position.y = 0.36;
+      head.add(halo);
+    }
+
+    if (showGoggles) {
+      if (isDog) {
+        const strap = new THREE.Mesh(
+          new THREE.TorusGeometry(0.205, 0.015, 8, 32),
+          new THREE.MeshStandardMaterial({ color: "#475569", roughness: 0.38 })
+        );
+        strap.rotation.x = Math.PI / 2 - 0.35;
+        strap.position.set(0, 0.11, 0.02);
+        head.add(strap);
+      }
+      const rimMat = new THREE.MeshStandardMaterial({
+        color: "#cbd5e1",
+        metalness: 0.88,
+        roughness: 0.18
+      });
+      const lensMat = new THREE.MeshPhysicalMaterial({
+        color: pal.liquidTop,
+        emissive: pal.electron,
+        emissiveIntensity: 0.38,
+        roughness: 0.07,
+        transmission: 0.6,
+        transparent: true
+      });
+      for (const side of [-1, 1]) {
+        const gRim = new THREE.Mesh(
+          new THREE.TorusGeometry(isDog ? 0.062 : 0.056, 0.011, 10, 24),
+          rimMat
+        );
+        gRim.position.set(side * (isDog ? 0.075 : 0.072), isDog ? 0.15 : 0.145, 0.174);
+        gRim.rotation.x = -0.34;
+        head.add(gRim);
+        const lens = new THREE.Mesh(new THREE.CircleGeometry(isDog ? 0.055 : 0.05, 18), lensMat);
+        lens.position.copy(gRim.position);
+        lens.rotation.copy(gRim.rotation);
+        head.add(lens);
+      }
+    }
+
+    if (showCrown) {
+      const crown = new THREE.Mesh(
+        new THREE.TorusGeometry(0.112, 0.015, 10, 24),
+        new THREE.MeshStandardMaterial({
+          color: "#f8e7b5",
+          emissive: "#f59e0b",
+          emissiveIntensity: 0.35,
+          metalness: 0.92,
+          roughness: 0.14
+        })
+      );
+      crown.rotation.x = Math.PI / 2;
+      crown.position.y = 0.325;
+      head.add(crown);
+    }
+
+    if (showBowtie) {
+      const silkMat = new THREE.MeshStandardMaterial({
+        color: "#f472b6",
+        emissive: "#ec4899",
+        emissiveIntensity: 0.18,
+        roughness: 0.32,
+        metalness: 0.15
+      });
+      const knot = new THREE.Mesh(new THREE.SphereGeometry(0.032, 12, 12), silkMat);
+      knot.position.set(0, collarY - 0.01, 0.21);
+      bodyGroup.add(knot);
+      for (const side of [-1, 1]) {
+        const wing = new THREE.Mesh(new THREE.ConeGeometry(0.052, 0.11, 10), silkMat);
+        wing.position.set(side * 0.064, collarY - 0.01, 0.205);
+        wing.rotation.z = side * (Math.PI / 2);
+        wing.scale.set(1, 1, 0.45);
+        bodyGroup.add(wing);
+      }
+    }
+
+    if (showBeret) {
+      const feltMat = new THREE.MeshStandardMaterial({
+        color: "#334155",
+        roughness: 0.65,
+        metalness: 0.08
+      });
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.18, 22, 14), feltMat);
+      cap.scale.set(1.18, 0.38, 1.12);
+      cap.position.set(0.03, 0.23, -0.01);
+      cap.rotation.z = -0.22;
+      cap.castShadow = true;
+      head.add(cap);
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.014, 0.055, 8), feltMat);
+      stem.position.set(0.045, 0.305, -0.01);
+      stem.rotation.z = -0.22;
+      head.add(stem);
+    }
   }
 
   public updateState(next: Partial<LiveImpactState>) {
@@ -2504,62 +2660,7 @@ export class Alchemy3DRenderer {
     nose.position.set(0, -0.04, 0.22);
     head.add(nose);
 
-    if (
-      variant === "siamese-cat" ||
-      this.traits.sub.companionAccessory === "halo" ||
-      (this.impact.workUnits ?? 0) >= 10
-    ) {
-      const halo = new THREE.Mesh(
-        new THREE.TorusGeometry(0.16, 0.014, 10, 32),
-        new THREE.MeshStandardMaterial({
-          color: pal.accent,
-          emissive: pal.accent,
-          emissiveIntensity: 0.9,
-          metalness: 0.78
-        })
-      );
-      halo.rotation.x = Math.PI / 2;
-      halo.position.y = 0.36;
-      head.add(halo);
-    }
-
-    if ((this.impact.petLevel ?? 1) >= 2) {
-      const rimMat = new THREE.MeshStandardMaterial({ color: "#cbd5e1", metalness: 0.88, roughness: 0.18 });
-      const lensMat = new THREE.MeshPhysicalMaterial({
-        color: pal.liquidTop,
-        emissive: pal.electron,
-        emissiveIntensity: 0.35,
-        roughness: 0.08,
-        transmission: 0.62,
-        transparent: true
-      });
-      for (const side of [-1, 1]) {
-        const gRim = new THREE.Mesh(new THREE.TorusGeometry(0.056, 0.01, 10, 22), rimMat);
-        gRim.position.set(side * 0.072, 0.145, 0.17);
-        gRim.rotation.x = -0.32;
-        head.add(gRim);
-        const lens = new THREE.Mesh(new THREE.CircleGeometry(0.05, 18), lensMat);
-        lens.position.copy(gRim.position);
-        lens.rotation.copy(gRim.rotation);
-        head.add(lens);
-      }
-    }
-
-    if ((this.impact.sectorsMask ?? 0) === 0b111111 || (this.impact.complexityTier || 1) >= 5) {
-      const crown = new THREE.Mesh(
-        new THREE.TorusGeometry(0.11, 0.015, 10, 24),
-        new THREE.MeshStandardMaterial({
-          color: "#f8e7b5",
-          emissive: "#f59e0b",
-          emissiveIntensity: 0.35,
-          metalness: 0.92,
-          roughness: 0.14
-        })
-      );
-      crown.rotation.x = Math.PI / 2;
-      crown.position.y = 0.32;
-      head.add(crown);
-    }
+    this.addPetWardrobe3D(head, group, 0.46, false, variant);
 
     group.add(head);
     this.dynamicGroup.add(group);
@@ -2688,55 +2789,7 @@ export class Alchemy3DRenderer {
       eyes.push(eye);
     }
 
-    if (
-      variant === "shiba-dog" ||
-      this.traits.sub.companionAccessory === "goggles" ||
-      (this.impact.petLevel ?? 1) >= 2
-    ) {
-      const strap = new THREE.Mesh(
-        new THREE.TorusGeometry(0.205, 0.015, 8, 32),
-        new THREE.MeshStandardMaterial({ color: "#475569", roughness: 0.38 })
-      );
-      strap.rotation.x = Math.PI / 2 - 0.35;
-      strap.position.set(0, 0.11, 0.02);
-      head.add(strap);
-
-      const lensMat = new THREE.MeshPhysicalMaterial({
-        color: pal.liquidTop,
-        emissive: pal.electron,
-        emissiveIntensity: 0.4,
-        roughness: 0.06,
-        transmission: 0.58,
-        transparent: true
-      });
-      const rimMat = new THREE.MeshStandardMaterial({ color: "#cbd5e1", metalness: 0.88, roughness: 0.18 });
-      for (const side of [-1, 1]) {
-        const gRim = new THREE.Mesh(new THREE.TorusGeometry(0.062, 0.012, 10, 24), rimMat);
-        gRim.position.set(side * 0.075, 0.15, 0.175);
-        gRim.rotation.x = -0.35;
-        head.add(gRim);
-        const lens = new THREE.Mesh(new THREE.CircleGeometry(0.056, 20), lensMat);
-        lens.position.copy(gRim.position);
-        lens.rotation.copy(gRim.rotation);
-        head.add(lens);
-      }
-    }
-
-    if ((this.impact.sectorsMask ?? 0) === 0b111111 || (this.impact.complexityTier || 1) >= 5) {
-      const crown = new THREE.Mesh(
-        new THREE.TorusGeometry(0.115, 0.015, 10, 24),
-        new THREE.MeshStandardMaterial({
-          color: "#f8e7b5",
-          emissive: "#f59e0b",
-          emissiveIntensity: 0.35,
-          metalness: 0.92,
-          roughness: 0.14
-        })
-      );
-      crown.rotation.x = Math.PI / 2;
-      crown.position.y = 0.33;
-      head.add(crown);
-    }
+    this.addPetWardrobe3D(head, group, collar.position.y, true, variant);
 
     group.add(head);
     this.dynamicGroup.add(group);
@@ -3668,10 +3721,11 @@ export class Alchemy3DRenderer {
     const activeTreat = this.treats.find((tr) => !tr.eaten) || null;
     const hasPetLounge = Boolean((this.impact.sectorsMask ?? 0) & (1 << 3));
     const isSleepy =
-      (this.impact.petMoodScore ?? 80) < 48 &&
-      this.excitement < 0.08 &&
-      !this.toyBall &&
-      !activeTreat;
+      Boolean(this.impact.petSleeping) ||
+      ((this.impact.petMoodScore ?? 80) < 48 &&
+        this.excitement < 0.08 &&
+        !this.toyBall &&
+        !activeTreat);
 
     for (let ci = 0; ci < this.companions.length; ci++) {
       const c = this.companions[ci];
@@ -3773,8 +3827,12 @@ export class Alchemy3DRenderer {
           ? Math.abs(Math.sin(t * 9.5)) * 0.12 * Math.max(this.excitement, c.petReaction)
           : 0;
       c.group.position.y = c.baseY + Math.max(walkBounce, happyHop);
-      c.head.rotation.z = Math.sin(t * 1.6) * 0.08 + Math.sin(t * 11) * c.petReaction * 0.09;
-      c.head.rotation.x = Math.sin(t * 1.1) * 0.05 - 0.07 - this.discoveryFlash * 0.22;
+      c.head.rotation.z = isSleepy
+        ? 0.18 + Math.sin(t * 0.8) * 0.04
+        : Math.sin(t * 1.6) * 0.08 + Math.sin(t * 11) * c.petReaction * 0.09;
+      c.head.rotation.x = isSleepy
+        ? 0.24
+        : Math.sin(t * 1.1) * 0.05 - 0.07 - this.discoveryFlash * 0.22;
 
       if (c.isDog) {
         c.tail.rotation.z =
