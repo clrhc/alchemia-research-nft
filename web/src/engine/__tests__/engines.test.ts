@@ -5,6 +5,11 @@ import {
   buildPDBTextFromSnapshot
 } from "../researchCompute";
 import {
+  assignSecondaryStructurePSEA,
+  buildMMCIFTextFromSnapshot,
+  computeContactMap
+} from "../structuralAnalysis";
+import {
   applyGentleDecay,
   applyTamagotchiAction,
   companionBoostMultiplier,
@@ -35,17 +40,23 @@ describe("Open-Science Protein Folding Engine (20-AA Kyte-Doolittle + 4-Replica 
     );
     const initialSnap = engine.getSnapshot();
     const initialBest = initialSnap.bestEnergy;
+    // Initial compact globule should already have physically reasonable Rg (not stretched off-frame!)
+    expect(initialSnap.radiusOfGyration).toBeLessThan(15);
 
-    // Run 600 Monte Carlo + pivot + replica exchange steps
+    // Run 600 Monte Carlo + pivot + replica exchange steps + Foldit wiggle/shake
     engine.stepCompute(600);
+    engine.shakePerturb();
+    engine.wigglePolish();
     const afterSnap = engine.getSnapshot();
 
-    expect(afterSnap.totalOps).toBe(600);
+    expect(afterSnap.totalOps).toBeGreaterThanOrEqual(600);
     expect(afterSnap.workUnitsCompleted).toBeGreaterThanOrEqual(1);
     expect(afterSnap.bestEnergy).toBeLessThanOrEqual(initialBest);
-    expect(afterSnap.radiusOfGyration).toBeGreaterThan(1.5);
+    // Physically realistic negative folding free energy & native-range compactness!
+    expect(afterSnap.bestEnergy).toBeLessThan(0);
+    expect(afterSnap.radiusOfGyration).toBeGreaterThan(3.5);
+    expect(afterSnap.compactnessMatchPct).toBeGreaterThanOrEqual(60);
     expect(afterSnap.endToEndDistance).toBeGreaterThan(0);
-    expect(afterSnap.compactnessMatchPct).toBeGreaterThanOrEqual(12);
     expect(afterSnap.compactnessMatchPct).toBeLessThanOrEqual(100);
   });
 
@@ -83,6 +94,37 @@ describe("Open-Science Protein Folding Engine (20-AA Kyte-Doolittle + 4-Replica 
       // Columns 77-78: right-justified carbon element " C"
       expect(line.slice(76, 78)).toBe(" C");
     }
+  });
+
+  it("computes P-SEA secondary structure, 2D residue contacts, and valid wwPDB mmCIF (.cif) exports", () => {
+    const engine = new ResearchComputeEngine(
+      "0x8a4f91e023c47b89d01f4e5276b98c31456fa234890bcdef1234567890ab0100",
+      0,
+      undefined,
+      7
+    );
+    engine.stepCompute(400);
+    const snap = engine.getSnapshot();
+
+    const ss = assignSecondaryStructurePSEA(snap.bestResidues);
+    expect(ss.codes).toHaveLength(snap.bestResidues.length);
+    expect(ss.helixPct + ss.sheetPct + ss.coilPct).toBe(100);
+
+    const contacts = computeContactMap(snap.bestResidues);
+    expect(Array.isArray(contacts)).toBe(true);
+    for (const c of contacts) {
+      expect(c.j - c.i).toBeGreaterThanOrEqual(3);
+      expect(c.distanceAngstrom).toBeLessThanOrEqual(7.8);
+    }
+
+    const cif = buildMMCIFTextFromSnapshot(snap);
+    expect(cif).toContain("data_ALCH_7_");
+    expect(cif).toContain("loop_");
+    expect(cif).toContain("_atom_site.Cartn_x");
+    const atomRows = cif.split("\n").filter((l) => l.startsWith("ATOM "));
+    expect(atomRows).toHaveLength(snap.bestResidues.length);
+    // All 17 mandatory _atom_site columns present per row
+    expect(atomRows[0].split(/\s+/)).toHaveLength(17);
   });
 });
 

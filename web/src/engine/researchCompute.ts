@@ -401,21 +401,65 @@ export class ResearchComputeEngine {
     const bench = PROTEIN_BENCHMARKS[this.benchmarkIndex] || PROTEIN_BENCHMARKS[0];
     const seq = bench.sequence;
     const bondLen = 3.8; // Experimental Cα–Cα peptide spacing in Angstroms
+    const targetSpan = bench.nativeRgAngstrom * 1.4;
     const chain: ResidueNode[] = [];
-
-    let cx = 0;
-    let cy = 0;
-    let cz = 0;
-    let theta = this.rand() * Math.PI * 2;
-    let phi = 0.85;
 
     for (let i = 0; i < seq.length; i++) {
       const code1 = seq[i];
       const info = AA_TABLE[code1] || AA_TABLE.G;
+      if (i === 0) {
+        chain.push({
+          x: 0,
+          y: 0,
+          z: 0,
+          hydrophobic: info.hydrophobic,
+          hydropathy: info.hydropathy,
+          charge: info.charge,
+          aromatic: info.aromatic,
+          label: info.code3,
+          code1
+        });
+        continue;
+      }
+
+      const prev = chain[i - 1];
+      let bestX = prev.x + bondLen;
+      let bestY = prev.y;
+      let bestZ = prev.z;
+      let bestScore = Infinity;
+
+      // Self-avoiding Monte Carlo placement: pick a clash-free Cα bond vector (>= 4.4 Å from non-neighbors)
+      for (let attempt = 0; attempt < 28; attempt++) {
+        const u = this.rand() * 2 - 1;
+        const az = this.rand() * Math.PI * 2;
+        const s = Math.sqrt(Math.max(0, 1 - u * u));
+        const cx = prev.x + s * Math.cos(az) * bondLen;
+        const cy = prev.y + u * bondLen;
+        const cz = prev.z + s * Math.sin(az) * bondLen;
+
+        let minNonNeighborSq = Infinity;
+        for (let j = 0; j < i - 1; j++) {
+          const o = chain[j];
+          const dSq = (cx - o.x) ** 2 + (cy - o.y) ** 2 + (cz - o.z) ** 2;
+          if (dSq < minNonNeighborSq) minNonNeighborSq = dSq;
+        }
+        const distOrigin = Math.hypot(cx, cy, cz);
+        const clashPenalty = minNonNeighborSq < 19.36 ? (19.36 - minNonNeighborSq) * 18 : 0; // 4.4 Å min spacing
+        const radiusPenalty = Math.abs(distOrigin - targetSpan) * 0.45;
+        const score = clashPenalty + radiusPenalty;
+        if (score < bestScore) {
+          bestScore = score;
+          bestX = cx;
+          bestY = cy;
+          bestZ = cz;
+          if (clashPenalty === 0 && radiusPenalty < 1.2) break;
+        }
+      }
+
       chain.push({
-        x: cx,
-        y: cy,
-        z: cz,
+        x: bestX,
+        y: bestY,
+        z: bestZ,
         hydrophobic: info.hydrophobic,
         hydropathy: info.hydropathy,
         charge: info.charge,
@@ -423,13 +467,6 @@ export class ResearchComputeEngine {
         label: info.code3,
         code1
       });
-
-      // Slight helical twist initialization
-      theta += 0.92 + (this.rand() - 0.5) * 1.1;
-      phi = Math.max(0.45, Math.min(Math.PI - 0.45, phi + (this.rand() - 0.5) * 0.72));
-      cx += Math.sin(phi) * Math.cos(theta) * bondLen;
-      cy += Math.cos(phi) * bondLen;
-      cz += Math.sin(phi) * Math.sin(theta) * bondLen;
     }
 
     this.recenterChain(chain);
@@ -443,6 +480,12 @@ export class ResearchComputeEngine {
       return { temperature: temp, residues, energy };
     });
 
+    // Quick initial relaxation (48 steps) so frame 0 opens on a physically plausible pre-folded globule
+    const wasActive = this.active;
+    this.active = true;
+    this.stepCompute(48);
+    this.active = wasActive;
+
     // Pick lowest-energy replica as starting best conformation
     let bestRep = this.replicas[0];
     for (const rep of this.replicas) {
@@ -455,6 +498,70 @@ export class ResearchComputeEngine {
     const bench = PROTEIN_BENCHMARKS[this.benchmarkIndex] || PROTEIN_BENCHMARKS[0];
     this.lastDiscoveryLabel = `${bench.pdbId} · Folding ${bench.sequence.length} residues`;
     void this.refreshSha256Proof();
+  }
+
+  /**
+   * Foldit-inspired "Wiggle" steepest-descent energy polish on the cold replica.
+   */
+  public wigglePolish(): boolean {
+    if (this.replicas.length === 0) return false;
+    const cold = this.replicas[0];
+    const chain = cold.residues;
+    const n = chain.length;
+    const bench = PROTEIN_BENCHMARKS[this.benchmarkIndex] || PROTEIN_BENCHMARKS[0];
+    const nowFn = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+    let improved = false;
+
+    for (let s = 0; s < 96; s++) {
+      const idx = s % n;
+      const node = chain[idx];
+      const ox = node.x;
+      const oy = node.y;
+      const oz = node.z;
+      const step = 0.24 * (1 - s / 120);
+      node.x += (this.rand() - 0.5) * step;
+      node.y += (this.rand() - 0.5) * step;
+      node.z += (this.rand() - 0.5) * step;
+      const cand = this.evaluateProteinEnergy(chain);
+      if (cand < cold.energy) {
+        cold.energy = cand;
+        this.checkBestDiscovery(cold, bench, nowFn, () => {
+          improved = true;
+        });
+      } else {
+        node.x = ox;
+        node.y = oy;
+        node.z = oz;
+      }
+      this.totalOps++;
+    }
+    this.recenterChain(chain);
+    this.energyHistory.push(cold.energy);
+    if (this.energyHistory.length > 48) this.energyHistory.shift();
+    if (improved && this.onDiscoveryCallback) this.onDiscoveryCallback(this.getSnapshot());
+    return improved;
+  }
+
+  /**
+   * Foldit-inspired "Shake" perturbation to kick a protein out of a local energy knot.
+   */
+  public shakePerturb(): boolean {
+    if (this.replicas.length === 0) return false;
+    const cold = this.replicas[0];
+    const chain = cold.residues;
+    if (chain.length > 4) {
+      this.attemptPivotMove(chain, 0.85);
+      this.attemptPivotMove(chain, 0.65);
+    }
+    for (const r of chain) {
+      r.x += (this.rand() - 0.5) * 0.65;
+      r.y += (this.rand() - 0.5) * 0.65;
+      r.z += (this.rand() - 0.5) * 0.65;
+    }
+    this.recenterChain(chain);
+    cold.energy = this.evaluateProteinEnergy(chain);
+    // Immediately follow shake with a light relaxation pass
+    return this.wigglePolish();
   }
 
   private recenterChain(chain: ResidueNode[]) {
@@ -536,20 +643,20 @@ export class ResearchComputeEngine {
   public evaluateProteinEnergy(chain: ResidueNode[]): number {
     const n = chain.length;
     const idealBond = 3.8;
-    const sigma = 4.6;
-    const sigmaSq = sigma * sigma;
+    const rMin = 5.4; // Equilibrium Cα–Cα non-bonded contact distance in folded proteins (~5.4 Å)
+    const bench = PROTEIN_BENCHMARKS[this.benchmarkIndex] || PROTEIN_BENCHMARKS[0];
     let energy = 0;
 
-    // 1. Harmonic Cα–Cα covalent bond constraint
+    // 1. Harmonic Cα–Cα covalent peptide bond restraint (3.8 Å)
     for (let i = 0; i < n - 1; i++) {
       const a = chain[i];
       const b = chain[i + 1];
       const d = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
       const diff = d - idealBond;
-      energy += 7.5 * diff * diff;
+      energy += 8.0 * diff * diff;
     }
 
-    // 2. Virtual backbone bending potential (natural Cα–Cα–Cα angle ~90°–125°)
+    // 2. Virtual backbone bending potential (natural Cα–Cα–Cα angle ~95°–120°)
     for (let i = 1; i < n - 1; i++) {
       const p = chain[i - 1];
       const c = chain[i];
@@ -563,12 +670,11 @@ export class ResearchComputeEngine {
       const m1 = Math.hypot(v1x, v1y, v1z) || 1;
       const m2 = Math.hypot(v2x, v2y, v2z) || 1;
       const cosTheta = Math.max(-1, Math.min(1, (v1x * v2x + v1y * v2y + v1z * v2z) / (m1 * m2)));
-      // Ideal virtual bond cosine ~0.18 (slightly curved backbone)
-      const bendDiff = cosTheta - 0.18;
-      energy += 0.9 * bendDiff * bendDiff;
+      const bendDiff = cosTheta - 0.14;
+      energy += 0.85 * bendDiff * bendDiff;
     }
 
-    // 3. Pairwise non-bonded contacts (hydropathy + salt bridges + aromatics + i,i+3 H-bond)
+    // 3. Pairwise non-bonded contacts: excluded volume + Miyazawa-Jernigan/Kyte-Doolittle well + salt bridges
     for (let i = 0; i < n; i++) {
       const a = chain[i];
       for (let j = i + 2; j < n; j++) {
@@ -576,35 +682,49 @@ export class ResearchComputeEngine {
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const dz = b.z - a.z;
-        const distSq = Math.max(9.0, dx * dx + dy * dy + dz * dz);
+        const dist = Math.hypot(dx, dy, dz);
 
-        const invR2 = sigmaSq / distSq;
-        const invR6 = invR2 * invR2 * invR2;
-        const invR12 = invR6 * invR6;
-
-        // Continuous Kyte-Doolittle pair affinity normalized to [-0.45, +1.35]
-        const hA = (a.hydropathy + 4.5) / 9.0; // 0..1
-        const hB = (b.hydropathy + 4.5) / 9.0; // 0..1
-        let eps = -0.3 + 1.65 * (hA * hB);
-
-        // Aromatic pi-stacking (W/Y/F core stabilization, e.g., Trp6 in 1L2Y!)
-        if (a.aromatic && b.aromatic) eps += 0.65;
-
-        // Local i, i+3 alpha-helical backbone hydrogen-bond favorability (~5.4 Å)
-        if (j === i + 3 && a.code1 !== "P" && b.code1 !== "P") {
-          const dist = Math.sqrt(distSq);
-          const hbDiff = dist - 5.4;
-          energy -= 0.45 * Math.exp(-hbDiff * hbDiff * 0.6);
+        // Steric excluded volume below 4.1 Å (prevents unnatural atomic overlap)
+        if (dist < 4.1) {
+          const overlap = 4.1 - dist;
+          energy += 9.5 * overlap * overlap;
         }
 
-        energy += 2.2 * (invR12 - eps * invR6);
+        // Local i, i+3 alpha-helical backbone hydrogen-bond stabilization (~5.3 Å Cα–Cα)
+        if (j === i + 3 && a.code1 !== "P" && b.code1 !== "P") {
+          const hbDiff = dist - 5.3;
+          energy -= 1.25 * Math.exp(-hbDiff * hbDiff * 0.55);
+        }
 
-        // Screened electrostatic salt bridge (Debye-Hückel length ~8 Å)
-        if (a.charge !== 0 && b.charge !== 0) {
-          const dist = Math.sqrt(distSq);
-          energy += (1.8 * a.charge * b.charge * Math.exp(-dist / 8.0)) / (dist * 0.32);
+        // Smooth Gaussian-Mie contact well for non-local residue pairs (|i-j| >= 3)
+        if (j >= i + 3 && dist < 11.5) {
+          const hA = (a.hydropathy + 4.5) / 9.0; // 0..1
+          const hB = (b.hydropathy + 4.5) / 9.0; // 0..1
+          let wellDepth = 0.25 + 1.45 * (hA * hB);
+          if (a.aromatic && b.aromatic) wellDepth += 0.95;
+
+          const dWell = dist - rMin;
+          energy -= wellDepth * Math.exp(-dWell * dWell * 0.18);
+
+          // Screened Debye-Hückel electrostatic salt bridge (K/R with D/E)
+          if (a.charge !== 0 && b.charge !== 0) {
+            const safeD = Math.max(4.0, dist);
+            energy += (2.4 * a.charge * b.charge * Math.exp(-safeD / 7.5)) / (safeD * 0.25);
+          }
         }
       }
+    }
+
+    // 4. Gentle hydrophobic-collapse / solvent-pressure envelope around physical globular density
+    let sumSq = 0;
+    for (const r of chain) sumSq += r.x * r.x + r.y * r.y + r.z * r.z;
+    const rg = Math.sqrt(sumSq / Math.max(1, n));
+    if (rg < bench.nativeRgAngstrom * 0.72) {
+      const diff = bench.nativeRgAngstrom * 0.72 - rg;
+      energy += 4.5 * diff * diff;
+    } else if (rg > bench.nativeRgAngstrom * 1.45) {
+      const diff = rg - bench.nativeRgAngstrom * 1.45;
+      energy += 1.4 * diff * diff;
     }
 
     return energy;

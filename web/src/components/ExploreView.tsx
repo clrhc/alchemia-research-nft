@@ -7,7 +7,6 @@ import {
   Coins,
   Download,
   FileJson,
-  FlaskConical,
   Link2,
   Search,
   Sun,
@@ -15,6 +14,7 @@ import {
   VolumeX
 } from "lucide-react";
 import { ArtworkCanvas } from "./ArtworkCanvas";
+import { LabThumbnailSvg } from "./LabThumbnailSvg";
 import type { CameraPreset, LightingMood } from "../engine/alchemy3DRenderer";
 import { deriveTraitsFromSeed } from "../engine/prng";
 import {
@@ -22,6 +22,7 @@ import {
   downloadScienceCertificateFromSnapshot,
   type ComputeSnapshot
 } from "../engine/researchCompute";
+import { downloadMMCIFFromSnapshot } from "../engine/structuralAnalysis";
 import { soundEngine } from "../engine/soundEngine";
 import { complexityTierFromUsd } from "../web3/config";
 import {
@@ -196,7 +197,9 @@ export function ExploreView({
                   setTapNote(
                     ev.kind === "pet-clicked"
                       ? "Your tap made the pet happy."
-                      : "You popped a floating proton."
+                      : ev.combo && ev.combo > 1
+                        ? `Proton combo x${ev.combo}.`
+                        : "You popped a floating proton."
                   );
                 }}
                 impact={{
@@ -325,11 +328,29 @@ export function ExploreView({
                   <button
                     type="button"
                     className="subtle-pill-btn clickable"
+                    onClick={() => downloadMMCIFFromSnapshot(liveCompute)}
+                  >
+                    <Download size={13} />
+                    .CIF
+                  </button>
+                  <button
+                    type="button"
+                    className="subtle-pill-btn clickable"
                     onClick={() => downloadScienceCertificateFromSnapshot(liveCompute)}
                   >
                     <FileJson size={13} />
                     .JSON
                   </button>
+                  <a
+                    href={`https://www.rcsb.org/structure/${liveCompute.pdbBenchmarkId}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="subtle-pill-btn clickable"
+                    style={{ textDecoration: "none" }}
+                  >
+                    RCSB {liveCompute.pdbBenchmarkId}
+                    <ArrowUpRight size={12} />
+                  </a>
                 </div>
               )}
             </div>
@@ -425,19 +446,8 @@ export function ExploreView({
                     <span className="swatch-pill">${vessel.valueUsd}</span>
                   </div>
 
-                  <div className="explore-orb-visual" aria-hidden="true">
-                    <div
-                      className="explore-orb-ring"
-                      style={{ borderColor: traits.palette.liquidMid + "66" }}
-                    />
-                    <div
-                      className="explore-orb-core"
-                      style={{
-                        background: `linear-gradient(135deg, ${traits.palette.liquidTop}, ${traits.palette.liquidMid})`
-                      }}
-                    >
-                      <FlaskConical size={22} color="#ffffff" />
-                    </div>
+                  <div className="explore-thumb-stage">
+                    <LabThumbnailSvg traits={traits} tier={tier} sectorsMask={vessel.sectorsMask} />
                   </div>
 
                   <div className="explore-swatch-bottom">

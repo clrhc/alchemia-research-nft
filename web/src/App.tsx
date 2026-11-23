@@ -28,6 +28,7 @@ import {
   executeOnChainDonateCoins,
   executeOnChainMint,
   executeOnChainSubmitResearchProof,
+  executeOnChainUpgradeVessel,
   fetchOnChainCollectionSnapshot,
   loadInitialCollectionState,
   saveDemoState,
@@ -355,6 +356,48 @@ export function App() {
     setBgPulseSignal((n) => n + 1);
   };
 
+  const handleUpgradeVessel = async (vessel: MintedVessel, addedUsd: number) => {
+    const addedEth = usdToEth(addedUsd);
+    if (state.contractAddress && vessel.ownedByUser) {
+      if (!state.walletAddress) {
+        const { address, chainId } = await connectInjectedWallet();
+        setState((prev) => ({ ...prev, walletAddress: address, chainId }));
+      }
+      await executeOnChainUpgradeVessel({
+        contractAddress: state.contractAddress,
+        tokenId: vessel.tokenId,
+        addedEth
+      });
+    }
+
+    awardSparks(25);
+    setState((prev) => {
+      const split = applySplitToState(prev, addedEth);
+      const nextVessels = prev.vessels.map((v) =>
+        v.tokenId === vessel.tokenId
+          ? {
+              ...v,
+              valueUsd: v.valueUsd + addedUsd,
+              impactEth: Number((v.impactEth + split.researchAdded).toFixed(6))
+            }
+          : v
+      );
+      const next: CollectionState = {
+        ...prev,
+        globalDonatedEth: split.nextGlobal,
+        liquidityReserveEth: split.nextReserve,
+        liquiditySeeded: split.nextSeeded,
+        reactionStage: stageFromEth(split.nextGlobal),
+        vessels: nextVessels
+      };
+      saveDemoState(next);
+      broadcastUpdate(next, vessel.tokenId, vessel.valueUsd + addedUsd, vessel.sectorsMask);
+      return next;
+    });
+    setLastPulseAt(Date.now());
+    setBgPulseSignal((n) => n + 1);
+  };
+
   const handleBuildSector = async (
     vessel: MintedVessel,
     sectorId: number,
@@ -656,6 +699,7 @@ export function App() {
             activeTokenId={myLabTokenId}
             onSelectTokenId={setMyLabTokenId}
             onBuildSector={handleBuildSector}
+            onUpgradeVessel={handleUpgradeVessel}
             onClaimCoins={handleClaimCoins}
             onDonateCoins={handleDonateCoins}
             onAnchorProof={handleAnchorProof}

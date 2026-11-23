@@ -36,6 +36,16 @@ export interface MintedVessel {
   txHash?: string;
 }
 
+export interface ResearchDiscoveryLog {
+  tokenId: number;
+  contributor: string;
+  proofHash: string;
+  bestEnergy: number;
+  addedWorkUnits: number;
+  txHash: string;
+  blockNumber: number;
+}
+
 export interface CollectionState {
   connectedMode: "mainnet" | "sepolia" | "local" | "simulation";
   chainId: number;
@@ -52,10 +62,12 @@ export interface CollectionState {
   liquidityThresholdEth: number;
   liquiditySeeded: boolean;
   userCoinBalance: number;
+  coinTotalSupply: number;
   totalCoinsDonatedToResearch: number;
   reactionStage: number;
   causes: ResearchCauseInfo[];
   vessels: MintedVessel[];
+  recentDiscoveries: ResearchDiscoveryLog[];
 }
 
 const DEMO_STORAGE_KEY = "alchemia_ecosystem_v2";
@@ -156,10 +168,12 @@ export function loadInitialCollectionState(): CollectionState {
     liquidityThresholdEth: 1.0,
     liquiditySeeded: false,
     userCoinBalance: 320,
+    coinTotalSupply: 48200,
     totalCoinsDonatedToResearch: 4820,
     reactionStage: stageFromEth(defaultTotal),
     causes: DEFAULT_CAUSES.map((c) => ({ ...c })),
-    vessels: createInitialDemoVessels()
+    vessels: createInitialDemoVessels(),
+    recentDiscoveries: []
   };
 
   if (!CONTRACT_ADDRESS && typeof window !== "undefined") {
@@ -414,10 +428,49 @@ export async function fetchOnChainCollectionSnapshot(
   );
 
   let userCoinBalance = 0;
-  if (walletAddress && ethers.isAddress(walletAddress) && ethers.isAddress(String(coinAddr))) {
+  let coinTotalSupply = 0;
+  let directCoinDonations = 0;
+  if (ethers.isAddress(String(coinAddr))) {
     const coin = new Contract(String(coinAddr), ALCHEMIA_COIN_ABI, provider);
-    const rawBal = await coin.balanceOf(walletAddress);
-    userCoinBalance = Number(ethers.formatEther(rawBal));
+    const [rawSup, rawDirect] = await Promise.all([
+      coin.totalSupply(),
+      coin.totalDonatedToResearch()
+    ]);
+    coinTotalSupply = Number(ethers.formatEther(rawSup));
+    directCoinDonations = Number(ethers.formatEther(rawDirect));
+    if (walletAddress && ethers.isAddress(walletAddress)) {
+      const rawBal = await coin.balanceOf(walletAddress);
+      userCoinBalance = Number(ethers.formatEther(rawBal));
+    }
+  }
+
+  // Fetch recent on-chain ResearchDiscoveryAnchored logs cleanly (best-effort)
+  let recentDiscoveries: ResearchDiscoveryLog[] = [];
+  try {
+    const latestBlock = await provider.getBlockNumber();
+    const fromBlock = Math.max(0, latestBlock - 45000);
+    const logs = await contract.queryFilter(
+      contract.filters.ResearchDiscoveryAnchored(),
+      fromBlock,
+      latestBlock
+    );
+    recentDiscoveries = logs
+      .slice(-8)
+      .reverse()
+      .map((log) => {
+        const parsed = contract.interface.parseLog(log);
+        return {
+          tokenId: Number(parsed?.args?.tokenId || 0),
+          contributor: String(parsed?.args?.contributor || ""),
+          proofHash: String(parsed?.args?.proofHash || ""),
+          bestEnergy: Number(parsed?.args?.bestEnergyMicro || 0n) / 1e6,
+          addedWorkUnits: Number(parsed?.args?.addedWorkUnits || 0),
+          txHash: log.transactionHash,
+          blockNumber: log.blockNumber
+        };
+      });
+  } catch {
+    // Public RPC log range limits are non-fatal
   }
 
   return {
@@ -434,10 +487,13 @@ export async function fetchOnChainCollectionSnapshot(
     liquidityThresholdEth: Number(ethers.formatEther(liquidityThresholdWei)),
     liquiditySeeded: Boolean(liquiditySeeded),
     userCoinBalance,
-    totalCoinsDonatedToResearch: Number(ethers.formatEther(totalCoinsTithed)),
+    coinTotalSupply,
+    totalCoinsDonatedToResearch:
+      Number(ethers.formatEther(totalCoinsTithed)) + directCoinDonations,
     reactionStage: Number(reactionStage),
     causes,
-    vessels
+    vessels,
+    recentDiscoveries
   };
 }
 
@@ -504,6 +560,24 @@ export async function executeOnChainMint(params: {
     }
   }
   return { txHash: tx.hash, tokenId: mintedTokenId, seed: mintedSeed };
+}
+
+export async function executeOnChainUpgradeVessel(params: {
+  contractAddress: string;
+  tokenId: number;
+  addedEth: number;
+}): Promise<string> {
+  const eth = getSelectedProvider();
+  if (!eth) throw new Error("Ethereum wallet not connected");
+
+  const provider = new BrowserProvider(eth);
+  const signer = await provider.getSigner();
+  const contract = new Contract(params.contractAddress, ALCHEMIA_ABI, signer);
+  const tx = await contract.upgradeVessel(params.tokenId, {
+    value: ethers.parseEther(params.addedEth.toFixed(6))
+  });
+  await tx.wait();
+  return tx.hash;
 }
 
 export async function executeOnChainBuildSector(params: {

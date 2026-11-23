@@ -19,6 +19,7 @@ interface ArtworkCanvasProps {
   previewSectorId?: number | null;
   lightingMood?: LightingMood;
   benchmarkIndex?: number | null;
+  foldSignal?: { action: "wiggle" | "shake"; seq: number } | null;
   onComputeSnapshot?: (snap: ComputeSnapshot) => void;
   onInteractiveEvent?: (ev: InteractiveEvent) => void;
   onPulseClick?: () => void;
@@ -33,6 +34,7 @@ export function ArtworkCanvas({
   previewSectorId = null,
   lightingMood = "daylight",
   benchmarkIndex = null,
+  foldSignal = null,
   onComputeSnapshot,
   onInteractiveEvent,
   onPulseClick
@@ -121,6 +123,12 @@ export function ArtworkCanvas({
     }
   }, [benchmarkIndex]);
 
+  useEffect(() => {
+    if (foldSignal && foldSignal.seq > 0) {
+      rendererRef.current?.triggerFoldAction(foldSignal.action);
+    }
+  }, [foldSignal]);
+
   const toggleCompute = (e: React.MouseEvent) => {
     e.stopPropagation();
     const nextActive = !(computeSnap?.active ?? true);
@@ -157,7 +165,9 @@ export function ArtworkCanvas({
               <Cpu size={11} />
               {computeSnap?.active === false
                 ? "Paused"
-                : `${computeSnap?.pdbBenchmarkId || "1L2Y"} · ${computeSnap?.discoveries ?? 0} folds`}
+                : `${computeSnap?.pdbBenchmarkId || "1L2Y"} · ${computeSnap?.discoveries ?? 0} ${
+                    computeSnap?.discoveries === 1 ? "fold" : "folds"
+                  }`}
               {computeSnap?.active === false ? <Play size={10} /> : <Pause size={10} />}
             </button>
 

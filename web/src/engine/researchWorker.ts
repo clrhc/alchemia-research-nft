@@ -6,7 +6,9 @@ type WorkerInMessage =
   | { type: "reseed"; seedHex: string; causeId: number; tokenId: number }
   | { type: "benchmark"; benchmarkIndex: number }
   | { type: "active"; active: boolean }
-  | { type: "step"; iterations: number };
+  | { type: "step"; iterations: number }
+  | { type: "wiggle" }
+  | { type: "shake" };
 
 type WorkerOutMessage = {
   type: "snapshot";
@@ -59,6 +61,20 @@ self.onmessage = (event: MessageEvent<WorkerInMessage>) => {
     } satisfies WorkerOutMessage);
   } else if (msg.type === "step") {
     const discovered = engine.stepCompute(msg.iterations);
+    self.postMessage({
+      type: "snapshot",
+      snapshot: engine.getSnapshot(),
+      discovered
+    } satisfies WorkerOutMessage);
+  } else if (msg.type === "wiggle") {
+    const discovered = engine.wigglePolish();
+    self.postMessage({
+      type: "snapshot",
+      snapshot: engine.getSnapshot(),
+      discovered
+    } satisfies WorkerOutMessage);
+  } else if (msg.type === "shake") {
+    const discovered = engine.shakePerturb();
     self.postMessage({
       type: "snapshot",
       snapshot: engine.getSnapshot(),

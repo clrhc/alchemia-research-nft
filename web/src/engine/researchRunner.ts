@@ -97,6 +97,19 @@ export class ResearchComputeRunner {
     }
   }
 
+  public triggerFoldAction(action: "wiggle" | "shake") {
+    if (this.worker) {
+      this.inFlight = false;
+      this.worker.postMessage({ type: action });
+    } else if (this.fallback) {
+      const discovered =
+        action === "wiggle" ? this.fallback.wigglePolish() : this.fallback.shakePerturb();
+      this.latestSnapshot = this.fallback.getSnapshot();
+      this.onSnapshot?.(this.latestSnapshot);
+      if (discovered) this.onDiscovery?.(this.latestSnapshot);
+    }
+  }
+
   public requestStep(iterations: number) {
     if (!this.active) return;
     if (this.worker) {

@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  ArrowUpCircle,
   ArrowUpRight,
   Award,
   Building2,
@@ -10,6 +11,7 @@ import {
   Download,
   FileJson,
   Flame,
+  Grid2x2,
   Heart,
   HeartHandshake,
   Pencil,
@@ -22,6 +24,7 @@ import {
   Wallet
 } from "lucide-react";
 import { ArtworkCanvas } from "./ArtworkCanvas";
+import { ContactMapSvg } from "./ContactMapSvg";
 import type { CameraPreset, LightingMood } from "../engine/alchemy3DRenderer";
 import { deriveTraitsFromSeed } from "../engine/prng";
 import {
@@ -30,6 +33,11 @@ import {
   downloadScienceCertificateFromSnapshot,
   type ComputeSnapshot
 } from "../engine/researchCompute";
+import {
+  assignSecondaryStructurePSEA,
+  computeContactMap,
+  downloadMMCIFFromSnapshot
+} from "../engine/structuralAnalysis";
 import { soundEngine } from "../engine/soundEngine";
 import {
   applyTamagotchiAction,
@@ -61,6 +69,7 @@ interface MyLabsViewProps {
   activeTokenId: number | null;
   onSelectTokenId: (tokenId: number) => void;
   onBuildSector: (vessel: MintedVessel, sectorId: number, payWithCoins: boolean) => Promise<void>;
+  onUpgradeVessel: (vessel: MintedVessel, addedUsd: number) => Promise<void>;
   onClaimCoins: (vessel: MintedVessel, amount: number, researchTithePct: number) => Promise<void>;
   onDonateCoins: (vessel: MintedVessel, amount: number) => Promise<void>;
   onAnchorProof: (vessel: MintedVessel, snap: ComputeSnapshot) => Promise<void>;
@@ -124,6 +133,7 @@ export function MyLabsView({
   activeTokenId,
   onSelectTokenId,
   onBuildSector,
+  onUpgradeVessel,
   onClaimCoins,
   onDonateCoins,
   onAnchorProof,
@@ -146,6 +156,10 @@ export function MyLabsView({
   const [soundOn, setSoundOn] = useState(() => soundEngine.isEnabled());
   const [previewSectorId, setPreviewSectorId] = useState<number | null>(null);
   const [selectedBenchmark, setSelectedBenchmark] = useState<number | null>(null);
+  const [foldSignal, setFoldSignal] = useState<{ action: "wiggle" | "shake"; seq: number } | null>(
+    null
+  );
+  const [showContactMap, setShowContactMap] = useState(false);
   const [editingPetName, setEditingPetName] = useState(false);
   const [petNameDraft, setPetNameDraft] = useState("");
   const [vitals, setVitals] = useState<CompanionVitals>(() =>
@@ -171,6 +185,15 @@ export function MyLabsView({
     const id = window.setInterval(() => setNowTick(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
+
+  const structuralStats = useMemo(() => {
+    const coords = liveSnap?.bestResidues?.length ? liveSnap.bestResidues : liveSnap?.residues || [];
+    if (coords.length < 4) return null;
+    return {
+      ss: assignSecondaryStructurePSEA(coords),
+      contacts: computeContactMap(coords)
+    };
+  }, [liveSnap]);
 
   if (!selected) {
     return (
@@ -352,6 +375,7 @@ export function MyLabsView({
               lightingMood={lightingMood}
               previewSectorId={previewSectorId}
               benchmarkIndex={selectedBenchmark}
+              foldSignal={foldSignal}
               tamagotchiSignal={tamaSignal}
               onComputeSnapshot={setLiveSnap}
               onInteractiveEvent={(ev) => {
@@ -363,7 +387,11 @@ export function MyLabsView({
                   setFeedback(`Petted ${petDisplayName} in 3D. +${ev.bonusCoins} spark.`);
                 } else {
                   onAwardPlayBonus(ev.bonusCoins);
-                  setFeedback(`Popped a floating proton. +${ev.bonusCoins} sparks.`);
+                  setFeedback(
+                    ev.combo && ev.combo > 1
+                      ? `Proton combo x${ev.combo}. +${ev.bonusCoins} sparks.`
+                      : `Popped a floating proton. +${ev.bonusCoins} sparks.`
+                  );
                 }
               }}
               impact={{
@@ -674,18 +702,64 @@ export function MyLabsView({
                   <EnergySparkline history={liveSnap.energyHistory} />
                   <div className="sparkline-meta">
                     <span>{liveSnap.opsPerSecond.toLocaleString()} steps/s</span>
-                    <span>{liveSnap.replicaSwaps} swaps · {liveSnap.workUnitsCompleted} rounds</span>
+                    {structuralStats ? (
+                      <span>
+                        Helix {structuralStats.ss.helixPct}% · Sheet {structuralStats.ss.sheetPct}% ·{" "}
+                        {liveSnap.replicaSwaps} swaps
+                      </span>
+                    ) : (
+                      <span>
+                        {liveSnap.replicaSwaps} swaps · {liveSnap.workUnitsCompleted} rounds
+                      </span>
+                    )}
                   </div>
                 </div>
 
+                {showContactMap && structuralStats && (
+                  <ContactMapSvg
+                    residueCount={liveSnap.sequenceCode.length}
+                    contacts={structuralStats.contacts}
+                  />
+                )}
+
                 <div className="mining-buttons">
+                  <button
+                    type="button"
+                    className="sector-btn clickable"
+                    onClick={() => {
+                      setFoldSignal((prev) => ({ action: "wiggle", seq: (prev?.seq || 0) + 1 }));
+                      onAwardPlayBonus(1);
+                      setFeedback("Wiggled protein backbone to lower energy. +1 spark.");
+                    }}
+                  >
+                    Wiggle
+                  </button>
+                  <button
+                    type="button"
+                    className="sector-btn eth clickable"
+                    onClick={() => {
+                      setFoldSignal((prev) => ({ action: "shake", seq: (prev?.seq || 0) + 1 }));
+                      onAwardPlayBonus(1);
+                      setFeedback("Shook protein chain to explore a fresh fold. +1 spark.");
+                    }}
+                  >
+                    Shake
+                  </button>
                   <button
                     type="button"
                     className="subtle-pill-btn clickable"
                     onClick={() => downloadPDBFromSnapshot(liveSnap)}
                   >
                     <Download size={13} />
-                    Download .PDB
+                    .PDB
+                  </button>
+                  <button
+                    type="button"
+                    className="subtle-pill-btn clickable"
+                    onClick={() => downloadMMCIFFromSnapshot(liveSnap)}
+                  >
+                    <Download size={13} />
+                    .CIF
                   </button>
                   <button
                     type="button"
@@ -693,8 +767,26 @@ export function MyLabsView({
                     onClick={() => downloadScienceCertificateFromSnapshot(liveSnap)}
                   >
                     <FileJson size={13} />
-                    .JSON Proof
+                    .JSON
                   </button>
+                  <button
+                    type="button"
+                    className="subtle-pill-btn clickable"
+                    onClick={() => setShowContactMap((v) => !v)}
+                  >
+                    <Grid2x2 size={13} />
+                    {showContactMap ? "Hide map" : "Contact map"}
+                  </button>
+                  <a
+                    href={`https://www.rcsb.org/structure/${liveSnap.pdbBenchmarkId}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="subtle-pill-btn clickable"
+                    style={{ textDecoration: "none" }}
+                  >
+                    RCSB
+                    <ArrowUpRight size={12} />
+                  </a>
                   <button
                     type="button"
                     className="subtle-pill-btn clickable"
@@ -726,7 +818,37 @@ export function MyLabsView({
               <h3>
                 <Building2 size={16} /> Build new rooms
               </h3>
-              <span>{builtCount} of 6 built · hover to preview</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span>{builtCount} of 6 built</span>
+                {tier < 5 && (
+                  <button
+                    type="button"
+                    className="sector-btn eth clickable"
+                    onClick={async () => {
+                      const nextTargetUsd = tier === 1 ? 5 : tier === 2 ? 25 : tier === 3 ? 100 : 500;
+                      const delta = Math.max(1, nextTargetUsd - selected.valueUsd);
+                      try {
+                        await onUpgradeVessel(selected, delta);
+                        soundEngine.playBuildRoom();
+                        setFeedback(
+                          `Upgraded Lab #${selected.tokenId} to Level ${tier + 1} (+$${delta}).`
+                        );
+                      } catch (err) {
+                        setFeedback(err instanceof Error ? err.message : "Upgrade cancelled.");
+                      }
+                    }}
+                  >
+                    <ArrowUpCircle size={11} style={{ verticalAlign: "-1px", marginRight: 4 }} />
+                    Level {tier + 1} (+$
+                    {Math.max(
+                      1,
+                      (tier === 1 ? 5 : tier === 2 ? 25 : tier === 3 ? 100 : 500) -
+                        selected.valueUsd
+                    )}
+                    )
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="sector-grid">

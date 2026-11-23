@@ -357,4 +357,54 @@ describe("Alchemia Ecosystem ($ALCH Coin + Liquidity Threshold + Sims-Style Lab 
     expect(receiver).to.equal(research0.address);
     expect(royalty).to.equal(ethers.parseEther("0.05"));
   });
+
+  it("handles multi-mint remainder wei cleanly, transfer mining continuity, boostTokenImpact & negative energy ranking", async function () {
+    const { coin, contract, minter, other, devWallet, research1, mintPrice } = await deployFixture(0n);
+
+    // Multi-mint 3 labs with odd wei amount (3 * mintPrice + 2 wei) -> zero wei lost to rounding
+    const oddValue = mintPrice * 3n + 2n;
+    const rBefore = await ethers.provider.getBalance(research1.address);
+    const dBefore = await ethers.provider.getBalance(devWallet.address);
+    await contract.connect(minter).mint(3, 1, { value: oddValue });
+
+    const rGain = (await ethers.provider.getBalance(research1.address)) - rBefore;
+    const dGain = (await ethers.provider.getBalance(devWallet.address)) - dBefore;
+    const lpGain = await contract.liquidityReserveWei();
+    expect(rGain + dGain + lpGain).to.equal(oddValue);
+    expect(await contract.totalSupply()).to.equal(3n);
+
+    // Transfer Lab #2 to `other` after 5 hours -> new owner inherits pending coins cleanly and seller cannot claim
+    await time.increase(5 * 3600);
+    await contract.connect(minter).safeTransferFrom(minter.address, other.address, 2);
+    await expect(contract.connect(minter).claimMinedCoins(2, 0)).to.be.revertedWithCustomError(
+      contract,
+      "NotTokenOwner"
+    );
+    await contract.connect(other).claimMinedCoins(2, 1000);
+    expect(await coin.balanceOf(other.address)).to.be.gte(ethers.parseEther("22"));
+
+    // boostTokenImpact upgrades tier smoothly and emits MetadataUpdate
+    await expect(contract.connect(other).boostTokenImpact(2, { value: mintPrice * 25n }))
+      .to.emit(contract, "VesselUpgraded")
+      .and.to.emit(contract, "MetadataUpdate")
+      .withArgs(2);
+    expect(await contract.complexityTierOf(2)).to.equal(3);
+
+    // Signed negative energy micro-values only overwrite bestEnergyMicro when strictly lower (better fold!)
+    const h1 = ethers.keccak256(ethers.toUtf8Bytes("fold-1"));
+    const h2 = ethers.keccak256(ethers.toUtf8Bytes("fold-2-worse"));
+    const h3 = ethers.keccak256(ethers.toUtf8Bytes("fold-3-better"));
+    await contract.connect(other).submitResearchProof(2, h1, -22500000n, 4, "pdb://1");
+    await contract.connect(other).submitResearchProof(2, h2, -14000000n, 3, "pdb://2");
+    let rp = await contract.researchProofs(2);
+    expect(rp.proofHash).to.equal(h1); // Kept lower-energy fold!
+    expect(rp.bestEnergyMicro).to.equal(-22500000n);
+    expect(rp.workUnits).to.equal(7);
+
+    await contract.connect(other).submitResearchProof(2, h3, -41200000n, 5, "pdb://3");
+    rp = await contract.researchProofs(2);
+    expect(rp.proofHash).to.equal(h3); // Updated to strictly better fold!
+    expect(rp.bestEnergyMicro).to.equal(-41200000n);
+    expect(rp.workUnits).to.equal(12);
+  });
 });

@@ -2,8 +2,8 @@
  * Subtle Procedural Web Audio Crystal & Glass Soundscape.
  *
  * Synthesizes soft, tactile borosilicate glass chimes, water-drop treat notes,
- * gentle rubber bounces, and warm build chords using pure additive sine partials.
- * Zero external audio files; respects user mute preference cleanly.
+ * gentle rubber bounces, ascending proton-combo notes, and warm build chords.
+ * Respects browser autoplay rules cleanly (never creates AudioContext before user gesture).
  */
 
 const SOUND_STORAGE_KEY = "alchemia_sound_enabled_v1";
@@ -11,6 +11,7 @@ const SOUND_STORAGE_KEY = "alchemia_sound_enabled_v1";
 class AlchemiaSoundEngine {
   private ctx: AudioContext | null = null;
   private enabled = true;
+  private userUnlocked = false;
 
   constructor() {
     if (typeof window !== "undefined") {
@@ -20,6 +21,11 @@ class AlchemiaSoundEngine {
       } catch {
         // ignore storage restrictions
       }
+      const unlock = () => {
+        this.userUnlocked = true;
+      };
+      window.addEventListener("pointerdown", unlock, { once: true, passive: true });
+      window.addEventListener("keydown", unlock, { once: true, passive: true });
     }
   }
 
@@ -39,15 +45,18 @@ class AlchemiaSoundEngine {
   }
 
   public toggle(): boolean {
+    this.userUnlocked = true;
     this.setEnabled(!this.enabled);
     if (this.enabled) this.playTap(987.77);
     return this.enabled;
   }
 
-  private getContext(): AudioContext | null {
+  private getContext(requireGesture = true): AudioContext | null {
     if (!this.enabled || typeof window === "undefined") return null;
+    if (requireGesture && !this.userUnlocked) return null;
     const AudioCtx =
-      window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioCtx) return null;
     if (!this.ctx) {
       this.ctx = new AudioCtx();
@@ -58,11 +67,8 @@ class AlchemiaSoundEngine {
     return this.ctx;
   }
 
-  /**
-   * Struck borosilicate glass micro-chime with non-integer bell partials (1, 2.76, 5.4).
-   */
   private playGlassBell(baseFreq: number, volume = 0.08, duration = 0.42, delay = 0) {
-    const ctx = this.getContext();
+    const ctx = this.getContext(true);
     if (!ctx) return;
 
     const now = ctx.currentTime + delay;
@@ -99,18 +105,19 @@ class AlchemiaSoundEngine {
   }
 
   public playTap(freq = 1046.5) {
+    this.userUnlocked = true;
     this.playGlassBell(freq, 0.045, 0.24);
   }
 
   public playPet() {
-    // Cozy rising two-note purr chime (E5 -> B5)
+    this.userUnlocked = true;
     this.playGlassBell(659.25, 0.06, 0.34, 0);
     this.playGlassBell(987.77, 0.055, 0.4, 0.08);
   }
 
   public playFeed() {
-    // Delicate liquid drop chirp
-    const ctx = this.getContext();
+    this.userUnlocked = true;
+    const ctx = this.getContext(true);
     if (!ctx) return;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
@@ -128,8 +135,7 @@ class AlchemiaSoundEngine {
   }
 
   public playBounce() {
-    // Soft bouncy ping when toy ball hits terrazzo floor
-    const ctx = this.getContext();
+    const ctx = this.getContext(true);
     if (!ctx) return;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
@@ -146,15 +152,16 @@ class AlchemiaSoundEngine {
     osc.stop(now + 0.14);
   }
 
-  public playProtonPop() {
-    // Sparkling high crystal harmonic (pentatonic randomized)
-    const notes = [1174.66, 1318.51, 1567.98, 1760.0, 2093.0];
-    const freq = notes[Math.floor(Math.random() * notes.length)];
-    this.playGlassBell(freq, 0.065, 0.36);
+  public playProtonPop(comboStep = 0) {
+    this.userUnlocked = true;
+    // Ascending pentatonic crystal chimes for proton harvest combos!
+    const scale = [1046.5, 1174.66, 1318.51, 1567.98, 1760.0, 2093.0, 2349.32];
+    const freq = scale[Math.min(scale.length - 1, Math.max(0, comboStep))];
+    this.playGlassBell(freq, 0.068, 0.36);
   }
 
   public playBuildRoom() {
-    // Warm architectural Cmaj9 arpeggio
+    this.userUnlocked = true;
     this.playGlassBell(523.25, 0.055, 0.55, 0);
     this.playGlassBell(659.25, 0.05, 0.55, 0.07);
     this.playGlassBell(783.99, 0.05, 0.6, 0.14);
@@ -162,9 +169,10 @@ class AlchemiaSoundEngine {
   }
 
   public playDiscovery() {
-    // Whisper-quiet double crystal ping when a new lowest-energy protein fold is found
-    this.playGlassBell(880, 0.032, 0.36, 0);
-    this.playGlassBell(1318.51, 0.028, 0.46, 0.11);
+    // Only chime softly after the user has interacted with the page
+    if (!this.userUnlocked) return;
+    this.playGlassBell(880, 0.028, 0.34, 0);
+    this.playGlassBell(1318.51, 0.024, 0.44, 0.11);
   }
 }
 

@@ -138,13 +138,28 @@ export class AlchemicalBackgroundPainter {
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
   }
 
+  private pickMarginX(): number {
+    const w = Math.max(this.width, 900);
+    if (w < 720) {
+      return Math.random() < 0.5 ? w * (0.04 + Math.random() * 0.14) : w * (0.82 + Math.random() * 0.14);
+    }
+    // Keep ambient sketches framing the left & right atelier margins cleanly away from centered hero text
+    const safeHalf = Math.min(w * 0.28, 320);
+    const leftEdge = Math.max(84, w * 0.5 - safeHalf - 40);
+    const rightStart = Math.min(w - 84, w * 0.5 + safeHalf + 40);
+    if (Math.random() < 0.5) {
+      return 64 + Math.random() * Math.max(40, leftEdge - 64);
+    }
+    return rightStart + Math.random() * Math.max(40, w - 64 - rightStart);
+  }
+
   private seedInitialSketches() {
     const kinds: LivingSketch["kind"][] = ["flask", "atom", "cat", "dog", "astrolabe"];
     for (let i = 0; i < 6; i++) {
       this.sketches.push({
-        x: (0.1 + (i % 3) * 0.38 + Math.random() * 0.14) * Math.max(this.width, 900),
-        y: (0.14 + Math.floor(i / 3) * 0.48 + Math.random() * 0.2) * Math.max(this.height, 700),
-        scale: 0.72 + Math.random() * 0.55,
+        x: this.pickMarginX(),
+        y: (0.14 + (i % 3) * 0.3 + Math.random() * 0.12) * Math.max(this.height, 700),
+        scale: 0.72 + Math.random() * 0.48,
         rotation: (Math.random() - 0.5) * 0.28,
         kind: kinds[i % kinds.length],
         hue: [215, 255, 195, 330, 175][i % 5],
@@ -286,16 +301,16 @@ export class AlchemicalBackgroundPainter {
       this.activeStroke = null;
     }
 
-    // Periodically paint new serene ambient alchemy sketches into the white backdrop
+    // Periodically paint new serene ambient alchemy sketches into the white margins
     this.ambientTimer += dt;
     if (this.enabled && !this.reducedMotion && this.ambientTimer > 4.2) {
       this.ambientTimer = 0;
-      if (this.sketches.length < 9) {
+      if (this.sketches.length < 8) {
         const kinds: LivingSketch["kind"][] = ["flask", "atom", "cat", "dog", "astrolabe"];
         this.sketches.push({
-          x: 80 + Math.random() * Math.max(200, this.width - 160),
+          x: this.pickMarginX(),
           y: 90 + Math.random() * Math.max(200, this.height - 180),
-          scale: 0.68 + Math.random() * 0.52,
+          scale: 0.68 + Math.random() * 0.46,
           rotation: (Math.random() - 0.5) * 0.25,
           kind: kinds[Math.floor(Math.random() * kinds.length)],
           hue: [214, 252, 195, 336, 174][Math.floor(Math.random() * 5)],
@@ -516,14 +531,15 @@ export class AlchemicalBackgroundPainter {
   private drawLivingSketch(ctx: CanvasRenderingContext2D, sk: LivingSketch, t: number) {
     const drawIn = Math.min(1, sk.age * sk.drawSpeed);
     const fadeOut = Math.min(1, Math.max(0, (sk.maxAge - sk.age) / 4));
-    const alpha = drawIn * fadeOut * 0.34;
+    const mobileAtten = this.width < 680 ? 0.36 : 1.0;
+    const alpha = drawIn * fadeOut * 0.34 * mobileAtten;
     if (alpha <= 0.005) return;
 
     const floatY = Math.sin(t * 0.8 + sk.x * 0.01) * 6;
     ctx.save();
     ctx.translate(sk.x, sk.y + floatY);
     ctx.rotate(sk.rotation + Math.sin(t * 0.4 + sk.y) * 0.03);
-    ctx.scale(sk.scale, sk.scale);
+    ctx.scale(sk.scale * (this.width < 680 ? 0.72 : 1), sk.scale * (this.width < 680 ? 0.72 : 1));
 
     // Subtle pearlescent watercolor aura behind sketch
     const aura = ctx.createRadialGradient(0, 0, 6, 0, 0, 88);

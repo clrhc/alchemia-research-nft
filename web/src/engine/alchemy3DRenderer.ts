@@ -74,6 +74,7 @@ export type LightingMood = "daylight" | "silver" | "moonlit";
 export interface InteractiveEvent {
   kind: "pet-clicked" | "atom-popped";
   bonusCoins: number;
+  combo?: number;
 }
 
 const UP_AXIS = new THREE.Vector3(0, 1, 0);
@@ -113,6 +114,9 @@ export class Alchemy3DRenderer {
 
   private raycaster = new THREE.Raycaster();
   private pointerDownPos = { x: 0, y: 0 };
+  private protonCombo = 0;
+  private lastProtonPopMs = 0;
+  private hoveredAtom: THREE.Group | null = null;
   private desiredCamPos: THREE.Vector3 | null = null;
   private desiredCamTarget: THREE.Vector3 | null = null;
   private toyBall: { mesh: THREE.Mesh; vel: THREE.Vector3; life: number; bounceCooldown: number } | null = null;
@@ -130,6 +134,7 @@ export class Alchemy3DRenderer {
   private previewSectorId: number | null = null;
   private buildPopScale = 1;
   private proteinChainLength = -1;
+  private causticShaderMat: THREE.ShaderMaterial | null = null;
   private cryoHelixes: THREE.Object3D[] = [];
   private greenhouseStems: THREE.Object3D[] = [];
   private greenhousePollen: Array<{ mesh: THREE.Mesh; base: THREE.Vector3; phase: number }> = [];
@@ -225,9 +230,9 @@ export class Alchemy3DRenderer {
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.07;
+    this.renderer.toneMappingExposure = 1.0;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.domElement.style.display = "block";
     this.renderer.domElement.style.width = "100%";
     this.renderer.domElement.style.height = "100%";
@@ -267,9 +272,10 @@ export class Alchemy3DRenderer {
       this.userDragging = false;
     });
 
-    // Click-to-Interact 3D Raycasting: tap the 3D cat/dog to pet them, or pop floating protons!
+    // Click-to-Interact + Hover Feedback 3D Raycasting
     this.renderer.domElement.addEventListener("pointerdown", this.handlePointerDown);
     this.renderer.domElement.addEventListener("pointerup", this.handlePointerUp);
+    this.renderer.domElement.addEventListener("pointermove", this.handlePointerMove);
 
     this.setupArchitecturalStudioLighting();
     this.scene.add(this.rootGroup);
@@ -314,10 +320,10 @@ export class Alchemy3DRenderer {
     bounce.position.set(3.8, 2.0, -3.5);
     this.scene.add(bounce);
 
-    // Pure white drafting floor catching real shadows
+    // Pure white drafting floor catching real crisp architectural contact shadows
     const shadowFloor = new THREE.Mesh(
       new THREE.PlaneGeometry(46, 46),
-      new THREE.ShadowMaterial({ opacity: 0.1 })
+      new THREE.ShadowMaterial({ opacity: 0.16 })
     );
     shadowFloor.rotation.x = -Math.PI / 2;
     shadowFloor.position.y = -0.012;
@@ -364,6 +370,31 @@ export class Alchemy3DRenderer {
     this.triggerCatalyticPulse(0.7);
   }
 
+  public triggerFoldAction(action: "wiggle" | "shake") {
+    this.compute.triggerFoldAction(action);
+    this.discoveryFlash = 1.0;
+    this.excitement = Math.min(1.5, this.excitement + (action === "shake" ? 0.75 : 0.45));
+    this.spawnBurst(new THREE.Vector3(0, 3.06, 0), action === "shake" ? 14 : 9);
+    if (action === "shake") soundEngine.playProtonPop(2);
+    else soundEngine.playTap(1318.51);
+  }
+
+  public focusSector(sectorId: number) {
+    const views: Array<[THREE.Vector3, THREE.Vector3]> = [
+      [new THREE.Vector3(-4.2, 3.2, -3.5), new THREE.Vector3(-1.8, 0.9, -1.1)],
+      [new THREE.Vector3(4.9, 3.2, 2.8), new THREE.Vector3(1.8, 0.9, 0.2)],
+      [new THREE.Vector3(-4.4, 3.0, 4.1), new THREE.Vector3(-1.7, 0.7, 1.2)],
+      [new THREE.Vector3(4.2, 2.9, 4.3), new THREE.Vector3(1.5, 0.7, 1.3)],
+      [new THREE.Vector3(4.8, 4.2, -3.6), new THREE.Vector3(1.7, 1.5, -1.2)],
+      [new THREE.Vector3(3.6, 5.1, 4.1), new THREE.Vector3(0, 3.1, 0)]
+    ];
+    const pair = views[sectorId];
+    if (pair) {
+      this.desiredCamPos = pair[0].clone();
+      this.desiredCamTarget = pair[1].clone();
+    }
+  }
+
   public setLightingMood(mood: LightingMood) {
     this.lightingMood = mood;
     this.applyLightingMood();
@@ -402,20 +433,20 @@ export class Alchemy3DRenderer {
       if (this.causticLight) this.causticLight.intensity = 2.65;
     } else {
       this.scene.background = new THREE.Color(pal.bgBottom);
-      this.scene.fog = new THREE.FogExp2(pal.bgBottom, 0.032);
-      this.renderer.toneMappingExposure = 1.08;
-      if (this.hemiLight) this.hemiLight.intensity = 1.22;
+      this.scene.fog = new THREE.FogExp2(pal.bgBottom, 0.03);
+      this.renderer.toneMappingExposure = 0.98;
+      if (this.hemiLight) this.hemiLight.intensity = 0.96;
       if (this.keyLight) {
-        this.keyLight.color.set("#fffdf9");
-        this.keyLight.intensity = 1.85;
+        this.keyLight.color.set("#fffaf2");
+        this.keyLight.intensity = 1.95;
       }
       if (this.rimLight) {
-        this.rimLight.color.set("#c9e0ff");
-        this.rimLight.intensity = 0.78;
+        this.rimLight.color.set("#b6d4ff");
+        this.rimLight.intensity = 0.92;
       }
       if (this.causticLight) {
         const tier = Math.max(1, Math.min(5, this.impact.complexityTier || 1));
-        this.causticLight.intensity = 1.55 + tier * 0.25;
+        this.causticLight.intensity = 1.85 + tier * 0.25;
       }
     }
   }
@@ -526,6 +557,30 @@ export class Alchemy3DRenderer {
     this.pointerDownPos = { x: e.clientX, y: e.clientY };
   };
 
+  private handlePointerMove = (e: PointerEvent) => {
+    if (this.userDragging) return;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const atomTargets = this.floatingAtoms.map((a) => a.group);
+    const hits = this.raycaster.intersectObjects(atomTargets, true);
+    if (hits.length > 0) {
+      let cur: THREE.Object3D | null = hits[0].object;
+      while (cur && !atomTargets.includes(cur as THREE.Group)) cur = cur.parent;
+      this.hoveredAtom = (cur as THREE.Group) || null;
+      this.renderer.domElement.style.cursor = "pointer";
+      return;
+    }
+    this.hoveredAtom = null;
+    const petTargets = this.companions.map((c) => c.group);
+    const petHits = petTargets.length > 0 ? this.raycaster.intersectObjects(petTargets, true) : [];
+    this.renderer.domElement.style.cursor = petHits.length > 0 ? "pointer" : "grab";
+  };
+
   private handlePointerUp = (e: PointerEvent) => {
     // Only count as a tap/click (not an orbit drag)
     if (Math.hypot(e.clientX - this.pointerDownPos.x, e.clientY - this.pointerDownPos.y) > 7) return;
@@ -545,15 +600,26 @@ export class Alchemy3DRenderer {
       return;
     }
 
-    // 2. Did the user tap a floating 3D Proton / Atom? -> Pop it for bonus spark!
+    // 2. Did the user tap a floating 3D Proton / Atom? -> Pop it with combo chime!
     const atomTargets = this.floatingAtoms.map((a) => a.group);
     const hits = this.raycaster.intersectObjects(atomTargets, true);
     if (hits.length > 0) {
+      const nowMs = performance.now();
+      this.protonCombo = nowMs - this.lastProtonPopMs < 3500 ? Math.min(6, this.protonCombo + 1) : 1;
+      this.lastProtonPopMs = nowMs;
       const hitPoint = hits[0].point.clone();
-      soundEngine.playProtonPop();
-      this.spawnColoredBurst(hitPoint, 14, [this.traits.palette.electron, this.traits.palette.proton, "#ffffff"]);
+      soundEngine.playProtonPop(this.protonCombo - 1);
+      this.spawnColoredBurst(hitPoint, 14 + this.protonCombo * 2, [
+        this.traits.palette.electron,
+        this.traits.palette.proton,
+        "#ffffff"
+      ]);
       this.excitement = Math.min(1.6, this.excitement + 0.55);
-      this.onInteractiveEvent?.({ kind: "atom-popped", bonusCoins: 2 });
+      this.onInteractiveEvent?.({
+        kind: "atom-popped",
+        bonusCoins: 1 + this.protonCombo,
+        combo: this.protonCombo
+      });
     }
   };
 
@@ -577,7 +643,8 @@ export class Alchemy3DRenderer {
     this.syncFillTarget();
 
     const nextSectors = this.impact.sectorsMask ?? 0;
-    const sectorsChanged = nextSectors !== this.builtSectorsMask && this.builtSectorsMask !== -1;
+    const prevBuilt = this.builtSectorsMask;
+    const sectorsChanged = nextSectors !== prevBuilt && prevBuilt !== -1;
     if (
       this.impact.seed !== this.builtSeed ||
       this.impact.complexityTier !== this.builtTier ||
@@ -587,6 +654,14 @@ export class Alchemy3DRenderer {
         this.buildPopScale = 0.92;
         this.setPreviewSector(null);
         soundEngine.playBuildRoom();
+        // Smoothly glide camera to frame the newly built architectural wing!
+        const addedBit = nextSectors & ~prevBuilt;
+        for (let s = 0; s < 6; s++) {
+          if ((addedBit & (1 << s)) !== 0) {
+            this.focusSector(s);
+            break;
+          }
+        }
       }
       this.rebuild3DModel();
       this.onComputeTick?.(this.compute.getSnapshot());
@@ -765,13 +840,19 @@ export class Alchemy3DRenderer {
   }
 
   public start() {
-    this.startTime = performance.now();
-    this.lastTime = this.startTime;
+    // Initialize clock from the first rAF callback so elapsed time `t` is NEVER negative in Chromium!
+    this.startTime = -1;
+    this.lastTime = -1;
     this.onComputeTick?.(this.compute.getSnapshot());
     const loop = (now: number) => {
-      const dt = Math.min(0.05, (now - this.lastTime) / 1000);
+      if (this.startTime < 0) {
+        this.startTime = now;
+        this.lastTime = now;
+      }
+      const dt = Math.max(0.0001, Math.min(0.05, (now - this.lastTime) / 1000));
+      const elapsedSec = Math.max(0, (now - this.startTime) / 1000);
       this.lastTime = now;
-      this.step(dt, (now - this.startTime) / 1000, now);
+      this.step(dt, elapsedSec, now);
       this.controls.update();
       this.renderer.render(this.scene, this.camera);
       this.rafId = requestAnimationFrame(loop);
@@ -784,6 +865,7 @@ export class Alchemy3DRenderer {
     this.compute.dispose();
     this.renderer.domElement.removeEventListener("pointerdown", this.handlePointerDown);
     this.renderer.domElement.removeEventListener("pointerup", this.handlePointerUp);
+    this.renderer.domElement.removeEventListener("pointermove", this.handlePointerMove);
     this.disposeObjectChildren(this.previewGhostGroup);
     this.clearDynamicGroup();
     this.terrazzoTex.dispose();
@@ -882,6 +964,7 @@ export class Alchemy3DRenderer {
     this.liquidTopMesh = null;
     this.liquidTopBasePos = null;
     this.waterPoolMesh = null;
+    this.causticShaderMat = null;
     this.causticLight = null;
     this.nucleusGroup = null;
     this.manometerNeedle = null;
@@ -952,25 +1035,25 @@ export class Alchemy3DRenderer {
 
     const alabasterMat = new THREE.MeshStandardMaterial({
       map: this.terrazzoTex,
-      color: "#ffffff",
-      roughness: 0.48,
-      metalness: 0.04
+      color: "#f4f7fb",
+      roughness: 0.44,
+      metalness: 0.05
     });
     const titaniumMat = new THREE.MeshStandardMaterial({
       map: this.titaniumTex,
-      color: "#dce3ed",
-      roughness: 0.22,
-      metalness: 0.88
+      color: "#cfd9e6",
+      roughness: 0.2,
+      metalness: 0.9
     });
     const slateMat = new THREE.MeshStandardMaterial({
-      color: "#526075",
-      roughness: 0.34,
-      metalness: 0.7
+      color: "#435166",
+      roughness: 0.32,
+      metalness: 0.74
     });
     const edgeLineMat = new THREE.LineBasicMaterial({
-      color: "#a8b4c6",
+      color: "#94a3b8",
       transparent: true,
-      opacity: 0.78
+      opacity: 0.85
     });
 
     // Two-tier chamfered architectural terrazzo site base
@@ -1223,10 +1306,53 @@ export class Alchemy3DRenderer {
     this.dynamicGroup.add(planter);
 
     // Colored glass caustic light washing gently over the white architectural walls!
-    const causticLight = new THREE.PointLight(pal.liquidMid, 1.55 + tier * 0.25, 6.8);
+    const causticLight = new THREE.PointLight(pal.liquidMid, 1.85 + tier * 0.25, 6.8);
     causticLight.position.set(0, 1.35, 0.15);
     this.causticLight = causticLight;
     this.dynamicGroup.add(causticLight);
+
+    // Real GLSL Procedural Borosilicate Caustic Shimmer projected softly onto the white terrazzo rotunda!
+    const causticMat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.NormalBlending,
+      uniforms: {
+        uTime: { value: 0 },
+        uColorA: { value: new THREE.Color(pal.liquidTop) },
+        uColorB: { value: new THREE.Color(pal.electron) }
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float uTime;
+        uniform vec3 uColorA;
+        uniform vec3 uColorB;
+        varying vec2 vUv;
+        void main() {
+          vec2 p = (vUv - 0.5) * 2.0;
+          float r = length(p);
+          if (r > 1.0) discard;
+          float a = atan(p.y, p.x);
+          float w1 = sin(r * 16.0 - uTime * 2.2 + sin(a * 5.0 + uTime * 0.9) * 1.4);
+          float w2 = cos(r * 22.0 + uTime * 1.7 + cos(a * 7.0 - uTime * 1.1) * 1.2);
+          float net = pow(max(0.0, 0.5 + 0.5 * w1 * w2), 3.0);
+          float ringMask = smoothstep(0.32, 0.58, r) * (1.0 - smoothstep(0.72, 1.0, r));
+          vec3 col = mix(uColorA, uColorB, 0.5 + 0.5 * sin(a * 2.0 + uTime));
+          float alpha = net * ringMask * 0.24;
+          gl_FragColor = vec4(col, alpha);
+        }
+      `
+    });
+    const causticDisc = new THREE.Mesh(new THREE.PlaneGeometry(3.15, 3.15), causticMat);
+    causticDisc.rotation.x = -Math.PI / 2;
+    causticDisc.position.y = 0.394;
+    this.causticShaderMat = causticMat;
+    this.dynamicGroup.add(causticDisc);
     this.applyLightingMood();
 
     // Central raised titanium induction reactor plinth under the hero flask
@@ -1318,16 +1444,18 @@ export class Alchemy3DRenderer {
 
     const glassMat = new THREE.MeshPhysicalMaterial({
       color: "#ffffff",
-      transmission: 0.91,
+      transmission: 0.92,
       opacity: 1,
       transparent: true,
-      roughness: 0.05,
+      roughness: 0.04,
       metalness: 0.02,
-      ior: 1.5,
-      thickness: 0.38,
+      ior: 1.47,
+      thickness: 0.42,
+      attenuationColor: new THREE.Color("#e8f1fb"),
+      attenuationDistance: 1.35,
       clearcoat: 1.0,
-      clearcoatRoughness: 0.04,
-      envMapIntensity: 1.45,
+      clearcoatRoughness: 0.03,
+      envMapIntensity: 1.55,
       side: THREE.DoubleSide
     });
 
@@ -1372,12 +1500,12 @@ export class Alchemy3DRenderer {
       new THREE.MeshPhysicalMaterial({
         color: pal.liquidMid,
         emissive: pal.liquidBottom,
-        emissiveIntensity: 0.42,
-        roughness: 0.12,
-        metalness: 0.05,
-        transmission: 0.34,
+        emissiveIntensity: 0.56,
+        roughness: 0.1,
+        metalness: 0.08,
+        transmission: 0.24,
         transparent: true,
-        opacity: 0.88,
+        opacity: 0.92,
         clearcoat: 1.0
       })
     );
@@ -3008,10 +3136,13 @@ export class Alchemy3DRenderer {
       }
     }
 
-    // Subtle shimmer on architectural reflecting water basin
+    // Subtle shimmer on architectural reflecting water basin & GLSL borosilicate floor caustics
     if (this.waterPoolMesh) {
       (this.waterPoolMesh.material as THREE.MeshPhysicalMaterial).opacity =
         0.68 + Math.sin(t * 1.8) * 0.05;
+    }
+    if (this.causticShaderMat) {
+      this.causticShaderMat.uniforms.uTime.value = t;
     }
 
     // Rising 3D Bubbles
@@ -3066,11 +3197,13 @@ export class Alchemy3DRenderer {
     }
 
     for (const cd of this.condenserDroplets) {
-      cd.curve.getPointAt((t * 0.32 + cd.offset) % 1, cd.mesh.position);
+      const u = (((t * 0.32 + cd.offset) % 1) + 1) % 1;
+      cd.curve.getPointAt(u, cd.mesh.position);
     }
 
     for (const vb of this.vialBubbles) {
-      vb.mesh.position.y = vb.baseY + ((t * vb.speed) % 1) * vb.maxH;
+      const u = (((t * vb.speed) % 1) + 1) % 1;
+      vb.mesh.position.y = vb.baseY + u * vb.maxH;
     }
 
     if (this.manometerNeedle) {
@@ -3169,6 +3302,8 @@ export class Alchemy3DRenderer {
       );
       fa.group.rotation.y = t * 0.9 + fa.phase;
       fa.group.rotation.x = t * 0.6;
+      const targetScale = this.hoveredAtom === fa.group ? 1.38 : 1.0;
+      fa.group.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), Math.min(1, dt * 10));
     }
 
     if (this.constellationLines) {

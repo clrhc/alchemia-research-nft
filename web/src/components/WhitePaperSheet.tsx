@@ -5,6 +5,7 @@ import {
   downloadScienceCertificateFromSnapshot,
   type ComputeSnapshot
 } from "../engine/researchCompute";
+import { downloadMMCIFFromSnapshot } from "../engine/structuralAnalysis";
 import { CHAIN_NAMES, ethToUsd } from "../web3/config";
 import type { CollectionState } from "../web3/contractService";
 
@@ -122,8 +123,9 @@ export function WhitePaperSheet({
               supply and one-time minter link lock permanently, and contract ownership can be
               renounced after launch. Labs earn ALCH over time, and holders can share part of any
               claim or send coins straight to researchers (
-              <strong>{state.totalCoinsDonatedToResearch.toLocaleString()} ALCH</strong> shared so
-              far).
+              <strong>{state.totalCoinsDonatedToResearch.toLocaleString()} ALCH</strong> shared ·{" "}
+              <strong>{Math.round(state.coinTotalSupply).toLocaleString()} / 100,000,000</strong>{" "}
+              minted so far).
             </p>
           </div>
 
@@ -135,8 +137,9 @@ export function WhitePaperSheet({
               <strong>GB1 (1GB1)</strong>, <strong>Chignolin (1UAO)</strong>,{" "}
               <strong>CLN025 (2RVD)</strong>, <strong>Villin Headpiece (1VII, 2F4K)</strong>, and{" "}
               <strong>BBA5 (1FME)</strong>. The solver uses Kyte-Doolittle hydropathy, salt-bridge
-              electrostatics, aromatic stacking, and 4-replica parallel tempering. You can export a
-              strict wwPDB v3.30 <strong>.PDB file</strong> for PyMOL, ChimeraX, or Mol*, download a{" "}
+              electrostatics, aromatic stacking, P-SEA secondary structure assignment, and 4-replica
+              parallel tempering. You can export standard <strong>.PDB</strong> and{" "}
+              <strong>.CIF (mmCIF)</strong> files for PyMOL, ChimeraX, or RCSB Mol*, download a{" "}
               <strong>.JSON science certificate</strong>, and anchor its SHA-256 hash on-chain.
             </p>
           </div>
@@ -154,9 +157,44 @@ export function WhitePaperSheet({
             </p>
           </div>
 
+          {state.recentDiscoveries.length > 0 && (
+            <div>
+              <h3>5. Verified on-chain research proofs</h3>
+              <div className="wp-ledger">
+                {state.recentDiscoveries.slice(0, 4).map((d) => {
+                  const txBase =
+                    state.chainId === 84532
+                      ? "https://sepolia.basescan.org/tx/"
+                      : state.chainId === 8453
+                        ? "https://basescan.org/tx/"
+                        : "https://etherscan.io/tx/";
+                  return (
+                    <a
+                      key={d.txHash}
+                      href={`${txBase}${d.txHash}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="wp-ledger-row"
+                    >
+                      <span>
+                        Lab #{d.tokenId} · {d.addedWorkUnits} rounds · {d.bestEnergy.toFixed(1)} kcal/mol
+                      </span>
+                      <code>
+                        {d.proofHash.slice(0, 10)}… <ArrowUpRight size={10} />
+                      </code>
+                    </a>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {state.contractAddress && (
             <div>
-              <h3>5. Live contracts ({CHAIN_NAMES[state.chainId] || `Chain ${state.chainId}`})</h3>
+              <h3>
+                {state.recentDiscoveries.length > 0 ? "6" : "5"}. Live contracts (
+                {CHAIN_NAMES[state.chainId] || `Chain ${state.chainId}`})
+              </h3>
               <div className="wp-contracts">
                 <a
                   href={`${explorerBase}${state.contractAddress}`}
@@ -189,7 +227,15 @@ export function WhitePaperSheet({
                   onClick={() => downloadPDBFromSnapshot(liveCompute)}
                 >
                   <Download size={13} />
-                  Download .PDB ({liveCompute.pdbBenchmarkId})
+                  .PDB ({liveCompute.pdbBenchmarkId})
+                </button>
+                <button
+                  type="button"
+                  className="subtle-pill-btn clickable"
+                  onClick={() => downloadMMCIFFromSnapshot(liveCompute)}
+                >
+                  <Download size={13} />
+                  .CIF
                 </button>
                 <button
                   type="button"
@@ -197,7 +243,7 @@ export function WhitePaperSheet({
                   onClick={() => downloadScienceCertificateFromSnapshot(liveCompute)}
                 >
                   <FileJson size={13} />
-                  .JSON Proof
+                  .JSON
                 </button>
               </>
             )}
