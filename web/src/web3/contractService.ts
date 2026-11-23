@@ -254,6 +254,20 @@ export function buildAnimationUrl(params: {
 }
 
 let activeEip1193Provider: ethers.Eip1193Provider | null = null;
+const readProviderCache = new Map<number, JsonRpcProvider>();
+
+function getReadProvider(chainId: number): JsonRpcProvider {
+  const existing = readProviderCache.get(chainId);
+  if (existing) return existing;
+  const rpcUrl = CHAIN_RPC_URLS[chainId] || CHAIN_RPC_URLS[1];
+  const network = ethers.Network.from(chainId);
+  const provider = new JsonRpcProvider(rpcUrl, network, {
+    staticNetwork: network,
+    batchMaxCount: 10
+  });
+  readProviderCache.set(chainId, provider);
+  return provider;
+}
 
 function getSelectedProvider(): ethers.Eip1193Provider | undefined {
   return (
@@ -330,8 +344,7 @@ export async function fetchOnChainCollectionSnapshot(
   walletAddress?: string | null
 ): Promise<Partial<CollectionState> | null> {
   if (!contractAddress || !ethers.isAddress(contractAddress)) return null;
-  const rpcUrl = CHAIN_RPC_URLS[chainId] || CHAIN_RPC_URLS[1];
-  const provider = new JsonRpcProvider(rpcUrl);
+  const provider = getReadProvider(chainId);
   const contract = new Contract(contractAddress, ALCHEMIA_ABI, provider);
 
   const [
@@ -502,8 +515,7 @@ export async function fetchTokenLiveSnapshotOnChain(
   chainId: number,
   tokenId: number
 ) {
-  const rpcUrl = CHAIN_RPC_URLS[chainId] || CHAIN_RPC_URLS[1];
-  const provider = new JsonRpcProvider(rpcUrl);
+  const provider = getReadProvider(chainId);
   const contract = new Contract(contractAddress, ALCHEMIA_ABI, provider);
   const snap = await contract.getLiveImpactSnapshot(tokenId);
   return {

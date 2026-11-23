@@ -140,6 +140,7 @@ export function WhitePaperSheet({
               <span>100M Fixed Cap</span>
               <span>EIP-2612 Permit</span>
               <span>EIP-4906 Live Metadata</span>
+              <span>ERC-7572 Collection</span>
             </div>
           </div>
 

@@ -407,4 +407,98 @@ describe("Alchemia Ecosystem ($ALCH Coin + Liquidity Threshold + Sims-Style Lab 
     expect(rp.bestEnergyMicro).to.equal(-41200000n);
     expect(rp.workUnits).to.equal(12);
   });
+
+  it("exposes valid ERC-7572 on-chain contractURI JSON + SVG and emits ContractURIUpdated", async function () {
+    const { contract } = await deployFixture(0n);
+
+    const uri = await contract.contractURI();
+    expect(uri.startsWith("data:application/json;base64,")).to.equal(true);
+    const meta = JSON.parse(
+      Buffer.from(uri.replace("data:application/json;base64,", ""), "base64").toString("utf8")
+    );
+    expect(meta.name).to.equal("Alchemia Labs");
+    expect(meta.description).to.include("0% tax ALCH");
+    expect(meta.external_link).to.include("animation.html");
+
+    const logoSvg = Buffer.from(
+      meta.image.replace("data:image/svg+xml;base64,", ""),
+      "base64"
+    ).toString("utf8");
+    expect(logoSvg).to.include("<svg");
+
+    await expect(contract.setAnimationBaseUrl("https://alchemia.example/animation.html")).to.emit(
+      contract,
+      "ContractURIUpdated"
+    );
+  });
+
+  it("enforces exact mint boundary guards (0, >20, invalid cause, underpayment) and allows exact 20-lab batch mint", async function () {
+    const { contract, minter, mintPrice } = await deployFixture(0n);
+
+    await expect(contract.connect(minter).mint(0, 0, { value: mintPrice })).to.be.revertedWithCustomError(
+      contract,
+      "InvalidQuantity"
+    );
+    await expect(
+      contract.connect(minter).mint(21, 0, { value: mintPrice * 21n })
+    ).to.be.revertedWithCustomError(contract, "InvalidQuantity");
+    await expect(contract.connect(minter).mint(1, 9, { value: mintPrice })).to.be.revertedWithCustomError(
+      contract,
+      "InvalidCause"
+    );
+    await expect(
+      contract.connect(minter).mint(2, 0, { value: mintPrice * 2n - 1n })
+    ).to.be.revertedWithCustomError(contract, "InsufficientPayment");
+
+    // Exact MAX_MINT_PER_TX = 20 succeeds cleanly
+    await contract.connect(minter).mint(20, 2, { value: mintPrice * 20n });
+    expect(await contract.totalSupply()).to.equal(20n);
+  });
+
+  it("validates ETH room build guards and full 6-room campus mining rate (sectorsMask == 63)", async function () {
+    const { contract, minter, other, mintPrice } = await deployFixture(0n);
+
+    await contract.connect(minter).mint(1, 0, { value: mintPrice }); // Tier 1 = 5 ALCH/hr base
+
+    // Non-owner, invalid sector, and underpayment revert cleanly
+    await expect(
+      contract.connect(other).buildLabSectorWithEth(1, 0, { value: mintPrice * 5n })
+    ).to.be.revertedWithCustomError(contract, "NotTokenOwner");
+    await expect(
+      contract.connect(minter).buildLabSectorWithEth(1, 6, { value: mintPrice * 5n })
+    ).to.be.revertedWithCustomError(contract, "InvalidSector");
+    await expect(
+      contract.connect(minter).buildLabSectorWithEth(1, 0, { value: mintPrice * 4n })
+    ).to.be.revertedWithCustomError(contract, "InsufficientPayment");
+
+    // Build all 6 wings via ETH -> sectorsMask == 63 (0b111111)
+    for (let s = 0; s < 6; s++) {
+      await contract.connect(minter).buildLabSectorWithEth(1, s, { value: mintPrice * 5n });
+    }
+    const snap = await contract.getLiveImpactSnapshot(1);
+    expect(snap.sectorsMask).to.equal(63n);
+    // Base (Tier 3 from 1 + 30 = $31 -> Tier 3 = 15 ALCH/hr) + (4+14+8+6+18+28 = 78 ALCH/hr) = 93 ALCH/hr
+    expect(snap.miningRatePerHour).to.equal(ethers.parseEther("93"));
+
+    // Duplicate room build reverts
+    await expect(
+      contract.connect(minter).buildLabSectorWithEth(1, 5, { value: mintPrice * 5n })
+    ).to.be.revertedWithCustomError(contract, "SectorAlreadyBuilt");
+  });
+
+  it("supports standard ERC20Burnable burn() & burnFrom() without hidden transfer fees", async function () {
+    const { coin, contract, minter, other, mintPrice } = await deployFixture(0n);
+
+    await contract.connect(minter).mint(1, 0, { value: mintPrice });
+    await time.increase(20 * 3600);
+    await contract.connect(minter).claimMinedCoins(1, 0);
+
+    const supplyBefore = await coin.totalSupply();
+    await coin.connect(minter).burn(ethers.parseEther("10"));
+    expect(await coin.totalSupply()).to.equal(supplyBefore - ethers.parseEther("10"));
+
+    await coin.connect(minter).approve(other.address, ethers.parseEther("15"));
+    await coin.connect(other).burnFrom(minter.address, ethers.parseEther("15"));
+    expect(await coin.totalSupply()).to.equal(supplyBefore - ethers.parseEther("25"));
+  });
 });

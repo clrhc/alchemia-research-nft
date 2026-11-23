@@ -238,6 +238,36 @@ contract AlchemiaRenderer {
         return dog;
     }
 
+    /**
+     * @notice Builds ERC-7572 collection-level metadata JSON (`contractURI`) fully on-chain
+     *         with a minimalist pure-white Swiss architectural cat-flask emblem SVG.
+     */
+    function buildContractURI(string calldata collectionName, string calldata externalLink)
+        external
+        pure
+        returns (string memory)
+    {
+        string memory emblemSvg = string.concat(
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">',
+            '<rect width="256" height="256" rx="56" fill="#ffffff"/>',
+            '<circle cx="128" cy="128" r="102" fill="#f7f9fd" stroke="#cbd5e1" stroke-width="2"/>',
+            '<path d="M92 92L82 54l26 20h40l26-20-10 38c14 16 20 40 16 64-6 30-26 44-52 44s-46-14-52-44c-4-24 2-48 16-64z" fill="#ffffff" stroke="#334155" stroke-width="5"/>',
+            '<path d="M84 152c14 8 30-8 44 0s30 8 44 0c-4 24-20 38-44 38s-40-14-44-38z" fill="#5b8def" fill-opacity=".35"/>',
+            '<circle cx="110" cy="116" r="5" fill="#1a1f2c"/><circle cx="146" cy="116" r="5" fill="#1a1f2c"/>',
+            '</svg>'
+        );
+        string memory json = string.concat(
+            '{"name":"',
+            collectionName,
+            '","description":"Interactive 3D glass labs that fund open scientific research, fold real proteins in your browser, let you build rooms, care for your pet, and mine 0% tax ALCH coins.","image":"data:image/svg+xml;base64,',
+            Base64.encode(bytes(emblemSvg)),
+            '","external_link":"',
+            externalLink,
+            '"}'
+        );
+        return string.concat("data:application/json;base64,", Base64.encode(bytes(json)));
+    }
+
     function _popcount(uint8 mask) private pure returns (uint256 c) {
         for (uint8 i = 0; i < 6; i++) {
             if ((mask & (uint8(1) << i)) != 0) c++;

@@ -154,6 +154,8 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
 
     event MetadataUpdate(uint256 _tokenId);
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
+    // ERC-7572 Contract-Level Metadata event
+    event ContractURIUpdated();
 
     event VesselMinted(
         address indexed minter,
@@ -724,6 +726,14 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
         if (metadataFrozen) revert MetadataAlreadyFrozen();
         animationBaseUrl = newBaseUrl;
         emit BatchMetadataUpdate(1, type(uint256).max);
+        emit ContractURIUpdated();
+    }
+
+    /**
+     * @notice ERC-7572 on-chain collection metadata for OpenSea, Reservoir, and wallets.
+     */
+    function contractURI() external view returns (string memory) {
+        return renderer.buildContractURI(name(), animationBaseUrl);
     }
 
     /**
