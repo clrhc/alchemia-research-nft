@@ -55,21 +55,34 @@ import {
   getNeighborhoodGrowthStage
 } from "../neighborhoodLayout";
 import {
+  BAR_STYLES,
   FLOOR_STYLES,
+  HOBBY_PROPS,
+  LIGHTING_FIXTURES,
   MOOD_SHIFT_ACTIONS,
   PATIO_DECORS,
+  PLANT_PACKS,
+  RUG_STYLES,
+  SEATING_STYLES,
+  STATION_UPGRADE_DEFS,
   addGuestbookEntry,
   applyNeighborSocialAction,
   applySimsVibeDelta,
   computeSimsMood,
+  computeStationUpgradeBonuses,
+  defaultLabDecor,
   deriveNeighborLabDecor,
   getNeighborSimsStatus,
+  getNextUpgradeCost,
   getRelationshipTier,
   getSimsPieActions,
   initialSimsVibes,
   loadGuestbookEntries,
   loadLabDecor,
+  randomizeLabDecor,
+  sanitizeLabDecor,
   saveLabDecor,
+  upgradeStationInDecor,
   type SimsObjectTarget
 } from "../simsState";
 
@@ -444,12 +457,64 @@ describe("Living Minted NFT Neighborhood & Sims Interactivity", () => {
     expect(npc1.name.length).toBeGreaterThan(1);
   });
 
-  it("computes Sims Plumbob moods, persists lab decor safely, and generates pie actions for all 10 world entities", () => {
-    expect(FLOOR_STYLES).toHaveLength(4);
-    expect(PATIO_DECORS).toHaveLength(4);
+  it("computes Sims Plumbob moods, persists full 8-category home furnishings & station upgrades, and generates pie actions for all world entities", () => {
+    // Full 8-category Home Furnishing Catalog (43 procedural 3D items!) + 5 Station Upgrades
+    expect(FLOOR_STYLES).toHaveLength(6);
+    expect(PATIO_DECORS).toHaveLength(6);
+    expect(SEATING_STYLES).toHaveLength(5);
+    expect(BAR_STYLES).toHaveLength(5);
+    expect(HOBBY_PROPS).toHaveLength(6);
+    expect(RUG_STYLES).toHaveLength(5);
+    expect(PLANT_PACKS).toHaveLength(5);
+    expect(LIGHTING_FIXTURES).toHaveLength(5);
+    expect(STATION_UPGRADE_DEFS).toHaveLength(5);
 
-    saveLabDecor(99, { floorStyle: "travertine", patioDecor: "prism" });
-    expect(loadLabDecor(99)).toEqual({ floorStyle: "travertine", patioDecor: "prism" });
+    // Backward-compatible partial migration preserves old saved { floorStyle, patioDecor }
+    const migrated = sanitizeLabDecor({ floorStyle: "oak", patioDecor: "cherry-tree" });
+    expect(migrated.floorStyle).toBe("oak");
+    expect(migrated.patioDecor).toBe("cherry-tree");
+    expect(migrated.seatingStyle).toBe("bench");
+    expect(migrated.stationUpgrades).toEqual({ research: 1, mining: 1, pet: 1, builder: 1, lounge: 1 });
+
+    // Full save/load & progressive station upgrades (Lv. 1 -> 2 -> 3)
+    const customDecor = {
+      ...defaultLabDecor(),
+      floorStyle: "obsidian" as const,
+      patioDecor: "mini-orrery" as const,
+      seatingStyle: "egg-chair" as const,
+      barStyle: "boba" as const,
+      hobbyProp: "aquarium" as const,
+      rugStyle: "star-weave" as const,
+      plantPack: "succulents" as const,
+      lightingFixture: "fairy-orbs" as const
+    };
+    saveLabDecor(99, customDecor);
+    expect(loadLabDecor(99)).toEqual(customDecor);
+
+    expect(getNextUpgradeCost(1)).toBe(10);
+    expect(getNextUpgradeCost(2)).toBe(25);
+    expect(getNextUpgradeCost(3)).toBeNull();
+
+    const lv2Mining = upgradeStationInDecor(customDecor, "mining");
+    expect(lv2Mining.stationUpgrades.mining).toBe(2);
+    const lv3Mining = upgradeStationInDecor(lv2Mining, "mining");
+    expect(lv3Mining.stationUpgrades.mining).toBe(3);
+    const lv3Research = upgradeStationInDecor(upgradeStationInDecor(lv3Mining, "research"), "research");
+    const lv3Pet = upgradeStationInDecor(upgradeStationInDecor(lv3Research, "pet"), "pet");
+    const lv3Lounge = upgradeStationInDecor(upgradeStationInDecor(lv3Pet, "lounge"), "lounge");
+
+    const bonuses = computeStationUpgradeBonuses(lv3Lounge.stationUpgrades);
+    expect(bonuses.miningMult).toBe(1.35);
+    expect(bonuses.focusMult).toBe(1.5);
+    expect(bonuses.energyFunMult).toBe(1.6);
+    expect(bonuses.petBoostBonus).toBe(0.25);
+    expect(bonuses.extraFoldSpark).toBe(1);
+    expect(bonuses.totalUpgrades).toBe(8);
+
+    // Randomize look preserves earned station upgrades!
+    const randDecor = randomizeLabDecor(lv3Lounge.stationUpgrades);
+    expect(randDecor.stationUpgrades).toEqual(lv3Lounge.stationUpgrades);
+    expect(SEATING_STYLES.some((s) => s.id === randDecor.seatingStyle)).toBe(true);
 
     const base = initialSimsVibes();
     expect(MOOD_SHIFT_ACTIONS).toHaveLength(6);
@@ -497,6 +562,7 @@ describe("Living Minted NFT Neighborhood & Sims Interactivity", () => {
       { kind: "espresso", label: "Espresso", worldX: -1, worldZ: 1.5 },
       { kind: "microscope", label: "Microscope", worldX: -1.3, worldZ: -0.8 },
       { kind: "harvester", label: "Harvester", worldX: 1.4, worldZ: -0.6 },
+      { kind: "hobby", label: "Jellyfish Aquarium", hobbyId: "aquarium", worldX: -1.34, worldZ: 1.68 },
       { kind: "player", label: "Dr. Aria", worldX: 0, worldZ: 1.4 },
       { kind: "fountain", label: "Fountain", worldX: 0, worldZ: 5.45 },
       { kind: "neighbor-lab", label: "Lab #2", tokenId: 2, worldX: -6, worldZ: 3 },
@@ -516,9 +582,11 @@ describe("Living Minted NFT Neighborhood & Sims Interactivity", () => {
     }
 
     // Visiting another user's home: neighbor-lab leads with Enter Home, visiting-host supports Guestbook & Return Home
-    expect(getSimsPieActions(targets[8])[0].id).toBe("neighbor-enter");
-    expect(getSimsPieActions(targets[10]).some((a) => a.id === "host-guestbook")).toBe(true);
-    expect(getSimsPieActions(targets[10]).some((a) => a.id === "return-home")).toBe(true);
+    expect(getSimsPieActions(targets[9])[0].id).toBe("neighbor-enter");
+    expect(getSimsPieActions(targets[11]).some((a) => a.id === "host-guestbook")).toBe(true);
+    expect(getSimsPieActions(targets[11]).some((a) => a.id === "return-home")).toBe(true);
+    // Hobby props expose contextual Sims interactions
+    expect(getSimsPieActions(targets[6])[0].id).toBe("hobby-watch");
 
     // Deterministic neighbor decor + cozy guestbook persistence
     const seed = "0x1c7d82a941e35b64c028a7f139d05b2468ace13579bdf02468ace13579bd0401";

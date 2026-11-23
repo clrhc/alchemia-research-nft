@@ -1,18 +1,22 @@
 import { useEffect } from "react";
 import {
+  ArrowUpCircle,
   BookOpen,
   Building2,
   Coffee,
   Compass,
   Cookie,
   Cpu,
+  Disc3,
   DoorOpen,
+  Gamepad2,
   Hand,
   Heart,
   Home,
   MessageCircle,
   Microscope,
   Moon,
+  Palette,
   Pickaxe,
   Plus,
   Shirt,
@@ -38,6 +42,13 @@ interface SimsPieMenuProps {
 }
 
 function pickActionIcon(id: string) {
+  if (id.includes("open-upgrades")) return ArrowUpCircle;
+  if (id.includes("hobby-read")) return BookOpen;
+  if (id.includes("hobby-watch")) return Waves;
+  if (id.includes("hobby-music")) return Disc3;
+  if (id.includes("hobby-paint")) return Palette;
+  if (id.includes("hobby-arcade")) return Gamepad2;
+  if (id.includes("hobby-vibe")) return Sparkles;
   if (id.includes("lot-")) return Plus;
   if (id.includes("joke") || id.includes("moods")) return Smile;
   if (id.includes("chat")) return MessageCircle;

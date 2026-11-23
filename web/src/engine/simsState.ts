@@ -6,12 +6,29 @@
 import { PERSONALITY_TRAITS, type PersonalityTraitId } from "./characterConfig";
 import { SeededRNG } from "./prng";
 
-export type FloorStyleId = "terrazzo" | "travertine" | "basalt" | "marble";
-export type PatioDecorId = "bonsai" | "fountain" | "prism" | "lanterns";
+export type FloorStyleId = "terrazzo" | "travertine" | "basalt" | "marble" | "oak" | "obsidian";
+export type PatioDecorId = "bonsai" | "fountain" | "prism" | "lanterns" | "cherry-tree" | "mini-orrery";
+export type SeatingStyleId = "bench" | "plush-sofa" | "egg-chair" | "daybed" | "tatami";
+export type BarStyleId = "espresso" | "matcha" | "smoothie" | "boba" | "samovar";
+export type RugStyleId = "none" | "cloud-rug" | "silver-ring" | "pastel-terrazzo" | "star-weave";
+export type HobbyPropId = "none" | "bookshelf" | "aquarium" | "vinyl" | "easel" | "arcade";
+export type PlantPackId = "minimal" | "monstera" | "bamboo" | "succulents" | "blossom-vases";
+export type LightingFixtureId = "none" | "halo-ring" | "crystal-drops" | "fairy-orbs" | "aurora-arc";
+
+export type UpgradeableStationId = "research" | "mining" | "pet" | "builder" | "lounge";
+export type StationUpgradeLevel = 1 | 2 | 3;
+export type StationUpgradesMap = Record<UpgradeableStationId, StationUpgradeLevel>;
 
 export interface LabDecorConfig {
   floorStyle: FloorStyleId;
   patioDecor: PatioDecorId;
+  seatingStyle: SeatingStyleId;
+  barStyle: BarStyleId;
+  rugStyle: RugStyleId;
+  hobbyProp: HobbyPropId;
+  plantPack: PlantPackId;
+  lightingFixture: LightingFixtureId;
+  stationUpgrades: StationUpgradesMap;
 }
 
 export interface FloorStyleOption {
@@ -21,25 +38,269 @@ export interface FloorStyleOption {
   tint: string;
 }
 
-export interface PatioDecorOption {
-  id: PatioDecorId;
+export interface FurnishCatalogOption<T extends string = string> {
+  id: T;
   label: string;
   desc: string;
+  swatch: string;
 }
+
+export type PatioDecorOption = FurnishCatalogOption<PatioDecorId>;
 
 export const FLOOR_STYLES: readonly FloorStyleOption[] = [
   { id: "terrazzo", label: "Alabaster", swatch: "#f4f7fb", tint: "#f4f7fb" },
   { id: "travertine", label: "Warm Stone", swatch: "#ebe3d5", tint: "#f2eadc" },
   { id: "basalt", label: "Slate", swatch: "#64748b", tint: "#94a3b8" },
-  { id: "marble", label: "Rose Quartz", swatch: "#f5e6ec", tint: "#f8ebf0" }
+  { id: "marble", label: "Rose Quartz", swatch: "#f5e6ec", tint: "#f8ebf0" },
+  { id: "oak", label: "Nordic Oak", swatch: "#e8dfd1", tint: "#f3ece1" },
+  { id: "obsidian", label: "Pearl Graphite", swatch: "#475569", tint: "#cbd5e1" }
+];
+
+export const SEATING_STYLES: readonly FurnishCatalogOption<SeatingStyleId>[] = [
+  { id: "bench", label: "Terrazzo Bench", desc: "Minimalist stone & pearl cushion", swatch: "#e2e8f0" },
+  { id: "plush-sofa", label: "Cloud Sofa", desc: "Tufted silver-bouclé loveseat & pillows", swatch: "#f1f5f9" },
+  { id: "egg-chair", label: "Glass Egg Pod", desc: "Suspended crystal bubble lounge chair", swatch: "#bae6fd" },
+  { id: "daybed", label: "Studio Daybed", desc: "Plush bolster chaise & warm reading lamp", swatch: "#ddd6fe" },
+  { id: "tatami", label: "Zen Tatami", desc: "Woven reed mat, floor pillows & tea tray", swatch: "#d1fae5" }
+];
+
+export const BAR_STYLES: readonly FurnishCatalogOption<BarStyleId>[] = [
+  { id: "espresso", label: "Espresso Bar", desc: "Brushed-chrome quantum elixir brewer", swatch: "#f59e0b" },
+  { id: "matcha", label: "Matcha Bar", desc: "Ceramic chawan bowl, whisk & jade glow", swatch: "#10b981" },
+  { id: "smoothie", label: "Berry Juicer", desc: "Twin crystal fruit-elixir blenders", swatch: "#f472b6" },
+  { id: "boba", label: "Boba Tap Bar", desc: "Pearlescent milk-tea dispenser & straws", swatch: "#c084fc" },
+  { id: "samovar", label: "Silver Samovar", desc: "Sculpted titanium tea urn & porcelain cups", swatch: "#94a3b8" }
+];
+
+export const HOBBY_PROPS: readonly FurnishCatalogOption<HobbyPropId>[] = [
+  { id: "bookshelf", label: "Science Library", desc: "Silver shelving & glowing alchemy tomes", swatch: "#64748b" },
+  { id: "aquarium", label: "Jellyfish Tank", desc: "Lit glass cylinder with floating jellies", swatch: "#38bdf8" },
+  { id: "vinyl", label: "Vinyl Deck", desc: "Spinning hi-fi turntable & dual speakers", swatch: "#818cf8" },
+  { id: "easel", label: "Studio Easel", desc: "Architectural tripod & luminous canvas", swatch: "#f472b6" },
+  { id: "arcade", label: "Mini Arcade", desc: "Cutesy silver-glass pixel game cabinet", swatch: "#10b981" },
+  { id: "none", label: "Open Nook", desc: "Keep the front-left terrace airy & clear", swatch: "#e2e8f0" }
+];
+
+export const RUG_STYLES: readonly FurnishCatalogOption<RugStyleId>[] = [
+  { id: "cloud-rug", label: "Cloud Plush", desc: "Scalloped pearl-white tufted lounge rug", swatch: "#f8fafc" },
+  { id: "silver-ring", label: "Silver Halo", desc: "Concentric brushed-silver woven circle", swatch: "#cbd5e1" },
+  { id: "pastel-terrazzo", label: "Blush Quartz", desc: "Soft rose-and-silver studio oval mat", swatch: "#fce7f3" },
+  { id: "star-weave", label: "Celestial Mat", desc: "Subtle star-compass architectural rug", swatch: "#dbeafe" },
+  { id: "none", label: "Bare Stone", desc: "Showcase your pure architectural floor", swatch: "#e2e8f0" }
 ];
 
 export const PATIO_DECORS: readonly PatioDecorOption[] = [
-  { id: "bonsai", label: "Ceramic Bonsai", desc: "Sculpted silver-leaf studio planter" },
-  { id: "fountain", label: "Zen Basin", desc: "Tiered alabaster reflecting fountain" },
-  { id: "prism", label: "Prism Totem", desc: "Levitating crystal obelisk sculpture" },
-  { id: "lanterns", label: "Glass Lanterns", desc: "Warm architectural patio glow bollards" }
+  { id: "bonsai", label: "Ceramic Bonsai", desc: "Sculpted silver-leaf studio planter", swatch: "#10b981" },
+  { id: "fountain", label: "Zen Basin", desc: "Tiered alabaster reflecting fountain", swatch: "#38bdf8" },
+  { id: "prism", label: "Prism Totem", desc: "Levitating crystal obelisk sculpture", swatch: "#818cf8" },
+  { id: "lanterns", label: "Glass Lanterns", desc: "Warm architectural patio glow bollards", swatch: "#fbbf24" },
+  { id: "cherry-tree", label: "Sakura Tree", desc: "Blooming cherry canopy & floating petals", swatch: "#f9a8d4" },
+  { id: "mini-orrery", label: "Mini Orrery", desc: "Orbiting silver rings & crystal planets", swatch: "#94a3b8" }
 ];
+
+export const PLANT_PACKS: readonly FurnishCatalogOption<PlantPackId>[] = [
+  { id: "minimal", label: "Gallery Minimal", desc: "Open architectural rotunda edges", swatch: "#e2e8f0" },
+  { id: "monstera", label: "Monstera Pots", desc: "Lush tropical leaves in ceramic urns", swatch: "#10b981" },
+  { id: "bamboo", label: "Zen Bamboo", desc: "Tall frosted-glass bamboo stalk screens", swatch: "#34d399" },
+  { id: "succulents", label: "Crystal Domes", desc: "Faceted glass succulent terrariums", swatch: "#38bdf8" },
+  { id: "blossom-vases", label: "Blossom Vases", desc: "Sculpted porcelain sakura amphorae", swatch: "#f472b6" }
+];
+
+export const LIGHTING_FIXTURES: readonly FurnishCatalogOption<LightingFixtureId>[] = [
+  { id: "none", label: "Open Skylight", desc: "Unobstructed sunlit glass atrium", swatch: "#e2e8f0" },
+  { id: "halo-ring", label: "Silver Halo", desc: "Suspended brushed-titanium LED ring", swatch: "#cbd5e1" },
+  { id: "crystal-drops", label: "Crystal Drops", desc: "Cascading frosted glass prism pendants", swatch: "#bae6fd" },
+  { id: "fairy-orbs", label: "Pearl Fireflies", desc: "Orbiting luminous warm glass spheres", swatch: "#fde68a" },
+  { id: "aurora-arc", label: "Aurora Arch", desc: "Iridescent prismatic overhead light arc", swatch: "#c4b5fd" }
+];
+
+export interface StationUpgradeTierInfo {
+  level: StationUpgradeLevel;
+  title: string;
+  hardware: string;
+  perk: string;
+}
+
+export interface StationUpgradeDef {
+  id: UpgradeableStationId;
+  name: string;
+  accent: string;
+  tiers: readonly [StationUpgradeTierInfo, StationUpgradeTierInfo, StationUpgradeTierInfo];
+}
+
+export const STATION_UPGRADE_DEFS: readonly StationUpgradeDef[] = [
+  {
+    id: "research",
+    name: "Protein Microscope",
+    accent: "#38bdf8",
+    tiers: [
+      {
+        level: 1,
+        title: "Optical Scope",
+        hardware: "Single titanium lens & frosted plate",
+        perk: "Base folding analysis"
+      },
+      {
+        level: 2,
+        title: "Cryo-EM Dual Array",
+        hardware: "Twin glowing cryo-lenses & wide holo arc",
+        perk: "+25% Focus from folding"
+      },
+      {
+        level: 3,
+        title: "Quantum Helix Lab",
+        hardware: "Levitating 3D DNA helix & dual emitters",
+        perk: "+50% Focus & +1 spark/fold"
+      }
+    ]
+  },
+  {
+    id: "mining",
+    name: "ALCH Harvester",
+    accent: "#6366f1",
+    tiers: [
+      {
+        level: 1,
+        title: "Quartz Core",
+        hardware: "Single hovering harvester crystal",
+        perk: "Base ALCH yield rate"
+      },
+      {
+        level: 2,
+        title: "Dual Gyro Core",
+        hardware: "Counter-rotating brushed titanium rings",
+        perk: "+15% ALCH yield boost"
+      },
+      {
+        level: 3,
+        title: "Quantum Prism Crown",
+        hardware: "Triple prism crown, beam & orbiting motes",
+        perk: "+35% ALCH yield boost"
+      }
+    ]
+  },
+  {
+    id: "pet",
+    name: "Pet Sanctuary",
+    accent: "#f472b6",
+    tiers: [
+      {
+        level: 1,
+        title: "Porcelain Cushion",
+        hardware: "Sunlit patio resting pad",
+        perk: "Base companion boost"
+      },
+      {
+        level: 2,
+        title: "Cloud Bed & Bowls",
+        hardware: "Tufted plush pet cloud & twin ceramic bowls",
+        perk: "+0.10x pet lab speed"
+      },
+      {
+        level: 3,
+        title: "Silver Cat Tower",
+        hardware: "Multi-tier glass perch & dangling star toy",
+        perk: "+0.25x pet lab speed"
+      }
+    ]
+  },
+  {
+    id: "builder",
+    name: "Architect Studio",
+    accent: "#10b981",
+    tiers: [
+      {
+        level: 1,
+        title: "Drafting Pad",
+        hardware: "Floor beacon & spatial tools",
+        perk: "Full room & decor editor"
+      },
+      {
+        level: 2,
+        title: "Blueprint Table",
+        hardware: "Frosted-glass CAD desk & glowing floorplan",
+        perk: "+5% ALCH & +15% Focus"
+      },
+      {
+        level: 3,
+        title: "Holo Town Table",
+        hardware: "Spinning 3D Alchemia Town miniature hologram",
+        perk: "+12% ALCH & +30% Focus"
+      }
+    ]
+  },
+  {
+    id: "lounge",
+    name: "Comfort Lounge",
+    accent: "#a855f7",
+    tiers: [
+      {
+        level: 1,
+        title: "Classic Nook",
+        hardware: "Seating & refreshment counter",
+        perk: "Base Energy & Fun recovery"
+      },
+      {
+        level: 2,
+        title: "Aroma Diffuser Table",
+        hardware: "Alabaster side table & glowing mist diffuser",
+        perk: "+30% Energy & Fun recovery"
+      },
+      {
+        level: 3,
+        title: "Aurora Hearth Halo",
+        hardware: "Floating glass hearth crystal & silver halo",
+        perk: "+60% Energy & Fun recovery"
+      }
+    ]
+  }
+];
+
+export function getNextUpgradeCost(level: StationUpgradeLevel): number | null {
+  if (level === 1) return 10;
+  if (level === 2) return 25;
+  return null;
+}
+
+export function defaultStationUpgrades(): StationUpgradesMap {
+  return { research: 1, mining: 1, pet: 1, builder: 1, lounge: 1 };
+}
+
+export interface StationUpgradeBonuses {
+  focusMult: number;
+  energyFunMult: number;
+  miningMult: number;
+  petBoostBonus: number;
+  extraFoldSpark: number;
+  totalUpgrades: number;
+}
+
+export function computeStationUpgradeBonuses(upgrades: StationUpgradesMap): StationUpgradeBonuses {
+  const focusMult =
+    (upgrades.research === 3 ? 1.5 : upgrades.research === 2 ? 1.25 : 1) +
+    (upgrades.builder === 3 ? 0.3 : upgrades.builder === 2 ? 0.15 : 0);
+  const energyFunMult = upgrades.lounge === 3 ? 1.6 : upgrades.lounge === 2 ? 1.3 : 1;
+  const miningMult =
+    1 +
+    (upgrades.mining === 3 ? 0.35 : upgrades.mining === 2 ? 0.15 : 0) +
+    (upgrades.builder === 3 ? 0.12 : upgrades.builder === 2 ? 0.05 : 0);
+  const petBoostBonus = upgrades.pet === 3 ? 0.25 : upgrades.pet === 2 ? 0.1 : 0;
+  const extraFoldSpark = upgrades.research === 3 ? 1 : 0;
+  const totalUpgrades =
+    (upgrades.research - 1) +
+    (upgrades.mining - 1) +
+    (upgrades.pet - 1) +
+    (upgrades.builder - 1) +
+    (upgrades.lounge - 1);
+  return {
+    focusMult: Number(focusMult.toFixed(2)),
+    energyFunMult: Number(energyFunMult.toFixed(2)),
+    miningMult: Number(miningMult.toFixed(2)),
+    petBoostBonus,
+    extraFoldSpark,
+    totalUpgrades
+  };
+}
 
 export interface SimsVibes {
   energy: number; // 0..100 (Recharged by Bench / Espresso / Power Rest)
@@ -248,6 +509,7 @@ export type SimsObjectTarget =
   | { kind: "espresso"; label: string; worldX: number; worldZ: number }
   | { kind: "microscope"; label: string; worldX: number; worldZ: number }
   | { kind: "harvester"; label: string; worldX: number; worldZ: number }
+  | { kind: "hobby"; label: string; hobbyId: Exclude<HobbyPropId, "none">; worldX: number; worldZ: number }
   | { kind: "player"; label: string; worldX: number; worldZ: number }
   | { kind: "fountain"; label: string; worldX: number; worldZ: number }
   | { kind: "neighbor-lab"; label: string; tokenId: number; worldX: number; worldZ: number }
@@ -275,14 +537,124 @@ const DECOR_STORAGE_PREFIX = "alchemia_lab_decor_v1_";
 const memoryDecorMap = new Map<number, LabDecorConfig>();
 
 export function defaultLabDecor(): LabDecorConfig {
-  return { floorStyle: "terrazzo", patioDecor: "bonsai" };
+  return {
+    floorStyle: "terrazzo",
+    patioDecor: "bonsai",
+    seatingStyle: "bench",
+    barStyle: "espresso",
+    rugStyle: "cloud-rug",
+    hobbyProp: "bookshelf",
+    plantPack: "minimal",
+    lightingFixture: "none",
+    stationUpgrades: defaultStationUpgrades()
+  };
+}
+
+function clampUpgradeLevel(v: unknown): StationUpgradeLevel {
+  if (v === 3 || v === 2) return v;
+  return 1;
+}
+
+export function sanitizeLabDecor(raw?: Partial<LabDecorConfig> | null): LabDecorConfig {
+  const def = defaultLabDecor();
+  if (!raw || typeof raw !== "object") return def;
+  const up = raw.stationUpgrades as Partial<StationUpgradesMap> | undefined;
+  return {
+    floorStyle: FLOOR_STYLES.some((f) => f.id === raw.floorStyle)
+      ? (raw.floorStyle as FloorStyleId)
+      : def.floorStyle,
+    patioDecor: PATIO_DECORS.some((p) => p.id === raw.patioDecor)
+      ? (raw.patioDecor as PatioDecorId)
+      : def.patioDecor,
+    seatingStyle: SEATING_STYLES.some((s) => s.id === raw.seatingStyle)
+      ? (raw.seatingStyle as SeatingStyleId)
+      : def.seatingStyle,
+    barStyle: BAR_STYLES.some((b) => b.id === raw.barStyle)
+      ? (raw.barStyle as BarStyleId)
+      : def.barStyle,
+    rugStyle: RUG_STYLES.some((r) => r.id === raw.rugStyle)
+      ? (raw.rugStyle as RugStyleId)
+      : def.rugStyle,
+    hobbyProp: HOBBY_PROPS.some((h) => h.id === raw.hobbyProp)
+      ? (raw.hobbyProp as HobbyPropId)
+      : def.hobbyProp,
+    plantPack: PLANT_PACKS.some((p) => p.id === raw.plantPack)
+      ? (raw.plantPack as PlantPackId)
+      : def.plantPack,
+    lightingFixture: LIGHTING_FIXTURES.some((l) => l.id === raw.lightingFixture)
+      ? (raw.lightingFixture as LightingFixtureId)
+      : def.lightingFixture,
+    stationUpgrades: {
+      research: clampUpgradeLevel(up?.research),
+      mining: clampUpgradeLevel(up?.mining),
+      pet: clampUpgradeLevel(up?.pet),
+      builder: clampUpgradeLevel(up?.builder),
+      lounge: clampUpgradeLevel(up?.lounge)
+    }
+  };
 }
 
 export function deriveNeighborLabDecor(seed: string): LabDecorConfig {
   const rng = new SeededRNG(seed, 4123);
-  const floorStyle = FLOOR_STYLES[Math.floor(rng.next() * FLOOR_STYLES.length)].id;
-  const patioDecor = PATIO_DECORS[Math.floor(rng.next() * PATIO_DECORS.length)].id;
-  return { floorStyle, patioDecor };
+  const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(rng.next() * arr.length)];
+  const activeHobbies = HOBBY_PROPS.filter((h) => h.id !== "none");
+  const activeRugs = RUG_STYLES.filter((r) => r.id !== "none");
+  const activeLights = LIGHTING_FIXTURES.filter((l) => l.id !== "none");
+  const pickLevel = (): StationUpgradeLevel => {
+    const r = rng.next();
+    return r > 0.72 ? 3 : r > 0.34 ? 2 : 1;
+  };
+  return {
+    floorStyle: pick(FLOOR_STYLES).id,
+    patioDecor: pick(PATIO_DECORS).id,
+    seatingStyle: pick(SEATING_STYLES).id,
+    barStyle: pick(BAR_STYLES).id,
+    rugStyle: pick(activeRugs).id,
+    hobbyProp: pick(activeHobbies).id,
+    plantPack: pick(PLANT_PACKS).id,
+    lightingFixture: pick(activeLights).id,
+    stationUpgrades: {
+      research: pickLevel(),
+      mining: pickLevel(),
+      pet: pickLevel(),
+      builder: pickLevel(),
+      lounge: pickLevel()
+    }
+  };
+}
+
+export function randomizeLabDecor(keepUpgrades?: StationUpgradesMap): LabDecorConfig {
+  const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)];
+  const activeHobbies = HOBBY_PROPS.filter((h) => h.id !== "none");
+  const activeRugs = RUG_STYLES.filter((r) => r.id !== "none");
+  const activePlants = PLANT_PACKS.filter((p) => p.id !== "minimal");
+  const activeLights = LIGHTING_FIXTURES.filter((l) => l.id !== "none");
+  return {
+    floorStyle: pick(FLOOR_STYLES).id,
+    patioDecor: pick(PATIO_DECORS).id,
+    seatingStyle: pick(SEATING_STYLES).id,
+    barStyle: pick(BAR_STYLES).id,
+    rugStyle: pick(activeRugs).id,
+    hobbyProp: pick(activeHobbies).id,
+    plantPack: pick(activePlants).id,
+    lightingFixture: pick(activeLights).id,
+    stationUpgrades: keepUpgrades ? { ...keepUpgrades } : defaultStationUpgrades()
+  };
+}
+
+export function upgradeStationInDecor(
+  decor: LabDecorConfig,
+  stationId: UpgradeableStationId
+): LabDecorConfig {
+  const cur = decor.stationUpgrades[stationId];
+  const next: StationUpgradeLevel = cur === 1 ? 2 : 3;
+  return {
+    ...decor,
+    stationUpgrades: {
+      ...decor.stationUpgrades,
+      [stationId]: next
+    }
+  };
 }
 
 export function loadLabDecor(tokenId: number, fallbackSeed?: string): LabDecorConfig {
@@ -294,13 +666,7 @@ export function loadLabDecor(tokenId: number, fallbackSeed?: string): LabDecorCo
     const raw = window.localStorage.getItem(`${DECOR_STORAGE_PREFIX}${tokenId}`);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<LabDecorConfig>;
-    const floorStyle = FLOOR_STYLES.some((f) => f.id === parsed.floorStyle)
-      ? (parsed.floorStyle as FloorStyleId)
-      : "terrazzo";
-    const patioDecor = PATIO_DECORS.some((p) => p.id === parsed.patioDecor)
-      ? (parsed.patioDecor as PatioDecorId)
-      : "bonsai";
-    const clean = { floorStyle, patioDecor };
+    const clean = sanitizeLabDecor(parsed);
     memoryDecorMap.set(tokenId, clean);
     return clean;
   } catch {
@@ -308,16 +674,20 @@ export function loadLabDecor(tokenId: number, fallbackSeed?: string): LabDecorCo
   }
 }
 
-export function saveLabDecor(tokenId: number, decor: LabDecorConfig): LabDecorConfig {
-  memoryDecorMap.set(tokenId, decor);
+export function saveLabDecor(
+  tokenId: number,
+  decor: Partial<LabDecorConfig>
+): LabDecorConfig {
+  const clean = sanitizeLabDecor(decor);
+  memoryDecorMap.set(tokenId, clean);
   if (typeof window !== "undefined") {
     try {
-      window.localStorage.setItem(`${DECOR_STORAGE_PREFIX}${tokenId}`, JSON.stringify(decor));
+      window.localStorage.setItem(`${DECOR_STORAGE_PREFIX}${tokenId}`, JSON.stringify(clean));
     } catch {
       // safe in sandboxed NFT iframes
     }
   }
-  return decor;
+  return clean;
 }
 
 export function initialSimsVibes(): SimsVibes {
@@ -616,26 +986,46 @@ export function getSimsPieActions(
       return [
         { id: "bench-sit", label: "Sit & Rest", sublabel: "+Energy", accent: "#10b981" },
         { id: "bench-meditate", label: "Stargaze Fold", sublabel: "+Focus", accent: "#38bdf8" },
-        { id: "open-builder", label: "Decorate Patio", accent: "#8b5cf6" }
+        { id: "open-builder", label: "Furnish Home", accent: "#8b5cf6" },
+        { id: "open-upgrades", label: "Upgrade Lounge", sublabel: "Lv 1–3", accent: "#a855f7" }
       ];
     case "espresso":
       return [
         { id: "espresso-brew", label: "Brew Elixir", sublabel: "Energized!", accent: "#f59e0b" },
         { id: "espresso-share", label: "Toast Science", sublabel: "+Social", accent: "#f472b6" },
+        { id: "open-builder", label: "Swap Bar", accent: "#8b5cf6" },
         { id: "open-console", label: "Sims Status", accent: "#64748b" }
       ];
     case "microscope":
       return [
         { id: "micro-analyze", label: "Analyze Fold", sublabel: "Focused!", accent: "#38bdf8" },
         { id: "fold-wiggle", label: "Wiggle", sublabel: "+1 spark", accent: "#10b981" },
+        { id: "open-upgrades", label: "Upgrade Scope", sublabel: "Lv 1–3", accent: "#8b5cf6" },
         { id: "open-research", label: "Open Workbench", accent: "#6366f1" }
       ];
     case "harvester":
       return [
         { id: "mine-overclock", label: "Spin Blades", sublabel: "+Focus", accent: "#6366f1" },
         { id: "open-mining", label: "Claim ALCH", accent: "#f59e0b" },
-        { id: "open-builder", label: "Add Rooms", accent: "#10b981" }
+        { id: "open-upgrades", label: "Upgrade Station", sublabel: "Lv 1–3", accent: "#10b981" }
       ];
+    case "hobby": {
+      const primary =
+        target.hobbyId === "bookshelf"
+          ? { id: "hobby-read", label: "Read Alchemy", sublabel: "Focused!", accent: "#38bdf8" }
+          : target.hobbyId === "aquarium"
+            ? { id: "hobby-watch", label: "Watch Jellies", sublabel: "Relaxed!", accent: "#34d399" }
+            : target.hobbyId === "vinyl"
+              ? { id: "hobby-music", label: "Spin Vinyl", sublabel: "Playful!", accent: "#818cf8" }
+              : target.hobbyId === "easel"
+                ? { id: "hobby-paint", label: "Paint Helix", sublabel: "Inspired!", accent: "#f472b6" }
+                : { id: "hobby-arcade", label: "Play Arcade", sublabel: "+2 sparks", accent: "#10b981" };
+      return [
+        primary,
+        { id: "hobby-vibe", label: "Admire Craft", sublabel: "+Fun", accent: "#a855f7" },
+        { id: "open-builder", label: "Swap Furniture", accent: "#64748b" }
+      ];
+    }
     case "player":
       return [
         { id: "open-moods", label: "Moods & Friends", sublabel: "Change vibe", accent: "#10b981" },

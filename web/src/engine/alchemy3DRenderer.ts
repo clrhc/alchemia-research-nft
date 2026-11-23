@@ -584,14 +584,28 @@ export class Alchemy3DRenderer {
   }
 
   public setLabDecor(decor: LabDecorConfig) {
-    this.labDecor = { ...decor };
+    const prevUpgrades = this.labDecor.stationUpgrades;
+    this.labDecor = {
+      ...decor,
+      stationUpgrades: { ...decor.stationUpgrades }
+    };
     this.applyFloorFinish();
-    this.simsFurniture?.setPatioDecor(
-      decor.patioDecor,
-      this.traits.palette.liquidMid,
-      this.terrazzoTex,
-      this.titaniumTex
-    );
+    if (this.simsFurniture) {
+      this.simsFurniture.updateFurnishings(this.labDecor, this.traits.palette.liquidMid);
+      // Celebrate any upgraded station with a radiant silver-and-accent particle burst!
+      const stations = ["research", "mining", "pet", "builder", "lounge"] as const;
+      for (const st of stations) {
+        if (decor.stationUpgrades[st] > prevUpgrades[st]) {
+          const pos = this.simsFurniture.getStationUpgradeWorldPos(st);
+          this.spawnColoredBurst(pos, 18, [
+            "#ffffff",
+            this.traits.palette.electron,
+            this.traits.palette.liquidMid,
+            "#fbbf24"
+          ]);
+        }
+      }
+    }
   }
 
   public setPlumbobColor(hex: string, moodName?: string) {
@@ -624,7 +638,9 @@ export class Alchemy3DRenderer {
     }
   }
 
-  public getSimsFurnitureAnchor(kind: "bench" | "espresso" | "microscope" | "harvester") {
+  public getSimsFurnitureAnchor(
+    kind: "bench" | "espresso" | "microscope" | "harvester" | "hobby"
+  ) {
     if (!this.simsFurniture) return { x: 0, z: 1.38, yaw: 0 };
     if (kind === "bench") {
       return {
@@ -645,6 +661,13 @@ export class Alchemy3DRenderer {
         x: this.simsFurniture.microscopeStandPos.x,
         z: this.simsFurniture.microscopeStandPos.z,
         yaw: this.simsFurniture.microscopeStandYaw
+      };
+    }
+    if (kind === "hobby") {
+      return {
+        x: this.simsFurniture.hobbyStandPos.x,
+        z: this.simsFurniture.hobbyStandPos.z,
+        yaw: this.simsFurniture.hobbyStandYaw
       };
     }
     return {
@@ -1347,12 +1370,12 @@ export class Alchemy3DRenderer {
     this.diegeticMonitors = new DiegeticLabMonitors3D();
     this.walkCampusGroup.add(this.diegeticMonitors.group);
 
-    // Interactive Sims-Style Lab Furniture & Swappable Patio Decor
+    // Interactive Sims-Style Lab Furniture, Home Furnishings & Progressive Station Upgrades
     this.simsFurniture = new SimsFurniture3D(
       this.terrazzoTex,
       this.titaniumTex,
       this.traits.palette.liquidMid,
-      this.labDecor.patioDecor
+      this.labDecor
     );
     this.walkCampusGroup.add(this.simsFurniture.group);
 

@@ -71,9 +71,9 @@ export const LAB_STATIONS: readonly LabStationDef[] = [
   },
   {
     id: "builder",
-    label: "Room Architect",
-    shortLabel: "Build",
-    subtitle: "Add 3D architectural wings & upgrade",
+    label: "Furnish & Upgrades",
+    shortLabel: "Furnish",
+    subtitle: "43 furnishings, station upgrades & wings",
     accent: "#10b981",
     padX: -1.04,
     padZ: 1.34,

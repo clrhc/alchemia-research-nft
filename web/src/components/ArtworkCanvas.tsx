@@ -35,7 +35,7 @@ export interface ArtworkCanvasHandle {
   updateMonitorTelemetry: (data: DiegeticMonitorTelemetry) => void;
   flipCreatorView: (back: boolean) => void;
   performSimsAction: (req: SimsActionRequest) => void;
-  getSimsFurnitureAnchor: (kind: "bench" | "espresso" | "microscope" | "harvester") => {
+  getSimsFurnitureAnchor: (kind: "bench" | "espresso" | "microscope" | "harvester" | "hobby") => {
     x: number;
     z: number;
     yaw: number;
@@ -372,7 +372,21 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
 
   useEffect(() => {
     if (labDecor) rendererRef.current?.setLabDecor(labDecor);
-  }, [labDecor?.floorStyle, labDecor?.patioDecor]);
+  }, [
+    labDecor?.floorStyle,
+    labDecor?.patioDecor,
+    labDecor?.seatingStyle,
+    labDecor?.barStyle,
+    labDecor?.rugStyle,
+    labDecor?.hobbyProp,
+    labDecor?.plantPack,
+    labDecor?.lightingFixture,
+    labDecor?.stationUpgrades.research,
+    labDecor?.stationUpgrades.mining,
+    labDecor?.stationUpgrades.pet,
+    labDecor?.stationUpgrades.builder,
+    labDecor?.stationUpgrades.lounge
+  ]);
 
   useEffect(() => {
     rendererRef.current?.setPlumbobColor(plumbobColor, playerMoodName);

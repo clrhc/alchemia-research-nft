@@ -231,11 +231,11 @@ export type MoodBubbleKind =
   | "idea";
 
 /**
- * Procedural Warm Travertine, Slate Basalt, Rose Marble & Architectural District Grass
+ * Procedural Warm Travertine, Slate Basalt, Rose Marble, Nordic Silver Oak & Pearl Graphite
  * textures for Sims-style floor customization and the expanding minted neighborhood!
  */
 export function createFloorFinishTexture(
-  kind: "travertine" | "basalt" | "marble"
+  kind: "travertine" | "basalt" | "marble" | "oak" | "obsidian"
 ): THREE.CanvasTexture {
   const size = 512;
   const canvas = document.createElement("canvas");
@@ -243,27 +243,92 @@ export function createFloorFinishTexture(
   canvas.height = size;
   const ctx = canvas.getContext("2d")!;
 
+  if (kind === "oak") {
+    // Pale Nordic Silver-Washed Oak Floorboards
+    ctx.fillStyle = "#ece6dc";
+    ctx.fillRect(0, 0, size, size);
+
+    const plankH = 64;
+    let seed = 71237;
+    const rand = () => {
+      seed = (seed * 16807) % 2147483647;
+      return seed / 2147483647;
+    };
+
+    for (let row = 0; row < size / plankH; row++) {
+      const y = row * plankH;
+      const shadeShift = Math.round((rand() - 0.5) * 14);
+      ctx.fillStyle = `rgb(${235 + shadeShift}, ${229 + shadeShift}, ${219 + shadeShift})`;
+      ctx.fillRect(0, y, size, plankH);
+
+      // Fine soft silver-oak woodgrain streaks
+      ctx.strokeStyle = "rgba(148, 138, 126, 0.14)";
+      ctx.lineWidth = 1;
+      for (let g = 0; g < 7; g++) {
+        const gy = y + 6 + g * 8.2;
+        ctx.beginPath();
+        ctx.moveTo(0, gy);
+        for (let x = 0; x <= size; x += 32) {
+          ctx.lineTo(x, gy + Math.sin(x * 0.02 + row * 1.7 + g) * 2.1);
+        }
+        ctx.stroke();
+      }
+
+      // Plank seams (horizontal + staggered vertical joints)
+      ctx.strokeStyle = "rgba(120, 113, 108, 0.24)";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(size, y);
+      ctx.stroke();
+
+      const jointX = ((row * 176 + 96) % size);
+      ctx.beginPath();
+      ctx.moveTo(jointX, y);
+      ctx.lineTo(jointX, y + plankH);
+      ctx.stroke();
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
   const base =
-    kind === "travertine" ? "#efe7d8" : kind === "basalt" ? "#475569" : "#f7eaef";
+    kind === "travertine"
+      ? "#efe7d8"
+      : kind === "basalt"
+        ? "#475569"
+        : kind === "obsidian"
+          ? "#334155"
+          : "#f7eaef";
   const vein =
     kind === "travertine"
       ? "rgba(182, 162, 132, 0.25)"
       : kind === "basalt"
         ? "rgba(226, 232, 240, 0.14)"
-        : "rgba(219, 152, 178, 0.24)";
+        : kind === "obsidian"
+          ? "rgba(226, 232, 240, 0.24)"
+          : "rgba(219, 152, 178, 0.24)";
   const fleck =
     kind === "travertine"
       ? "rgba(255, 250, 240, 0.45)"
       : kind === "basalt"
         ? "rgba(148, 163, 184, 0.22)"
-        : "rgba(255, 255, 255, 0.55)";
+        : kind === "obsidian"
+          ? "rgba(241, 245, 249, 0.26)"
+          : "rgba(255, 255, 255, 0.55)";
 
   ctx.fillStyle = base;
   ctx.fillRect(0, 0, size, size);
 
   // Subtle architectural stone tile seams
   ctx.strokeStyle =
-    kind === "basalt" ? "rgba(30, 41, 59, 0.35)" : "rgba(148, 163, 184, 0.18)";
+    kind === "basalt" || kind === "obsidian"
+      ? "rgba(15, 23, 42, 0.36)"
+      : "rgba(148, 163, 184, 0.18)";
   ctx.lineWidth = 1.2;
   for (let i = 0; i <= size; i += 128) {
     ctx.beginPath();
@@ -278,7 +343,7 @@ export function createFloorFinishTexture(
 
   // Organic mineral veins
   ctx.strokeStyle = vein;
-  ctx.lineWidth = 1.6;
+  ctx.lineWidth = kind === "obsidian" ? 1.4 : 1.6;
   for (let v = 0; v < 10; v++) {
     ctx.beginPath();
     let vx = (v * 61) % size;
@@ -292,7 +357,14 @@ export function createFloorFinishTexture(
     ctx.stroke();
   }
 
-  let seed = kind === "travertine" ? 13371 : kind === "basalt" ? 29117 : 44893;
+  let seed =
+    kind === "travertine"
+      ? 13371
+      : kind === "basalt"
+        ? 29117
+        : kind === "obsidian"
+          ? 61909
+          : 44893;
   const rand = () => {
     seed = (seed * 16807) % 2147483647;
     return seed / 2147483647;
