@@ -1,13 +1,57 @@
 /**
- * Customizable 3D Researcher Character Configuration, Archetype Presets &
- * Sandbox-Safe Persistence (localStorage + in-memory + URL hash codec for NFT iframes).
+ * Customizable 3D Researcher Character Configuration, Full Clothing Wardrobe,
+ * Archetype Presets & Sandbox-Safe Persistence (localStorage + in-memory + URL codec).
  */
 
-export type HairStyleId = "bob" | "bun" | "spiky" | "long" | "curly" | "buzz";
-export type OutfitStyleId = "labcoat" | "tunic" | "hoodie" | "jumpsuit" | "cape";
+export type HairStyleId =
+  | "bob"
+  | "bun"
+  | "spiky"
+  | "long"
+  | "curly"
+  | "buzz"
+  | "pigtails"
+  | "ponytail"
+  | "waves";
+
+export type OutfitStyleId =
+  | "labcoat"
+  | "tunic"
+  | "hoodie"
+  | "jumpsuit"
+  | "cape"
+  | "cardigan"
+  | "blazer"
+  | "sweater"
+  | "kimono"
+  | "puffer"
+  | "overalls"
+  | "sundress";
+
+export type BottomStyleId = "slacks" | "skirt" | "shorts" | "joggers" | "wideleg";
+export type FootwearStyleId = "boots" | "sneakers" | "loafers" | "maryjanes" | "hoverkicks";
+export type NeckwearId = "none" | "scarf" | "bowtie" | "necklace" | "stethoscope" | "tie";
+
 export type EyewearId = "none" | "round" | "goggles" | "visor" | "shades";
-export type HeadwearId = "none" | "beret" | "halo" | "headphones" | "cap";
-export type BackpackId = "none" | "flaskpack" | "satchel" | "holodrone";
+export type HeadwearId =
+  | "none"
+  | "beret"
+  | "halo"
+  | "headphones"
+  | "cap"
+  | "catears"
+  | "bow"
+  | "crown"
+  | "beanie";
+export type BackpackId =
+  | "none"
+  | "flaskpack"
+  | "satchel"
+  | "holodrone"
+  | "wings"
+  | "plushpack"
+  | "capelet";
+
 export type ExpressionId = "smile" | "focused" | "delighted" | "serene";
 export type BuildScaleId = "compact" | "classic" | "tall";
 export type PersonalityTraitId =
@@ -36,7 +80,12 @@ export interface CharacterProfile {
   hairStyle: HairStyleId;
   hairColor: string;
   outfitStyle: OutfitStyleId;
+  outfitBaseColor?: string;
   outfitAccent: string;
+  bottomStyle?: BottomStyleId;
+  bottomColor?: string;
+  footwearStyle?: FootwearStyleId;
+  neckwear?: NeckwearId;
   eyewear: EyewearId;
   headwear: HeadwearId;
   backpack: BackpackId;
@@ -117,6 +166,9 @@ export const BUILD_SCALE_MULTIPLIER: Record<BuildScaleId, number> = {
 export const HAIR_STYLES: readonly StyleOption<HairStyleId>[] = [
   { id: "bob", label: "Sleek Bob" },
   { id: "bun", label: "Lab Bun" },
+  { id: "pigtails", label: "Twin Puffs" },
+  { id: "ponytail", label: "High Pony" },
+  { id: "waves", label: "Soft Waves" },
   { id: "spiky", label: "Swept" },
   { id: "long", label: "Flowing" },
   { id: "curly", label: "Curly Cloud" },
@@ -130,15 +182,34 @@ export const HAIR_COLORS: readonly SwatchOption[] = [
   { id: "blonde", label: "Honey", hex: "#d9b473" },
   { id: "silver", label: "Silver Frost", hex: "#cfd8e6" },
   { id: "rose", label: "Rose Quartz", hex: "#df88ad" },
-  { id: "cobalt", label: "Cobalt Mist", hex: "#5b8def" }
+  { id: "cobalt", label: "Cobalt Mist", hex: "#5b8def" },
+  { id: "lavender", label: "Lilac Mist", hex: "#b794f4" }
 ];
 
 export const OUTFIT_STYLES: readonly StyleOption<OutfitStyleId>[] = [
   { id: "labcoat", label: "Lab Coat" },
-  { id: "tunic", label: "Atelier Tunic" },
+  { id: "cardigan", label: "Cozy Cardigan" },
+  { id: "sweater", label: "Turtleneck" },
   { id: "hoodie", label: "Studio Hoodie" },
+  { id: "blazer", label: "Silver Blazer" },
+  { id: "puffer", label: "Cloud Puffer" },
+  { id: "overalls", label: "Overalls" },
+  { id: "sundress", label: "Pleated Dress" },
+  { id: "kimono", label: "Silk Haori" },
+  { id: "tunic", label: "Atelier Tunic" },
   { id: "jumpsuit", label: "Flight Suit" },
   { id: "cape", label: "Scholar Cloak" }
+];
+
+export const OUTFIT_BASE_COLORS: readonly SwatchOption[] = [
+  { id: "pearl", label: "Pearl White", hex: "#f8fafd" },
+  { id: "silver", label: "Silver Mist", hex: "#dde4ef" },
+  { id: "slate", label: "Charcoal", hex: "#313c50" },
+  { id: "blush", label: "Soft Blush", hex: "#fce7f3" },
+  { id: "sky", label: "Baby Sky", hex: "#dbeafe" },
+  { id: "matcha", label: "Matcha Cream", hex: "#d1fae5" },
+  { id: "lilac", label: "Lavender Fog", hex: "#ede9fe" },
+  { id: "oat", label: "Warm Oat", hex: "#efe6d8" }
 ];
 
 export const OUTFIT_ACCENTS: readonly SwatchOption[] = [
@@ -148,7 +219,45 @@ export const OUTFIT_ACCENTS: readonly SwatchOption[] = [
   { id: "violet", label: "Prism", hex: "#8b5cf6" },
   { id: "amber", label: "Amber", hex: "#f59e0b" },
   { id: "slate", label: "Slate", hex: "#475569" },
-  { id: "cyan", label: "Glacier", hex: "#38bdf8" }
+  { id: "cyan", label: "Glacier", hex: "#38bdf8" },
+  { id: "sakura", label: "Sakura", hex: "#f9a8d4" },
+  { id: "lilac", label: "Lilac", hex: "#c4b5fd" },
+  { id: "gold", label: "Champagne", hex: "#eab308" }
+];
+
+export const BOTTOM_STYLES: readonly StyleOption<BottomStyleId>[] = [
+  { id: "slacks", label: "Slacks" },
+  { id: "skirt", label: "Pleated Skirt" },
+  { id: "shorts", label: "Cuffed Shorts" },
+  { id: "joggers", label: "Cozy Joggers" },
+  { id: "wideleg", label: "Wide Trousers" }
+];
+
+export const BOTTOM_COLORS: readonly SwatchOption[] = [
+  { id: "slate", label: "Slate Navy", hex: "#263042" },
+  { id: "cloud", label: "Cloud White", hex: "#f1f5f9" },
+  { id: "silver", label: "Mist Grey", hex: "#94a3b8" },
+  { id: "denim", label: "Soft Denim", hex: "#4f6d9a" },
+  { id: "sage", label: "Studio Sage", hex: "#6b8e78" },
+  { id: "clay", label: "Rose Clay", hex: "#b57b93" },
+  { id: "espresso", label: "Warm Cocoa", hex: "#4a3b34" }
+];
+
+export const FOOTWEAR_STYLES: readonly StyleOption<FootwearStyleId>[] = [
+  { id: "boots", label: "Lab Boots" },
+  { id: "sneakers", label: "Cloud Sneakers" },
+  { id: "loafers", label: "Silver Loafers" },
+  { id: "maryjanes", label: "Mary Janes" },
+  { id: "hoverkicks", label: "Hover Kicks" }
+];
+
+export const NECKWEAR_OPTIONS: readonly StyleOption<NeckwearId>[] = [
+  { id: "none", label: "None" },
+  { id: "scarf", label: "Cozy Scarf" },
+  { id: "bowtie", label: "Ribbon Bow" },
+  { id: "necklace", label: "Crystal Gem" },
+  { id: "stethoscope", label: "Lab Scope" },
+  { id: "tie", label: "Atelier Tie" }
 ];
 
 export const EYEWEAR_OPTIONS: readonly StyleOption<EyewearId>[] = [
@@ -161,16 +270,23 @@ export const EYEWEAR_OPTIONS: readonly StyleOption<EyewearId>[] = [
 
 export const HEADWEAR_OPTIONS: readonly StyleOption<HeadwearId>[] = [
   { id: "none", label: "None" },
+  { id: "catears", label: "Cat Ears" },
   { id: "beret", label: "Studio Beret" },
+  { id: "bow", label: "Ribbon Bow" },
+  { id: "beanie", label: "Cozy Beanie" },
   { id: "halo", label: "Prism Halo" },
+  { id: "crown", label: "Crystal Tiara" },
   { id: "headphones", label: "Headphones" },
   { id: "cap", label: "Lab Cap" }
 ];
 
 export const BACKPACK_OPTIONS: readonly StyleOption<BackpackId>[] = [
   { id: "flaskpack", label: "Elixir Pack" },
+  { id: "wings", label: "Fairy Wings" },
+  { id: "plushpack", label: "Kitty Pack" },
   { id: "holodrone", label: "Holo Drone" },
   { id: "satchel", label: "Field Satchel" },
+  { id: "capelet", label: "Star Capelet" },
   { id: "none", label: "Minimal" }
 ];
 
@@ -189,7 +305,12 @@ export const CHARACTER_PRESETS: readonly CharacterPreset[] = [
       hairStyle: "bob",
       hairColor: "#1f2533",
       outfitStyle: "labcoat",
+      outfitBaseColor: "#f8fafd",
       outfitAccent: "#5b8def",
+      bottomStyle: "slacks",
+      bottomColor: "#263042",
+      footwearStyle: "boots",
+      neckwear: "stethoscope",
       eyewear: "round",
       headwear: "none",
       backpack: "flaskpack"
@@ -209,7 +330,12 @@ export const CHARACTER_PRESETS: readonly CharacterPreset[] = [
       hairStyle: "bun",
       hairColor: "#cfd8e6",
       outfitStyle: "tunic",
+      outfitBaseColor: "#dde4ef",
       outfitAccent: "#10b981",
+      bottomStyle: "wideleg",
+      bottomColor: "#263042",
+      footwearStyle: "loafers",
+      neckwear: "necklace",
       eyewear: "visor",
       headwear: "halo",
       backpack: "holodrone"
@@ -229,7 +355,12 @@ export const CHARACTER_PRESETS: readonly CharacterPreset[] = [
       hairStyle: "spiky",
       hairColor: "#4a3228",
       outfitStyle: "jumpsuit",
+      outfitBaseColor: "#313c50",
       outfitAccent: "#8b5cf6",
+      bottomStyle: "joggers",
+      bottomColor: "#263042",
+      footwearStyle: "hoverkicks",
+      neckwear: "none",
       eyewear: "goggles",
       headwear: "headphones",
       backpack: "holodrone"
@@ -249,7 +380,12 @@ export const CHARACTER_PRESETS: readonly CharacterPreset[] = [
       hairStyle: "long",
       hairColor: "#df88ad",
       outfitStyle: "cape",
+      outfitBaseColor: "#fce7f3",
       outfitAccent: "#f472b6",
+      bottomStyle: "skirt",
+      bottomColor: "#b57b93",
+      footwearStyle: "maryjanes",
+      neckwear: "bowtie",
       eyewear: "none",
       headwear: "beret",
       backpack: "satchel"
@@ -269,16 +405,96 @@ export const CHARACTER_PRESETS: readonly CharacterPreset[] = [
       hairStyle: "curly",
       hairColor: "#1f2533",
       outfitStyle: "hoodie",
+      outfitBaseColor: "#dbeafe",
       outfitAccent: "#38bdf8",
+      bottomStyle: "shorts",
+      bottomColor: "#4f6d9a",
+      footwearStyle: "sneakers",
+      neckwear: "none",
       eyewear: "shades",
       headwear: "cap",
+      backpack: "flaskpack"
+    }
+  },
+  {
+    id: "cozyknit",
+    label: "Cozy Knit",
+    profile: {
+      name: "Mochi",
+      title: "Bio-Curator",
+      trait: "cheerful",
+      skinTone: "#f7dfd1",
+      eyeColor: "#7c3aed",
+      expression: "delighted",
+      buildScale: "compact",
+      hairStyle: "pigtails",
+      hairColor: "#b794f4",
+      outfitStyle: "cardigan",
+      outfitBaseColor: "#ede9fe",
+      outfitAccent: "#f9a8d4",
+      bottomStyle: "skirt",
+      bottomColor: "#94a3b8",
+      footwearStyle: "maryjanes",
+      neckwear: "scarf",
+      eyewear: "round",
+      headwear: "catears",
+      backpack: "plushpack"
+    }
+  },
+  {
+    id: "starlight",
+    label: "Starlight",
+    profile: {
+      name: "Luna",
+      title: "Protein Architect",
+      trait: "creative",
+      skinTone: "#f0c8a8",
+      eyeColor: "#3b82f6",
+      expression: "serene",
+      buildScale: "classic",
+      hairStyle: "waves",
+      hairColor: "#cfd8e6",
+      outfitStyle: "sundress",
+      outfitBaseColor: "#dbeafe",
+      outfitAccent: "#c4b5fd",
+      bottomStyle: "skirt",
+      bottomColor: "#f1f5f9",
+      footwearStyle: "hoverkicks",
+      neckwear: "necklace",
+      eyewear: "none",
+      headwear: "crown",
+      backpack: "wings"
+    }
+  },
+  {
+    id: "streetlab",
+    label: "Street Lab",
+    profile: {
+      name: "Ren",
+      title: "Quantum Miner",
+      trait: "ambitious",
+      skinTone: "#d9a476",
+      eyeColor: "#10b981",
+      expression: "smile",
+      buildScale: "tall",
+      hairStyle: "ponytail",
+      hairColor: "#1f2533",
+      outfitStyle: "puffer",
+      outfitBaseColor: "#dde4ef",
+      outfitAccent: "#10b981",
+      bottomStyle: "joggers",
+      bottomColor: "#263042",
+      footwearStyle: "sneakers",
+      neckwear: "scarf",
+      eyewear: "shades",
+      headwear: "beanie",
       backpack: "flaskpack"
     }
   }
 ];
 
 const CHARACTER_STORAGE_KEY = "alchemia_researcher_avatar_v1";
-const SAMPLE_NAMES = ["Dr. Aria", "Kai", "Dr. Nova", "Sora", "Milo", "Lyra", "Ren", "Zoe"];
+const SAMPLE_NAMES = ["Dr. Aria", "Kai", "Dr. Nova", "Sora", "Milo", "Lyra", "Ren", "Zoe", "Mochi", "Luna"];
 
 /** In-memory fallback so strict sandboxed NFT iframes (blocked localStorage) stay stateful */
 let memoryProfileCache: CharacterProfile | null = null;
@@ -321,7 +537,16 @@ export function sanitizeCharacterProfile(raw: Partial<CharacterProfile>): Charac
     hairStyle: pickValid(raw.hairStyle, HAIR_STYLES, base.hairStyle),
     hairColor: pickHex(raw.hairColor, HAIR_COLORS, base.hairColor),
     outfitStyle: pickValid(raw.outfitStyle, OUTFIT_STYLES, base.outfitStyle),
+    outfitBaseColor: pickHex(
+      raw.outfitBaseColor,
+      OUTFIT_BASE_COLORS,
+      base.outfitBaseColor || "#f8fafd"
+    ),
     outfitAccent: pickHex(raw.outfitAccent, OUTFIT_ACCENTS, base.outfitAccent),
+    bottomStyle: pickValid(raw.bottomStyle, BOTTOM_STYLES, base.bottomStyle || "slacks"),
+    bottomColor: pickHex(raw.bottomColor, BOTTOM_COLORS, base.bottomColor || "#263042"),
+    footwearStyle: pickValid(raw.footwearStyle, FOOTWEAR_STYLES, base.footwearStyle || "boots"),
+    neckwear: pickValid(raw.neckwear, NECKWEAR_OPTIONS, base.neckwear || "none"),
     eyewear: pickValid(raw.eyewear, EYEWEAR_OPTIONS, base.eyewear),
     headwear: pickValid(raw.headwear, HEADWEAR_OPTIONS, base.headwear),
     backpack: pickValid(raw.backpack, BACKPACK_OPTIONS, base.backpack),
@@ -343,11 +568,30 @@ export function randomizeCharacterProfile(keepName?: string): CharacterProfile {
     hairStyle: pick(HAIR_STYLES).id,
     hairColor: pick(HAIR_COLORS).hex,
     outfitStyle: pick(OUTFIT_STYLES).id,
+    outfitBaseColor: pick(OUTFIT_BASE_COLORS).hex,
     outfitAccent: pick(OUTFIT_ACCENTS).hex,
+    bottomStyle: pick(BOTTOM_STYLES).id,
+    bottomColor: pick(BOTTOM_COLORS).hex,
+    footwearStyle: pick(FOOTWEAR_STYLES).id,
+    neckwear: pick(NECKWEAR_OPTIONS).id,
     eyewear: pick(EYEWEAR_OPTIONS).id,
     headwear: pick(HEADWEAR_OPTIONS).id,
     backpack: pick(BACKPACK_OPTIONS).id,
     createdAtMs: Date.now()
+  };
+}
+
+export function randomizeOutfitOnly(current: CharacterProfile): CharacterProfile {
+  const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)];
+  return {
+    ...current,
+    outfitStyle: pick(OUTFIT_STYLES).id,
+    outfitBaseColor: pick(OUTFIT_BASE_COLORS).hex,
+    outfitAccent: pick(OUTFIT_ACCENTS).hex,
+    bottomStyle: pick(BOTTOM_STYLES).id,
+    bottomColor: pick(BOTTOM_COLORS).hex,
+    footwearStyle: pick(FOOTWEAR_STYLES).id,
+    neckwear: pick(NECKWEAR_OPTIONS).id
   };
 }
 
@@ -365,7 +609,12 @@ export function encodeCharacterCode(profile: CharacterProfile): string {
     hs: clean.hairStyle,
     hc: clean.hairColor,
     os: clean.outfitStyle,
+    ob: clean.outfitBaseColor,
     oa: clean.outfitAccent,
+    bt: clean.bottomStyle,
+    bc: clean.bottomColor,
+    fw: clean.footwearStyle,
+    nw: clean.neckwear,
     ew: clean.eyewear,
     hw: clean.headwear,
     bp: clean.backpack
@@ -389,7 +638,12 @@ export function decodeCharacterCode(code: string): CharacterProfile | null {
       hairStyle: obj.hs as HairStyleId,
       hairColor: typeof obj.hc === "string" ? obj.hc : undefined,
       outfitStyle: obj.os as OutfitStyleId,
+      outfitBaseColor: typeof obj.ob === "string" ? obj.ob : undefined,
       outfitAccent: typeof obj.oa === "string" ? obj.oa : undefined,
+      bottomStyle: obj.bt as BottomStyleId,
+      bottomColor: typeof obj.bc === "string" ? obj.bc : undefined,
+      footwearStyle: obj.fw as FootwearStyleId,
+      neckwear: obj.nw as NeckwearId,
       eyewear: obj.ew as EyewearId,
       headwear: obj.hw as HeadwearId,
       backpack: obj.bp as BackpackId

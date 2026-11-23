@@ -39,6 +39,9 @@ export class ResearcherAvatar3D {
   private eyes: THREE.Mesh[] = [];
   private holoDrone: THREE.Group | null = null;
   private haloRing: THREE.Mesh | null = null;
+  private leftWing: THREE.Object3D | null = null;
+  private rightWing: THREE.Object3D | null = null;
+  private hoverRings: THREE.Mesh[] = [];
   private shadowDisc: THREE.Mesh | null = null;
   private ownedTextures: THREE.Texture[] = [];
 
@@ -170,9 +173,16 @@ export class ResearcherAvatar3D {
     this.eyes = [];
     this.holoDrone = null;
     this.haloRing = null;
+    this.leftWing = null;
+    this.rightWing = null;
+    this.hoverRings = [];
 
     const accentColor = new THREE.Color(profile.outfitAccent);
-    const darkSlate = "#263042";
+    const baseHex = profile.outfitBaseColor || "#f8fafd";
+    const bottomHex = profile.bottomColor || "#263042";
+    const bottomStyle = profile.bottomStyle || "slacks";
+    const footwearStyle = profile.footwearStyle || "boots";
+    const neckwear = profile.neckwear || "none";
     const porcelainWhite = "#f8fafd";
 
     const skinMat = new THREE.MeshStandardMaterial({
@@ -187,17 +197,20 @@ export class ResearcherAvatar3D {
     });
     const coatMat = new THREE.MeshStandardMaterial({
       color:
-        profile.outfitStyle === "labcoat"
-          ? porcelainWhite
-          : profile.outfitStyle === "tunic"
-            ? "#eef2f8"
-            : profile.outfitStyle === "hoodie"
-              ? profile.outfitAccent
-              : profile.outfitStyle === "jumpsuit"
-                ? "#313c50"
-                : "#f1f5f9",
-      roughness: 0.36,
-      metalness: 0.06
+        profile.outfitStyle === "hoodie"
+          ? baseHex === "#f8fafd"
+            ? profile.outfitAccent
+            : baseHex
+          : profile.outfitStyle === "jumpsuit" && baseHex === "#f8fafd"
+            ? "#313c50"
+            : baseHex,
+      roughness: 0.38,
+      metalness: 0.05
+    });
+    const innerTeeMat = new THREE.MeshStandardMaterial({
+      color: porcelainWhite,
+      roughness: 0.48,
+      metalness: 0.03
     });
     const accentMat = new THREE.MeshStandardMaterial({
       color: profile.outfitAccent,
@@ -211,14 +224,27 @@ export class ResearcherAvatar3D {
       roughness: 0.18
     });
     const trouserMat = new THREE.MeshStandardMaterial({
-      color: profile.outfitStyle === "jumpsuit" ? "#313c50" : darkSlate,
-      roughness: 0.44,
-      metalness: 0.08
+      color: profile.outfitStyle === "jumpsuit" ? coatMat.color : bottomHex,
+      roughness: 0.46,
+      metalness: 0.06
+    });
+    const sockMat = new THREE.MeshStandardMaterial({
+      color: "#f8fafc",
+      roughness: 0.65
     });
     const bootMat = new THREE.MeshStandardMaterial({
-      color: "#1e2636",
-      roughness: 0.26,
-      metalness: 0.28
+      color:
+        footwearStyle === "sneakers"
+          ? "#f8fafd"
+          : footwearStyle === "loafers"
+            ? "#64748b"
+            : footwearStyle === "maryjanes"
+              ? "#334155"
+              : footwearStyle === "hoverkicks"
+                ? "#e2e8f0"
+                : "#1e2636",
+      roughness: footwearStyle === "loafers" || footwearStyle === "hoverkicks" ? 0.18 : 0.28,
+      metalness: footwearStyle === "loafers" || footwearStyle === "hoverkicks" ? 0.48 : 0.24
     });
     const titaniumMat = new THREE.MeshStandardMaterial({
       color: "#cbd5e1",
@@ -250,48 +276,131 @@ export class ResearcherAvatar3D {
     this.root.add(shadowDisc);
 
     // ------------------------------------------------------------------
-    // Legs & Boots (hip height y = 0.29)
+    // Legs, Bottoms (5 styles!) & Footwear (5 styles!) (hip height y = 0.29)
     // ------------------------------------------------------------------
-    const legGeo = new THREE.CapsuleGeometry(0.056, 0.14, 8, 12);
+    const showBareLegs =
+      bottomStyle === "shorts" || bottomStyle === "skirt" || profile.outfitStyle === "sundress";
+    const legRadius = bottomStyle === "wideleg" ? 0.072 : bottomStyle === "joggers" ? 0.064 : 0.056;
+    const legGeo = new THREE.CapsuleGeometry(legRadius, 0.14, 8, 12);
     const shoeGeo = new THREE.SphereGeometry(0.066, 12, 10);
+
     for (const side of [-1, 1]) {
       const pivot = side === -1 ? this.leftLegPivot : this.rightLegPivot;
       pivot.position.set(side * 0.085, 0.29, 0);
 
-      const leg = new THREE.Mesh(legGeo, trouserMat);
+      const leg = new THREE.Mesh(legGeo, showBareLegs ? skinMat : trouserMat);
       leg.position.y = -0.11;
       leg.castShadow = true;
       pivot.add(leg);
 
-      const boot = new THREE.Mesh(shoeGeo, bootMat);
-      boot.scale.set(0.95, 0.65, 1.32);
-      boot.position.set(0, -0.245, 0.024);
-      boot.castShadow = true;
-      pivot.add(boot);
+      if (bottomStyle === "shorts" && profile.outfitStyle !== "sundress") {
+        const shortTube = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.068, 0.07, 0.11, 14),
+          trouserMat
+        );
+        shortTube.position.y = -0.04;
+        shortTube.castShadow = true;
+        pivot.add(shortTube);
+      } else if (bottomStyle === "joggers" && !showBareLegs) {
+        const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.056, 0.015, 8, 16), accentMat);
+        cuff.rotation.x = Math.PI / 2;
+        cuff.position.y = -0.19;
+        pivot.add(cuff);
+      }
 
-      const soleTrim = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.058, 0.062, 0.016, 12),
-        accentMat
-      );
-      soleTrim.position.set(0, -0.275, 0.02);
-      pivot.add(soleTrim);
+      if (showBareLegs || footwearStyle === "maryjanes") {
+        const sock = new THREE.Mesh(new THREE.CylinderGeometry(0.054, 0.052, 0.09, 12), sockMat);
+        sock.position.y = -0.195;
+        pivot.add(sock);
+      }
+
+      // Footwear Styles
+      const shoe = new THREE.Mesh(shoeGeo, bootMat);
+      if (footwearStyle === "sneakers") {
+        shoe.scale.set(1.04, 0.7, 1.4);
+        shoe.position.set(0, -0.242, 0.028);
+        const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.115, 0.022, 0.06), accentMat);
+        stripe.position.set(0, -0.236, 0.032);
+        pivot.add(stripe);
+        const thickSole = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.068, 0.072, 0.026, 14),
+          innerTeeMat
+        );
+        thickSole.position.set(0, -0.274, 0.026);
+        pivot.add(thickSole);
+      } else if (footwearStyle === "loafers") {
+        shoe.scale.set(0.92, 0.56, 1.38);
+        shoe.position.set(0, -0.252, 0.028);
+        const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.058, 0.016, 0.024), titaniumMat);
+        buckle.position.set(0, -0.222, 0.045);
+        pivot.add(buckle);
+      } else if (footwearStyle === "maryjanes") {
+        shoe.scale.set(0.95, 0.52, 1.28);
+        shoe.position.set(0, -0.255, 0.022);
+        const strap = new THREE.Mesh(new THREE.TorusGeometry(0.052, 0.009, 8, 16), accentMat);
+        strap.rotation.x = Math.PI / 2 - 0.3;
+        strap.position.set(0, -0.225, 0.024);
+        pivot.add(strap);
+      } else if (footwearStyle === "hoverkicks") {
+        shoe.scale.set(1.0, 0.68, 1.38);
+        shoe.position.set(0, -0.242, 0.025);
+        const glowRing = new THREE.Mesh(
+          new THREE.TorusGeometry(0.07, 0.011, 8, 22),
+          accentGlowMat
+        );
+        glowRing.rotation.x = Math.PI / 2;
+        glowRing.position.set(0, -0.28, 0.022);
+        pivot.add(glowRing);
+        this.hoverRings.push(glowRing);
+      } else {
+        shoe.scale.set(0.95, 0.65, 1.32);
+        shoe.position.set(0, -0.245, 0.024);
+        const soleTrim = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.058, 0.062, 0.016, 12),
+          accentMat
+        );
+        soleTrim.position.set(0, -0.275, 0.02);
+        pivot.add(soleTrim);
+      }
+      shoe.castShadow = true;
+      pivot.add(shoe);
 
       this.bodyPivot.add(pivot);
     }
 
     // ------------------------------------------------------------------
-    // Torso & Outfit Style (y = 0.29 .. 0.68)
+    // Torso, 12 Clothing Silhouettes, Pleated Skirts & 6 Neckwear Details!
     // ------------------------------------------------------------------
     this.torsoGroup.position.set(0, 0.48, 0);
 
-    const core = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.155, 0.18, 12, 18),
-      profile.outfitStyle === "labcoat" ? accentMat : coatMat
-    );
+    const coreMat =
+      profile.outfitStyle === "labcoat" || profile.outfitStyle === "overalls"
+        ? accentMat
+        : profile.outfitStyle === "cardigan" || profile.outfitStyle === "blazer"
+          ? innerTeeMat
+          : coatMat;
+
+    const core = new THREE.Mesh(new THREE.CapsuleGeometry(0.155, 0.18, 12, 18), coreMat);
     core.scale.set(1.02, 1.0, 0.84);
     core.castShadow = true;
     core.receiveShadow = true;
     this.torsoGroup.add(core);
+
+    // Optional Pleated Skirt bottom layer (whenever bottomStyle === "skirt" and not sundress)
+    if (bottomStyle === "skirt" && profile.outfitStyle !== "sundress") {
+      const skirtMesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.156, 0.235, 0.2, 22),
+        trouserMat
+      );
+      skirtMesh.position.set(0, -0.175, 0);
+      skirtMesh.castShadow = true;
+      this.torsoGroup.add(skirtMesh);
+
+      const hem = new THREE.Mesh(new THREE.TorusGeometry(0.232, 0.01, 8, 28), accentMat);
+      hem.rotation.x = Math.PI / 2;
+      hem.position.set(0, -0.272, 0);
+      this.torsoGroup.add(hem);
+    }
 
     if (profile.outfitStyle === "labcoat") {
       const coatBack = new THREE.Mesh(
@@ -313,6 +422,144 @@ export class ResearcherAvatar3D {
       const badge = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.064, 0.012), accentGlowMat);
       badge.position.set(-0.088, 0.03, 0.145);
       this.torsoGroup.add(badge);
+    } else if (profile.outfitStyle === "cardigan") {
+      // Cozy open-front knitted cardigan with pearl buttons & soft lapel shawl!
+      const shell = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.162, 0.195, 0.34, 20, 1, false, -Math.PI * 0.78, Math.PI * 1.56),
+        coatMat
+      );
+      shell.position.set(0, -0.01, 0);
+      shell.rotation.y = Math.PI;
+      shell.castShadow = true;
+      this.torsoGroup.add(shell);
+
+      for (const side of [-1, 1]) {
+        const trim = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.31, 0.028), accentMat);
+        trim.position.set(side * 0.066, -0.01, 0.128);
+        this.torsoGroup.add(trim);
+      }
+      for (const by of [0.06, -0.02, -0.1]) {
+        const btn = new THREE.Mesh(new THREE.SphereGeometry(0.014, 10, 10), titaniumMat);
+        btn.position.set(0.066, by, 0.146);
+        this.torsoGroup.add(btn);
+      }
+    } else if (profile.outfitStyle === "sweater") {
+      // Chunky folded turtleneck knit sweater with ribbed hem!
+      const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.095, 0.095, 18), coatMat);
+      collar.position.set(0, 0.165, 0);
+      this.torsoGroup.add(collar);
+
+      const stripe = new THREE.Mesh(new THREE.TorusGeometry(0.156, 0.022, 8, 24), accentMat);
+      stripe.rotation.x = Math.PI / 2;
+      stripe.position.set(0, 0.02, 0);
+      this.torsoGroup.add(stripe);
+
+      const hem = new THREE.Mesh(new THREE.TorusGeometry(0.156, 0.024, 8, 24), coatMat);
+      hem.rotation.x = Math.PI / 2;
+      hem.position.set(0, -0.11, 0);
+      this.torsoGroup.add(hem);
+    } else if (profile.outfitStyle === "blazer") {
+      // Tailored Silver Architectural Suit Blazer with crisp lapels & pocket square!
+      const jacket = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.162, 0.188, 0.34, 20, 1, false, -Math.PI * 0.84, Math.PI * 1.68),
+        coatMat
+      );
+      jacket.position.set(0, -0.01, 0);
+      jacket.rotation.y = Math.PI;
+      jacket.castShadow = true;
+      this.torsoGroup.add(jacket);
+
+      for (const side of [-1, 1]) {
+        const lapel = new THREE.Mesh(new THREE.BoxGeometry(0.058, 0.17, 0.026), coatMat);
+        lapel.position.set(side * 0.064, 0.06, 0.13);
+        lapel.rotation.z = -side * 0.24;
+        this.torsoGroup.add(lapel);
+      }
+      const pocketSq = new THREE.Mesh(new THREE.BoxGeometry(0.044, 0.024, 0.012), accentMat);
+      pocketSq.position.set(-0.092, 0.05, 0.145);
+      this.torsoGroup.add(pocketSq);
+    } else if (profile.outfitStyle === "puffer") {
+      // Adorable Quilted Horizontal-Baffle Cloud Puffer Jacket!
+      for (const [py, r] of [[0.09, 0.165], [0.0, 0.176], [-0.09, 0.17]] as const) {
+        const baffle = new THREE.Mesh(new THREE.TorusGeometry(r, 0.044, 12, 24), coatMat);
+        baffle.rotation.x = Math.PI / 2;
+        baffle.scale.set(1.02, 0.86, 1.0);
+        baffle.position.set(0, py, 0);
+        baffle.castShadow = true;
+        this.torsoGroup.add(baffle);
+      }
+      const highCollar = new THREE.Mesh(new THREE.TorusGeometry(0.105, 0.036, 10, 20), accentMat);
+      highCollar.rotation.x = Math.PI / 2;
+      highCollar.position.set(0, 0.165, 0);
+      this.torsoGroup.add(highCollar);
+    } else if (profile.outfitStyle === "overalls") {
+      // Cute Studio Bib Overalls with twin straps, silver buckles & front bib pocket!
+      const bib = new THREE.Mesh(new THREE.BoxGeometry(0.21, 0.22, 0.06), trouserMat);
+      bib.position.set(0, -0.02, 0.11);
+      bib.castShadow = true;
+      this.torsoGroup.add(bib);
+
+      const waist = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.168, 0.15, 18), trouserMat);
+      waist.position.set(0, -0.1, 0);
+      this.torsoGroup.add(waist);
+
+      const bibPocket = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.075, 0.02), coatMat);
+      bibPocket.position.set(0, 0.01, 0.145);
+      this.torsoGroup.add(bibPocket);
+
+      for (const side of [-1, 1]) {
+        const strap = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.2, 0.024), trouserMat);
+        strap.position.set(side * 0.075, 0.11, 0.105);
+        strap.rotation.x = -0.2;
+        this.torsoGroup.add(strap);
+        const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.042, 0.028, 0.028), titaniumMat);
+        buckle.position.set(side * 0.075, 0.08, 0.132);
+        this.torsoGroup.add(buckle);
+      }
+    } else if (profile.outfitStyle === "sundress") {
+      // Flared Pleated Architectural Studio Dress with waist ribbon!
+      const dressSkirt = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.15, 0.28, 0.3, 24),
+        coatMat
+      );
+      dressSkirt.position.set(0, -0.17, 0);
+      dressSkirt.castShadow = true;
+      this.torsoGroup.add(dressSkirt);
+
+      const sash = new THREE.Mesh(new THREE.TorusGeometry(0.156, 0.024, 8, 24), accentMat);
+      sash.rotation.x = Math.PI / 2;
+      sash.position.set(0, -0.02, 0);
+      this.torsoGroup.add(sash);
+
+      const hemTrim = new THREE.Mesh(new THREE.TorusGeometry(0.278, 0.012, 8, 28), accentMat);
+      hemTrim.rotation.x = Math.PI / 2;
+      hemTrim.position.set(0, -0.315, 0);
+      this.torsoGroup.add(hemTrim);
+    } else if (profile.outfitStyle === "kimono") {
+      // Draped Silk Haori Jacket with Obi Waist Sash & Silver Cord!
+      const robe = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.16, 0.23, 0.36, 20),
+        coatMat
+      );
+      robe.position.set(0, -0.04, 0);
+      robe.castShadow = true;
+      this.torsoGroup.add(robe);
+
+      for (const side of [-1, 1]) {
+        const collarV = new THREE.Mesh(new THREE.BoxGeometry(0.042, 0.19, 0.025), accentMat);
+        collarV.position.set(side * 0.048, 0.08, 0.13);
+        collarV.rotation.z = side * 0.34;
+        this.torsoGroup.add(collarV);
+      }
+
+      const obi = new THREE.Mesh(new THREE.CylinderGeometry(0.174, 0.178, 0.095, 22), accentMat);
+      obi.position.set(0, -0.055, 0);
+      this.torsoGroup.add(obi);
+
+      const cord = new THREE.Mesh(new THREE.TorusGeometry(0.178, 0.011, 8, 24), titaniumMat);
+      cord.rotation.x = Math.PI / 2;
+      cord.position.set(0, -0.055, 0);
+      this.torsoGroup.add(cord);
     } else if (profile.outfitStyle === "tunic") {
       const skirt = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.21, 0.2, 20), coatMat);
       skirt.position.set(0, -0.14, 0);
@@ -333,10 +580,7 @@ export class ResearcherAvatar3D {
       hoodRoll.position.set(0, 0.155, -0.03);
       this.torsoGroup.add(hoodRoll);
 
-      const pocket = new THREE.Mesh(
-        new THREE.BoxGeometry(0.17, 0.09, 0.036),
-        new THREE.MeshStandardMaterial({ color: porcelainWhite, roughness: 0.45 })
-      );
+      const pocket = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.09, 0.036), innerTeeMat);
       pocket.position.set(0, -0.06, 0.125);
       this.torsoGroup.add(pocket);
 
@@ -362,6 +606,7 @@ export class ResearcherAvatar3D {
         this.torsoGroup.add(pad);
       }
     } else {
+      // Scholar Cloak
       const cape = new THREE.Mesh(
         new THREE.CylinderGeometry(0.145, 0.26, 0.34, 24, 1, false, -Math.PI * 0.78, Math.PI * 1.56),
         accentMat
@@ -376,6 +621,9 @@ export class ResearcherAvatar3D {
       this.torsoGroup.add(brooch);
     }
 
+    // Neckwear & Layered Clothing Accessories (6 options!)
+    this.buildNeckwear(neckwear, accentMat, accentGlowMat, titaniumMat);
+
     const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.06, 0.09, 14), skinMat);
     neck.position.y = 0.19;
     this.torsoGroup.add(neck);
@@ -383,14 +631,15 @@ export class ResearcherAvatar3D {
     this.bodyPivot.add(this.torsoGroup);
 
     // ------------------------------------------------------------------
-    // Articulated Arms & Hands
+    // Articulated Arms & Hands (with short sleeves for sundress / wide for kimono!)
     // ------------------------------------------------------------------
     const sleeveMat =
-      profile.outfitStyle === "labcoat"
-        ? coatMat
+      profile.outfitStyle === "overalls"
+        ? innerTeeMat
         : profile.outfitStyle === "hoodie"
-          ? accentMat
+          ? coatMat
           : coatMat;
+    const shortSleeves = profile.outfitStyle === "sundress";
     const armGeo = new THREE.CapsuleGeometry(0.045, 0.16, 8, 12);
     const handGeo = new THREE.SphereGeometry(0.046, 12, 12);
 
@@ -398,15 +647,25 @@ export class ResearcherAvatar3D {
       const pivot = side === -1 ? this.leftArmPivot : this.rightArmPivot;
       pivot.position.set(side * 0.195, 0.59, 0);
 
-      const arm = new THREE.Mesh(armGeo, sleeveMat);
+      const arm = new THREE.Mesh(armGeo, shortSleeves ? skinMat : sleeveMat);
       arm.position.y = -0.11;
       arm.castShadow = true;
       pivot.add(arm);
 
-      const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.01, 8, 16), accentMat);
-      cuff.rotation.x = Math.PI / 2;
-      cuff.position.y = -0.19;
-      pivot.add(cuff);
+      if (shortSleeves) {
+        const puffSleeve = new THREE.Mesh(new THREE.SphereGeometry(0.068, 12, 10), coatMat);
+        puffSleeve.position.y = -0.03;
+        pivot.add(puffSleeve);
+      } else if (profile.outfitStyle === "kimono") {
+        const wideSleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.095, 0.18, 14), coatMat);
+        wideSleeve.position.y = -0.12;
+        pivot.add(wideSleeve);
+      } else {
+        const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.01, 8, 16), accentMat);
+        cuff.rotation.x = Math.PI / 2;
+        cuff.position.y = -0.19;
+        pivot.add(cuff);
+      }
 
       const hand = new THREE.Mesh(handGeo, skinMat);
       hand.position.y = -0.225;
@@ -596,6 +855,70 @@ export class ResearcherAvatar3D {
     }
   }
 
+  private buildNeckwear(
+    neckwear: NonNullable<CharacterProfile["neckwear"]>,
+    accentMat: THREE.Material,
+    accentGlowMat: THREE.Material,
+    titaniumMat: THREE.Material
+  ) {
+    if (neckwear === "none") return;
+
+    if (neckwear === "scarf") {
+      const wrap = new THREE.Mesh(new THREE.TorusGeometry(0.098, 0.034, 10, 22), accentMat);
+      wrap.rotation.x = Math.PI / 2 + 0.1;
+      wrap.position.set(0, 0.165, 0.01);
+      wrap.castShadow = true;
+      this.torsoGroup.add(wrap);
+
+      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.062, 0.17, 0.024), accentMat);
+      tail.position.set(0.062, 0.08, 0.135);
+      tail.rotation.z = -0.14;
+      this.torsoGroup.add(tail);
+    } else if (neckwear === "bowtie") {
+      for (const side of [-1, 1]) {
+        const loop = new THREE.Mesh(new THREE.ConeGeometry(0.038, 0.068, 8), accentMat);
+        loop.rotation.z = side * (Math.PI / 2);
+        loop.position.set(side * 0.032, 0.142, 0.14);
+        this.torsoGroup.add(loop);
+      }
+      const knot = new THREE.Mesh(new THREE.SphereGeometry(0.02, 10, 10), titaniumMat);
+      knot.position.set(0, 0.142, 0.146);
+      this.torsoGroup.add(knot);
+    } else if (neckwear === "necklace") {
+      const chain = new THREE.Mesh(new THREE.TorusGeometry(0.095, 0.008, 8, 22), titaniumMat);
+      chain.rotation.x = Math.PI / 2 + 0.42;
+      chain.position.set(0, 0.135, 0.035);
+      this.torsoGroup.add(chain);
+
+      const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.028, 0), accentGlowMat);
+      gem.position.set(0, 0.095, 0.142);
+      this.torsoGroup.add(gem);
+    } else if (neckwear === "stethoscope") {
+      const tube = new THREE.Mesh(
+        new THREE.TorusGeometry(0.115, 0.011, 8, 24, Math.PI * 1.45),
+        new THREE.MeshStandardMaterial({ color: "#334155", roughness: 0.35 })
+      );
+      tube.rotation.x = Math.PI / 2 + 0.32;
+      tube.rotation.z = -Math.PI * 0.22;
+      tube.position.set(0, 0.14, 0.01);
+      this.torsoGroup.add(tube);
+
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.014, 14), titaniumMat);
+      disc.rotation.x = Math.PI / 2;
+      disc.position.set(0.075, 0.055, 0.145);
+      this.torsoGroup.add(disc);
+    } else if (neckwear === "tie") {
+      const knot = new THREE.Mesh(new THREE.OctahedronGeometry(0.022, 0), accentMat);
+      knot.position.set(0, 0.145, 0.138);
+      this.torsoGroup.add(knot);
+      const blade = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.16, 4), accentMat);
+      blade.rotation.z = Math.PI;
+      blade.scale.set(1, 1, 0.35);
+      blade.position.set(0, 0.055, 0.14);
+      this.torsoGroup.add(blade);
+    }
+  }
+
   private buildHair(style: CharacterProfile["hairStyle"], hairMat: THREE.Material) {
     const cap = new THREE.Mesh(
       new THREE.SphereGeometry(0.194, 22, 16, 0, Math.PI * 2, 0, Math.PI * 0.58),
@@ -687,6 +1010,48 @@ export class ResearcherAvatar3D {
         p.castShadow = true;
         this.headPivot.add(p);
       }
+    } else if (style === "pigtails") {
+      // Adorable Twin High Puffs with brushed-silver hair bands!
+      for (const side of [-1, 1]) {
+        const puff = new THREE.Mesh(new THREE.SphereGeometry(0.095, 16, 14), hairMat);
+        puff.position.set(side * 0.21, 0.14, -0.03);
+        puff.castShadow = true;
+        this.headPivot.add(puff);
+        const band = new THREE.Mesh(
+          new THREE.TorusGeometry(0.055, 0.012, 8, 16),
+          new THREE.MeshStandardMaterial({ color: "#cbd5e1", metalness: 0.85, roughness: 0.2 })
+        );
+        band.rotation.y = Math.PI / 2;
+        band.position.set(side * 0.16, 0.125, -0.02);
+        this.headPivot.add(band);
+      }
+    } else if (style === "ponytail") {
+      // High Swept Lab Ponytail with metallic tie!
+      const band = new THREE.Mesh(
+        new THREE.TorusGeometry(0.055, 0.013, 8, 18),
+        new THREE.MeshStandardMaterial({ color: "#cbd5e1", metalness: 0.85, roughness: 0.2 })
+      );
+      band.position.set(0, 0.14, -0.185);
+      this.headPivot.add(band);
+      const tail = new THREE.Mesh(new THREE.CapsuleGeometry(0.068, 0.22, 10, 14), hairMat);
+      tail.position.set(0, 0.02, -0.245);
+      tail.rotation.x = 0.24;
+      tail.castShadow = true;
+      this.headPivot.add(tail);
+    } else if (style === "waves") {
+      // Soft Layered Shoulder Waves
+      for (const side of [-1, 1]) {
+        for (let i = 0; i < 3; i++) {
+          const wave = new THREE.Mesh(new THREE.SphereGeometry(0.078 - i * 0.008, 14, 12), hairMat);
+          wave.position.set(side * (0.165 + (i % 2) * 0.018), -0.01 - i * 0.095, -0.03 - i * 0.015);
+          wave.castShadow = true;
+          this.headPivot.add(wave);
+        }
+      }
+      const backWave = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.18, 10, 14), hairMat);
+      backWave.scale.set(1.05, 1.0, 0.6);
+      backWave.position.set(0, -0.1, -0.095);
+      this.headPivot.add(backWave);
     }
   }
 
@@ -816,6 +1181,78 @@ export class ResearcherAvatar3D {
       brim.position.set(0, 0.075, 0.14);
       brim.rotation.x = 0.1;
       this.headPivot.add(brim);
+    } else if (headwear === "catears") {
+      // Cutesy Brushed-Silver Cat Ears Headband!
+      const band = new THREE.Mesh(
+        new THREE.TorusGeometry(0.195, 0.012, 8, 28, Math.PI),
+        titaniumMat
+      );
+      band.position.y = 0.025;
+      this.headPivot.add(band);
+      const innerMat = new THREE.MeshStandardMaterial({ color: "#fbcfe8", roughness: 0.45 });
+      for (const side of [-1, 1]) {
+        const ear = new THREE.Mesh(new THREE.ConeGeometry(0.056, 0.125, 4), titaniumMat);
+        ear.position.set(side * 0.115, 0.23, 0.01);
+        ear.rotation.z = -side * 0.28;
+        ear.castShadow = true;
+        this.headPivot.add(ear);
+        const inner = new THREE.Mesh(new THREE.ConeGeometry(0.032, 0.078, 4), innerMat);
+        inner.position.set(side * 0.112, 0.224, 0.03);
+        inner.rotation.z = -side * 0.28;
+        this.headPivot.add(inner);
+      }
+    } else if (headwear === "bow") {
+      // Oversized Cute Pastel Ribbon Bow on crown!
+      for (const side of [-1, 1]) {
+        const wing = new THREE.Mesh(new THREE.SphereGeometry(0.072, 12, 10), accentMat);
+        wing.scale.set(1.25, 0.65, 0.55);
+        wing.position.set(side * 0.075, 0.225, 0.045);
+        wing.rotation.z = side * 0.22;
+        wing.castShadow = true;
+        this.headPivot.add(wing);
+      }
+      const knot = new THREE.Mesh(new THREE.SphereGeometry(0.032, 10, 10), titaniumMat);
+      knot.position.set(0, 0.22, 0.055);
+      this.headPivot.add(knot);
+    } else if (headwear === "beanie") {
+      // Cozy Ribbed Knit Beanie with Pom-Pom!
+      const dome = new THREE.Mesh(
+        new THREE.SphereGeometry(0.202, 22, 16, 0, Math.PI * 2, 0, Math.PI * 0.54),
+        accentMat
+      );
+      dome.position.set(0, 0.045, -0.01);
+      dome.castShadow = true;
+      this.headPivot.add(dome);
+      const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.194, 0.028, 10, 28), accentMat);
+      cuff.rotation.x = Math.PI / 2;
+      cuff.position.set(0, 0.075, -0.01);
+      this.headPivot.add(cuff);
+      const pom = new THREE.Mesh(
+        new THREE.SphereGeometry(0.055, 14, 12),
+        new THREE.MeshStandardMaterial({ color: "#f8fafd", roughness: 0.8 })
+      );
+      pom.position.set(0, 0.27, -0.02);
+      this.headPivot.add(pom);
+    } else if (headwear === "crown") {
+      // Crystal Silver Starlight Tiara!
+      const base = new THREE.Mesh(new THREE.TorusGeometry(0.145, 0.011, 8, 28), titaniumMat);
+      base.rotation.x = Math.PI / 2;
+      base.position.set(0, 0.195, 0.01);
+      this.headPivot.add(base);
+      const spikes: Array<[number, number, number]> = [
+        [0, 0.255, 0.135],
+        [-0.082, 0.235, 0.105],
+        [0.082, 0.235, 0.105]
+      ];
+      spikes.forEach(([sx, sy, sz], i) => {
+        const sp = new THREE.Mesh(
+          new THREE.OctahedronGeometry(i === 0 ? 0.032 : 0.022, 0),
+          i === 0 ? accentGlowMat : titaniumMat
+        );
+        sp.scale.set(0.7, 1.5, 0.7);
+        sp.position.set(sx, sy, sz);
+        this.headPivot.add(sp);
+      });
     }
   }
 
@@ -893,6 +1330,80 @@ export class ResearcherAvatar3D {
 
       this.holoDrone = drone;
       this.torsoGroup.add(drone);
+    } else if (backpack === "wings") {
+      // Translucent Iridescent Glass Fairy Wings (animated flutter in update()!)
+      const wingMat = new THREE.MeshPhysicalMaterial({
+        color: accentHex,
+        emissive: accentHex,
+        emissiveIntensity: 0.42,
+        transmission: 0.65,
+        roughness: 0.08,
+        transparent: true,
+        opacity: 0.82,
+        side: THREE.DoubleSide
+      });
+      for (const side of [-1, 1]) {
+        const wingPivot = new THREE.Group();
+        wingPivot.position.set(side * 0.06, 0.05, -0.145);
+
+        const upper = new THREE.Mesh(new THREE.CircleGeometry(0.18, 16), wingMat);
+        upper.scale.set(1.25, 0.68, 1);
+        upper.position.set(side * 0.17, 0.07, -0.02);
+        upper.rotation.z = side * 0.36;
+        wingPivot.add(upper);
+
+        const lower = new THREE.Mesh(new THREE.CircleGeometry(0.125, 14), wingMat);
+        lower.scale.set(1.1, 0.65, 1);
+        lower.position.set(side * 0.12, -0.075, -0.02);
+        lower.rotation.z = -side * 0.25;
+        wingPivot.add(lower);
+
+        const rim = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.007, 6, 20), titaniumMat);
+        rim.scale.set(1.4, 0.72, 1);
+        rim.position.set(side * 0.16, 0.07, -0.018);
+        rim.rotation.z = side * 0.36;
+        wingPivot.add(rim);
+
+        if (side === -1) this.leftWing = wingPivot;
+        else this.rightWing = wingPivot;
+        this.torsoGroup.add(wingPivot);
+      }
+    } else if (backpack === "plushpack") {
+      // Adorable Pastel Cloud Kitty Plush Backpack!
+      const pack = new THREE.Group();
+      pack.position.set(0, -0.01, -0.18);
+      const plushMat = new THREE.MeshStandardMaterial({ color: "#fdf2f8", roughness: 0.82 });
+      const body = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 14), plushMat);
+      body.scale.set(1.05, 1.1, 0.72);
+      body.castShadow = true;
+      pack.add(body);
+      for (const side of [-1, 1]) {
+        const ear = new THREE.Mesh(new THREE.ConeGeometry(0.036, 0.07, 4), plushMat);
+        ear.position.set(side * 0.068, 0.115, 0);
+        ear.rotation.z = -side * 0.25;
+        pack.add(ear);
+        const eye = new THREE.Mesh(
+          new THREE.SphereGeometry(0.014, 8, 8),
+          new THREE.MeshBasicMaterial({ color: "#334155" })
+        );
+        eye.position.set(side * 0.042, 0.02, -0.082);
+        pack.add(eye);
+      }
+      const bow = new THREE.Mesh(new THREE.OctahedronGeometry(0.028, 0), accentGlowMat);
+      bow.position.set(0, -0.055, -0.085);
+      pack.add(bow);
+      this.torsoGroup.add(pack);
+    } else if (backpack === "capelet") {
+      // Flowing Silver-Trim Starlight Shoulder Capelet!
+      const drape = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.135, 0.29, 0.42, 22, 1, true, Math.PI * 0.62, Math.PI * 0.76),
+        glassMat
+      );
+      drape.position.set(0, -0.04, -0.02);
+      this.torsoGroup.add(drape);
+      const starClasp = new THREE.Mesh(new THREE.OctahedronGeometry(0.034, 0), accentGlowMat);
+      starClasp.position.set(0, 0.145, -0.15);
+      this.torsoGroup.add(starClasp);
     }
   }
 
@@ -1032,6 +1543,19 @@ export class ResearcherAvatar3D {
       this.holoDrone.rotation.y = t * 2.1;
     }
 
+    if (this.leftWing && this.rightWing) {
+      const flutter = Math.sin(t * (isMoving ? 9.5 : 4.2)) * 0.24;
+      this.leftWing.rotation.y = -0.32 - flutter;
+      this.rightWing.rotation.y = 0.32 + flutter;
+    }
+
+    if (this.hoverRings.length > 0) {
+      const pulse = 0.94 + Math.sin(t * 5.2) * 0.09;
+      for (const ring of this.hoverRings) {
+        ring.scale.setScalar(pulse);
+      }
+    }
+
     if (this.shadowDisc) {
       const s = Math.max(0.7, (1 - (walkBob + emoteHopY) * 0.85) * this.currentHeightScale);
       this.shadowDisc.scale.setScalar(s);
@@ -1060,5 +1584,8 @@ export class ResearcherAvatar3D {
     this.plumbobGroup = null;
     this.plumbobMat = null;
     this.brewCup = null;
+    this.leftWing = null;
+    this.rightWing = null;
+    this.hoverRings = [];
   }
 }

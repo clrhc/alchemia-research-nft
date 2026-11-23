@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   Dices,
   FlipHorizontal2,
+  Footprints,
   Glasses,
   Palette,
   RefreshCw,
@@ -14,26 +15,33 @@ import {
 import type { CreatorFocusZone } from "../engine/alchemy3DRenderer";
 import {
   BACKPACK_OPTIONS,
+  BOTTOM_COLORS,
+  BOTTOM_STYLES,
   BUILD_SCALE_OPTIONS,
   CHARACTER_PRESETS,
   EXPRESSION_OPTIONS,
   EYEWEAR_OPTIONS,
   EYE_COLORS,
+  FOOTWEAR_STYLES,
   HAIR_COLORS,
   HAIR_STYLES,
   HEADWEAR_OPTIONS,
+  NECKWEAR_OPTIONS,
   OUTFIT_ACCENTS,
+  OUTFIT_BASE_COLORS,
   OUTFIT_STYLES,
   PERSONALITY_TRAITS,
   RESEARCHER_TITLES,
   SKIN_TONES,
   randomizeCharacterProfile,
+  randomizeOutfitOnly,
   type CharacterProfile
 } from "../engine/characterConfig";
 import type { CharacterEmote } from "../engine/character3D";
 import { soundEngine } from "../engine/soundEngine";
 
 type CreatorTab = "identity" | "hair" | "outfit" | "gear";
+type ClothingSubTab = "tops" | "bottoms" | "shoes" | "neck";
 
 interface CharacterCreatorOverlayProps {
   draft: CharacterProfile;
@@ -58,7 +66,8 @@ export function CharacterCreatorOverlay({
   onConfirm,
   onCancel
 }: CharacterCreatorOverlayProps) {
-  const [tab, setTab] = useState<CreatorTab>("identity");
+  const [tab, setTab] = useState<CreatorTab>(isFirstTime ? "identity" : "outfit");
+  const [clothingSub, setClothingSub] = useState<ClothingSubTab>("tops");
   const [facingBack, setFacingBack] = useState(false);
 
   const patch = (
@@ -80,7 +89,7 @@ export function CharacterCreatorOverlay({
     setFacingBack(false);
     if (nextTab === "identity") onFocusZoneChange("face");
     else if (nextTab === "hair") onFocusZoneChange("hair");
-    else if (nextTab === "outfit") onFocusZoneChange("outfit");
+    else if (nextTab === "outfit") onFocusZoneChange("full");
     else onFocusZoneChange("full");
   };
 
@@ -89,6 +98,13 @@ export function CharacterCreatorOverlay({
     setFacingBack(false);
     onFocusZoneChange("full");
     onChange(randomizeCharacterProfile(draft.name), "spin");
+  };
+
+  const handleRandomizeOutfit = () => {
+    soundEngine.playBuildRoom();
+    setFacingBack(false);
+    onFocusZoneChange("full");
+    onChange(randomizeOutfitOnly(draft), "spin");
   };
 
   return (
@@ -125,15 +141,15 @@ export function CharacterCreatorOverlay({
         </button>
       </div>
 
-      {/* Right frosted-glass architectural character studio panel */}
+      {/* Right frosted-glass architectural character & clothing wardrobe panel */}
       <div className="glass-panel creator-card">
         <div className="creator-head">
           <div>
             <div className="single-kicker">
-              {isFirstTime ? "Welcome to your 3D lab" : "Researcher Wardrobe"}
+              {isFirstTime ? "Welcome to your 3D lab" : "Researcher Closet"}
             </div>
             <h2 className="creator-title">
-              {isFirstTime ? "Design your character" : "Customize researcher"}
+              {isFirstTime ? "Design your character" : "Wardrobe & Style"}
             </h2>
           </div>
 
@@ -142,8 +158,8 @@ export function CharacterCreatorOverlay({
               type="button"
               className="inline-icon-btn clickable"
               onClick={handleRandomize}
-              title="Randomize look"
-              aria-label="Randomize look"
+              title="Randomize full character"
+              aria-label="Randomize full character"
             >
               <Dices size={14} />
             </button>
@@ -161,7 +177,7 @@ export function CharacterCreatorOverlay({
           </div>
         </div>
 
-        {/* Instant Curated Archetype Starter Presets */}
+        {/* Instant Curated Fashion & Archetype Presets (8 stylish looks!) */}
         <div className="creator-presets-row" aria-label="Quick character archetypes">
           {CHARACTER_PRESETS.map((preset) => (
             <button
@@ -196,13 +212,13 @@ export function CharacterCreatorOverlay({
           ))}
         </div>
 
-        {/* Studio Category Tabs (Auto-frames camera to Face / Hair / Full Outfit / Back Gear!) */}
+        {/* Studio Category Tabs (Auto-frames camera to Face / Hair / Full Clothes / Back Gear!) */}
         <div className="creator-tabs" role="tablist" aria-label="Character sections">
           {(
             [
               { id: "identity", label: "Face", Icon: Palette },
               { id: "hair", label: "Hair", Icon: Scissors },
-              { id: "outfit", label: "Coat", Icon: Shirt },
+              { id: "outfit", label: "Clothes", Icon: Shirt },
               { id: "gear", label: "Gear", Icon: Glasses }
             ] as const
           ).map(({ id, label, Icon }) => (
@@ -338,7 +354,7 @@ export function CharacterCreatorOverlay({
           {tab === "hair" && (
             <>
               <div className="creator-field">
-                <span className="creator-label">Hairstyle</span>
+                <span className="creator-label">Hairstyle ({HAIR_STYLES.length})</span>
                 <div className="creator-chip-grid">
                   {HAIR_STYLES.map((opt) => (
                     <button
@@ -371,20 +387,228 @@ export function CharacterCreatorOverlay({
                   ))}
                 </div>
               </div>
+
+              <div className="creator-field">
+                <span className="creator-label">Hats, Ears &amp; Headwear ({HEADWEAR_OPTIONS.length})</span>
+                <div className="creator-chip-grid">
+                  {HEADWEAR_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      className={`creator-chip clickable ${draft.headwear === opt.id ? "active" : ""}`}
+                      onClick={() => patch({ headwear: opt.id }, "hop", "hair")}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </>
           )}
 
           {tab === "outfit" && (
             <>
+              <div className="furnish-header-row">
+                <div className="furnish-cat-strip" role="tablist" aria-label="Clothing slot">
+                  {(
+                    [
+                      { id: "tops", label: "Tops" },
+                      { id: "bottoms", label: "Bottoms" },
+                      { id: "shoes", label: "Shoes" },
+                      { id: "neck", label: "Neckwear" }
+                    ] as const
+                  ).map((sub) => (
+                    <button
+                      key={sub.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={clothingSub === sub.id}
+                      className={`furnish-cat-pill clickable ${
+                        clothingSub === sub.id ? "active" : ""
+                      }`}
+                      style={{ padding: "4px 10px" }}
+                      onClick={() => {
+                        setClothingSub(sub.id);
+                        soundEngine.playTap(987.77);
+                      }}
+                    >
+                      {sub.label}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="inline-icon-btn clickable"
+                  onClick={handleRandomizeOutfit}
+                  title="Shuffle outfit clothes"
+                  aria-label="Shuffle outfit clothes"
+                >
+                  <Dices size={13} />
+                </button>
+              </div>
+
+              {clothingSub === "tops" && (
+                <>
+                  <div className="creator-field">
+                    <span className="creator-label">Tops &amp; Coats ({OUTFIT_STYLES.length})</span>
+                    <div className="creator-chip-grid">
+                      {OUTFIT_STYLES.map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          className={`creator-chip clickable ${
+                            draft.outfitStyle === opt.id ? "active" : ""
+                          }`}
+                          onClick={() => patch({ outfitStyle: opt.id }, "spin", "full")}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="creator-field">
+                    <span className="creator-label">Fabric color</span>
+                    <div className="creator-swatch-row">
+                      {OUTFIT_BASE_COLORS.map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          className={`creator-swatch clickable ${
+                            (draft.outfitBaseColor || "#f8fafd").toLowerCase() ===
+                            c.hex.toLowerCase()
+                              ? "active"
+                              : ""
+                          }`}
+                          style={{ background: c.hex }}
+                          title={c.label}
+                          aria-label={c.label}
+                          onClick={() => patch({ outfitBaseColor: c.hex }, "hop", "full")}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="creator-field">
+                    <span className="creator-label">Trim &amp; accent color</span>
+                    <div className="creator-swatch-row">
+                      {OUTFIT_ACCENTS.map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          className={`creator-swatch clickable ${
+                            draft.outfitAccent.toLowerCase() === c.hex.toLowerCase() ? "active" : ""
+                          }`}
+                          style={{ background: c.hex }}
+                          title={c.label}
+                          aria-label={c.label}
+                          onClick={() => patch({ outfitAccent: c.hex }, "spin", "full")}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {clothingSub === "bottoms" && (
+                <>
+                  <div className="creator-field">
+                    <span className="creator-label">Pants, Skirts &amp; Shorts ({BOTTOM_STYLES.length})</span>
+                    <div className="creator-chip-grid">
+                      {BOTTOM_STYLES.map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          className={`creator-chip clickable ${
+                            (draft.bottomStyle || "slacks") === opt.id ? "active" : ""
+                          }`}
+                          onClick={() => patch({ bottomStyle: opt.id }, "hop", "full")}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="creator-field">
+                    <span className="creator-label">Bottoms color</span>
+                    <div className="creator-swatch-row">
+                      {BOTTOM_COLORS.map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          className={`creator-swatch clickable ${
+                            (draft.bottomColor || "#263042").toLowerCase() === c.hex.toLowerCase()
+                              ? "active"
+                              : ""
+                          }`}
+                          style={{ background: c.hex }}
+                          title={c.label}
+                          aria-label={c.label}
+                          onClick={() => patch({ bottomColor: c.hex }, "hop", "full")}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {clothingSub === "shoes" && (
+                <div className="creator-field">
+                  <span className="creator-label">
+                    <Footprints size={11} style={{ verticalAlign: "-1px", marginRight: 4 }} />
+                    Footwear ({FOOTWEAR_STYLES.length})
+                  </span>
+                  <div className="creator-chip-grid">
+                    {FOOTWEAR_STYLES.map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        className={`creator-chip clickable ${
+                          (draft.footwearStyle || "boots") === opt.id ? "active" : ""
+                        }`}
+                        onClick={() => patch({ footwearStyle: opt.id }, "hop", "full")}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {clothingSub === "neck" && (
+                <div className="creator-field">
+                  <span className="creator-label">Scarves, Bows &amp; Neckwear ({NECKWEAR_OPTIONS.length})</span>
+                  <div className="creator-chip-grid">
+                    {NECKWEAR_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        className={`creator-chip clickable ${
+                          (draft.neckwear || "none") === opt.id ? "active" : ""
+                        }`}
+                        onClick={() => patch({ neckwear: opt.id }, "wave", "outfit")}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {tab === "gear" && (
+            <>
               <div className="creator-field">
-                <span className="creator-label">Lab attire</span>
+                <span className="creator-label">Eyewear</span>
                 <div className="creator-chip-grid">
-                  {OUTFIT_STYLES.map((opt) => (
+                  {EYEWEAR_OPTIONS.map((opt) => (
                     <button
                       key={opt.id}
                       type="button"
-                      className={`creator-chip clickable ${draft.outfitStyle === opt.id ? "active" : ""}`}
-                      onClick={() => patch({ outfitStyle: opt.id }, "spin", "outfit")}
+                      className={`creator-chip clickable ${draft.eyewear === opt.id ? "active" : ""}`}
+                      onClick={() => patch({ eyewear: opt.id }, "hop", "face")}
                     >
                       {opt.label}
                     </button>
@@ -393,20 +617,17 @@ export function CharacterCreatorOverlay({
               </div>
 
               <div className="creator-field">
-                <span className="creator-label">Accent color</span>
-                <div className="creator-swatch-row">
-                  {OUTFIT_ACCENTS.map((c) => (
+                <span className="creator-label">Backpacks &amp; Wings (auto-spins to rear view)</span>
+                <div className="creator-chip-grid">
+                  {BACKPACK_OPTIONS.map((opt) => (
                     <button
-                      key={c.id}
+                      key={opt.id}
                       type="button"
-                      className={`creator-swatch clickable ${
-                        draft.outfitAccent.toLowerCase() === c.hex.toLowerCase() ? "active" : ""
-                      }`}
-                      style={{ background: c.hex }}
-                      title={c.label}
-                      aria-label={c.label}
-                      onClick={() => patch({ outfitAccent: c.hex }, "spin", "outfit")}
-                    />
+                      className={`creator-chip clickable ${draft.backpack === opt.id ? "active" : ""}`}
+                      onClick={() => patch({ backpack: opt.id }, "hop", "back")}
+                    >
+                      {opt.label}
+                    </button>
                   ))}
                 </div>
               </div>
@@ -430,58 +651,6 @@ export function CharacterCreatorOverlay({
               </div>
             </>
           )}
-
-          {tab === "gear" && (
-            <>
-              <div className="creator-field">
-                <span className="creator-label">Eyewear</span>
-                <div className="creator-chip-grid">
-                  {EYEWEAR_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      className={`creator-chip clickable ${draft.eyewear === opt.id ? "active" : ""}`}
-                      onClick={() => patch({ eyewear: opt.id }, "hop", "face")}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="creator-field">
-                <span className="creator-label">Headwear</span>
-                <div className="creator-chip-grid">
-                  {HEADWEAR_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      className={`creator-chip clickable ${draft.headwear === opt.id ? "active" : ""}`}
-                      onClick={() => patch({ headwear: opt.id }, "hop", "hair")}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="creator-field">
-                <span className="creator-label">Back gear (auto-spins to rear view)</span>
-                <div className="creator-chip-grid">
-                  {BACKPACK_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      className={`creator-chip clickable ${draft.backpack === opt.id ? "active" : ""}`}
-                      onClick={() => patch({ backpack: opt.id }, "hop", "back")}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
         </div>
 
         <div className="creator-footer">
@@ -494,7 +663,7 @@ export function CharacterCreatorOverlay({
             }}
           >
             <UserCheck size={16} />
-            {isFirstTime ? "Enter My Lab" : "Save Look"}
+            {isFirstTime ? "Enter My Lab" : "Save Outfit"}
           </button>
         </div>
       </div>

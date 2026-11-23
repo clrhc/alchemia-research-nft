@@ -26,18 +26,24 @@ import { deriveTraitsFromSeed, normalizeSeed } from "../prng";
 import { computeMiningRatePerHour, countSectors, SLIDER_USD_STOPS } from "../../web3/sectors";
 import {
   BACKPACK_OPTIONS,
+  BOTTOM_COLORS,
+  BOTTOM_STYLES,
   BUILD_SCALE_OPTIONS,
   CHARACTER_PRESETS,
   EXPRESSION_OPTIONS,
   EYEWEAR_OPTIONS,
   EYE_COLORS,
+  FOOTWEAR_STYLES,
   HAIR_STYLES,
   HEADWEAR_OPTIONS,
+  NECKWEAR_OPTIONS,
+  OUTFIT_BASE_COLORS,
   OUTFIT_STYLES,
   createDefaultCharacterProfile,
   decodeCharacterCode,
   encodeCharacterCode,
   randomizeCharacterProfile,
+  randomizeOutfitOnly,
   sanitizeCharacterProfile
 } from "../characterConfig";
 import {
@@ -279,10 +285,19 @@ describe("Deterministic Seed Traits & Sims Sector Math", () => {
 });
 
 describe("Walkable 3D Researcher Character Creator & Spatial Lab Stations", () => {
-  it("creates, presets, randomizes, sanitizes, and round-trip encodes researcher avatar profiles", () => {
+  it("creates, presets, randomizes, sanitizes, and round-trip encodes researcher avatar profiles & full clothing wardrobe", () => {
     const def = createDefaultCharacterProfile();
     expect(def.name).toBe("Dr. Aria");
-    expect(CHARACTER_PRESETS).toHaveLength(5);
+    expect(CHARACTER_PRESETS).toHaveLength(8);
+    expect(OUTFIT_STYLES).toHaveLength(12);
+    expect(OUTFIT_BASE_COLORS).toHaveLength(8);
+    expect(BOTTOM_STYLES).toHaveLength(5);
+    expect(BOTTOM_COLORS).toHaveLength(7);
+    expect(FOOTWEAR_STYLES).toHaveLength(5);
+    expect(NECKWEAR_OPTIONS).toHaveLength(6);
+    expect(HAIR_STYLES).toHaveLength(9);
+    expect(HEADWEAR_OPTIONS).toHaveLength(9);
+    expect(BACKPACK_OPTIONS).toHaveLength(7);
     expect(HAIR_STYLES.some((h) => h.id === def.hairStyle)).toBe(true);
     expect(OUTFIT_STYLES.some((o) => o.id === def.outfitStyle)).toBe(true);
     expect(EYE_COLORS.some((c) => c.hex === def.eyeColor)).toBe(true);
@@ -294,12 +309,26 @@ describe("Walkable 3D Researcher Character Creator & Spatial Lab Stations", () =
     expect(EYEWEAR_OPTIONS.some((e) => e.id === rand.eyewear)).toBe(true);
     expect(HEADWEAR_OPTIONS.some((h) => h.id === rand.headwear)).toBe(true);
     expect(BACKPACK_OPTIONS.some((b) => b.id === rand.backpack)).toBe(true);
+    expect(BOTTOM_STYLES.some((b) => b.id === rand.bottomStyle)).toBe(true);
+    expect(FOOTWEAR_STYLES.some((f) => f.id === rand.footwearStyle)).toBe(true);
+    expect(NECKWEAR_OPTIONS.some((n) => n.id === rand.neckwear)).toBe(true);
+
+    // Shuffle clothes only keeps character identity intact
+    const restyled = randomizeOutfitOnly(rand);
+    expect(restyled.name).toBe(rand.name);
+    expect(restyled.skinTone).toBe(rand.skinTone);
+    expect(OUTFIT_STYLES.some((o) => o.id === restyled.outfitStyle)).toBe(true);
 
     const encoded = encodeCharacterCode(rand);
     const decoded = decodeCharacterCode(encoded);
     expect(decoded).not.toBeNull();
     expect(decoded?.name).toBe("Prof. Ada");
     expect(decoded?.outfitStyle).toBe(rand.outfitStyle);
+    expect(decoded?.outfitBaseColor).toBe(rand.outfitBaseColor);
+    expect(decoded?.bottomStyle).toBe(rand.bottomStyle);
+    expect(decoded?.bottomColor).toBe(rand.bottomColor);
+    expect(decoded?.footwearStyle).toBe(rand.footwearStyle);
+    expect(decoded?.neckwear).toBe(rand.neckwear);
     expect(decoded?.eyeColor).toBe(rand.eyeColor);
     expect(decoded?.expression).toBe(rand.expression);
     expect(decoded?.buildScale).toBe(rand.buildScale);
@@ -311,7 +340,10 @@ describe("Walkable 3D Researcher Character Creator & Spatial Lab Stations", () =
       expression: "invalid" as unknown as typeof def.expression,
       buildScale: "giant" as unknown as typeof def.buildScale,
       hairStyle: "invalid" as unknown as typeof def.hairStyle,
-      outfitStyle: "cape"
+      outfitStyle: "cardigan",
+      bottomStyle: "skirt",
+      footwearStyle: "hoverkicks",
+      neckwear: "scarf"
     });
     expect(sanitized.name).toBe(def.name);
     expect(sanitized.skinTone).toMatch(/^#[0-9a-fA-F]{6}$/);
@@ -319,7 +351,10 @@ describe("Walkable 3D Researcher Character Creator & Spatial Lab Stations", () =
     expect(sanitized.expression).toBe(def.expression);
     expect(sanitized.buildScale).toBe(def.buildScale);
     expect(sanitized.hairStyle).toBe(def.hairStyle);
-    expect(sanitized.outfitStyle).toBe("cape");
+    expect(sanitized.outfitStyle).toBe("cardigan");
+    expect(sanitized.bottomStyle).toBe("skirt");
+    expect(sanitized.footwearStyle).toBe("hoverkicks");
+    expect(sanitized.neckwear).toBe("scarf");
   });
 
   it("maps all 5 spatial lab stations, detects floor pad proximity, and declutters overlapping labels", () => {

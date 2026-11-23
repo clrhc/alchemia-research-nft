@@ -51,6 +51,7 @@ import {
   Plus,
   Send,
   ShieldCheck,
+  Shirt,
   Smile,
   Sofa,
   Sparkles,
@@ -2325,16 +2326,16 @@ export function LabWorldExperience({
                 type="button"
                 className="world-pill clickable"
                 onClick={openCharacterCreator}
-                title="Customize character name, look & wardrobe (C)"
+                title="Open 3D Closet — customize clothing, hair, wings & look (C)"
               >
                 <span
                   className="cute-icon-bubble is-sm"
                   style={{ "--bubble-accent": savedProfile.outfitAccent } as React.CSSProperties}
                 >
-                  <UserRound size={11} />
+                  <Shirt size={11} />
                 </span>
                 <strong>{savedProfile.name}</strong>
-                <Pencil size={10} className="world-pill-edit-ico" />
+                <span className="world-pill-muted">Closet</span>
               </button>
             )}
 
