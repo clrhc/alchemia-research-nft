@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowUpRight,
   Building2,
+  Camera,
   Check,
+  CloudSnow,
   Coins,
   Download,
   FileJson,
@@ -13,16 +15,20 @@ import {
   Volume2,
   VolumeX
 } from "lucide-react";
-import { ArtworkCanvas } from "./ArtworkCanvas";
+import { ArtworkCanvas, type ArtworkCanvasHandle } from "./ArtworkCanvas";
 import { LabThumbnailSvg } from "./LabThumbnailSvg";
-import type { CameraPreset, LightingMood } from "../engine/alchemy3DRenderer";
+import type { AtmosphereMode, CameraPreset, LightingMood } from "../engine/alchemy3DRenderer";
 import { deriveTraitsFromSeed } from "../engine/prng";
 import {
   downloadPDBFromSnapshot,
   downloadScienceCertificateFromSnapshot,
   type ComputeSnapshot
 } from "../engine/researchCompute";
-import { downloadMMCIFFromSnapshot } from "../engine/structuralAnalysis";
+import {
+  assignSecondaryStructurePSEA,
+  computeNativeContactFractionQ,
+  downloadMMCIFFromSnapshot
+} from "../engine/structuralAnalysis";
 import { soundEngine } from "../engine/soundEngine";
 import { complexityTierFromUsd } from "../web3/config";
 import {
@@ -60,6 +66,12 @@ const LIGHTING_LABELS: Record<LightingMood, string> = {
   silver: "Silver",
   moonlit: "Mist"
 };
+const ATMOSPHERE_ORDER: AtmosphereMode[] = ["clear", "snow", "motes"];
+const ATMOSPHERE_LABELS: Record<AtmosphereMode, string> = {
+  clear: "Clear",
+  snow: "Snow",
+  motes: "Motes"
+};
 
 export function ExploreView({
   state,
@@ -68,9 +80,11 @@ export function ExploreView({
   onSelectVessel,
   onOpenInMyLabs
 }: ExploreViewProps) {
+  const artworkRef = useRef<ArtworkCanvasHandle>(null);
   const [liveCompute, setLiveCompute] = useState<ComputeSnapshot | null>(null);
   const [camPreset, setCamPreset] = useState<{ preset: CameraPreset; seq: number } | null>(null);
   const [lightingMood, setLightingMood] = useState<LightingMood>("daylight");
+  const [atmosphereMode, setAtmosphereMode] = useState<AtmosphereMode>("clear");
   const [soundOn, setSoundOn] = useState(() => soundEngine.isEnabled());
   const [tapNote, setTapNote] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -153,6 +167,34 @@ export function ExploreView({
       soundEngine.playTap(987.77);
     };
 
+    const cycleAtmosphere = () => {
+      const nextIdx = (ATMOSPHERE_ORDER.indexOf(atmosphereMode) + 1) % ATMOSPHERE_ORDER.length;
+      setAtmosphereMode(ATMOSPHERE_ORDER[nextIdx]);
+      soundEngine.playTap(1046.5);
+    };
+
+    const handleSavePhoto = () => {
+      const dataUrl = artworkRef.current?.capturePhoto();
+      if (!dataUrl) return;
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = `alchemia-lab-${selectedVessel.tokenId}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      soundEngine.playTap(1318.5);
+      setTapNote(`Saved photo of Lab #${selectedVessel.tokenId}.`);
+    };
+
+    const singleCoords = liveCompute?.bestResidues?.length
+      ? liveCompute.bestResidues
+      : liveCompute?.residues || [];
+    const singleNativeQ =
+      liveCompute && singleCoords.length >= 6
+        ? computeNativeContactFractionQ(liveCompute.pdbBenchmarkId, singleCoords)
+        : null;
+    const singleSS = singleCoords.length >= 4 ? assignSecondaryStructurePSEA(singleCoords) : null;
+
     return (
       <section className="subpage-shell" aria-label={`Lab #${selectedVessel.tokenId}`}>
         <div className="subpage-top-row">
@@ -204,9 +246,11 @@ export function ExploreView({
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div className="floating-model-card">
               <ArtworkCanvas
+                ref={artworkRef}
                 showHud
                 cameraPreset={camPreset}
                 lightingMood={lightingMood}
+                atmosphereMode={atmosphereMode}
                 onComputeSnapshot={setLiveCompute}
                 onInteractiveEvent={(ev) => {
                   setTapNote(
@@ -255,6 +299,19 @@ export function ExploreView({
               <button type="button" className="preset-chip clickable" onClick={cycleLighting}>
                 <Sun size={11} style={{ verticalAlign: "-1px", marginRight: 4 }} />
                 {LIGHTING_LABELS[lightingMood]}
+              </button>
+              <button type="button" className="preset-chip clickable" onClick={cycleAtmosphere}>
+                <CloudSnow size={11} style={{ verticalAlign: "-1px", marginRight: 4 }} />
+                {ATMOSPHERE_LABELS[atmosphereMode]}
+              </button>
+              <button
+                type="button"
+                className="preset-chip clickable"
+                onClick={handleSavePhoto}
+                title="Save PNG snapshot of this 3D lab"
+              >
+                <Camera size={11} style={{ verticalAlign: "-1px", marginRight: 4 }} />
+                Photo
               </button>
               <button
                 type="button"
@@ -326,7 +383,8 @@ export function ExploreView({
                 </span>
                 {liveCompute && (
                   <code>
-                    Rg {liveCompute.radiusOfGyration.toFixed(2)}Å ({liveCompute.compactnessMatchPct}% fit) ·{" "}
+                    Rg {liveCompute.radiusOfGyration.toFixed(2)}Å ({liveCompute.compactnessMatchPct}% fit)
+                    {singleNativeQ !== null ? ` · Native Q ${singleNativeQ}%` : ""} ·{" "}
                     {liveCompute.contactCount} contacts · {liveCompute.proofHash.slice(0, 12)}…
                   </code>
                 )}
@@ -352,7 +410,13 @@ export function ExploreView({
                   <button
                     type="button"
                     className="subtle-pill-btn clickable"
-                    onClick={() => downloadScienceCertificateFromSnapshot(liveCompute)}
+                    onClick={() =>
+                      downloadScienceCertificateFromSnapshot(liveCompute, {
+                        nativeContactQ: singleNativeQ ?? undefined,
+                        helixPct: singleSS?.helixPct,
+                        sheetPct: singleSS?.sheetPct
+                      })
+                    }
                   >
                     <FileJson size={13} />
                     .JSON

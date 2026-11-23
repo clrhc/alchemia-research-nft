@@ -139,9 +139,11 @@ export class AlchemicalBackgroundPainter {
   }
 
   private pickMarginX(): number {
-    const w = Math.max(this.width, 900);
+    const w = Math.max(this.width, 320);
     if (w < 720) {
-      return Math.random() < 0.5 ? w * (0.04 + Math.random() * 0.14) : w * (0.82 + Math.random() * 0.14);
+      return Math.random() < 0.5
+        ? w * (0.04 + Math.random() * 0.1)
+        : w * (0.86 + Math.random() * 0.1);
     }
     // Keep ambient sketches framing the left & right atelier margins cleanly away from centered hero text
     const safeHalf = Math.min(w * 0.28, 320);
@@ -158,7 +160,7 @@ export class AlchemicalBackgroundPainter {
     for (let i = 0; i < 6; i++) {
       this.sketches.push({
         x: this.pickMarginX(),
-        y: (0.14 + (i % 3) * 0.3 + Math.random() * 0.12) * Math.max(this.height, 700),
+        y: 118 + ((i % 3) * 0.27 + Math.random() * 0.11) * Math.max(this.height - 180, 480),
         scale: 0.72 + Math.random() * 0.48,
         rotation: (Math.random() - 0.5) * 0.28,
         kind: kinds[i % kinds.length],

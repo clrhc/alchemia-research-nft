@@ -11,6 +11,7 @@ export interface LiveImpactState {
   complexityTier: number;  // 1..5 derived from tokenValueUsd / on-chain value
   sectorsMask?: number;    // 6-bit mask of Sims-style built 3D architectural lab wings
   petLevel?: number;       // Tamagotchi care level unlocking cozy lab accessories
+  petMoodScore?: number;   // 0..100 average vitals for sleepy zzz / energetic AI
   workUnits?: number;      // Verified protein folding rounds unlocking milestone halo
   tokenImpactEth: number;
   causeImpactEth: number;

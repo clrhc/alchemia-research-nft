@@ -7,7 +7,8 @@ import {
 import {
   assignSecondaryStructurePSEA,
   buildMMCIFTextFromSnapshot,
-  computeContactMap
+  computeContactMap,
+  computeNativeContactFractionQ
 } from "../structuralAnalysis";
 import {
   applyGentleDecay,
@@ -109,6 +110,10 @@ describe("Open-Science Protein Folding Engine (20-AA Kyte-Doolittle + 4-Replica 
     const ss = assignSecondaryStructurePSEA(snap.bestResidues);
     expect(ss.codes).toHaveLength(snap.bestResidues.length);
     expect(ss.helixPct + ss.sheetPct + ss.coilPct).toBe(100);
+
+    const qPct = computeNativeContactFractionQ(snap.pdbBenchmarkId, snap.bestResidues);
+    expect(qPct).toBeGreaterThanOrEqual(0);
+    expect(qPct).toBeLessThanOrEqual(100);
 
     const contacts = computeContactMap(snap.bestResidues);
     expect(Array.isArray(contacts)).toBe(true);

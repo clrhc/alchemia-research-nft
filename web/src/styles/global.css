@@ -1837,6 +1837,77 @@ select:focus-visible,
   outline-offset: 2px;
 }
 
+/* Compact Collapsible Lab Goals Checklist */
+.goals-card {
+  padding: 11px 16px;
+}
+
+.goals-toggle {
+  appearance: none;
+  border: none;
+  background: transparent;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ink-secondary);
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  padding: 2px 0;
+  text-align: left;
+}
+
+.goals-toggle-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.goals-toggle strong {
+  color: var(--ink-primary);
+  font-weight: 600;
+}
+
+.goals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 11px;
+  padding-top: 11px;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.goal-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+}
+
+.goal-row.done {
+  color: var(--ink-muted);
+  text-decoration: line-through;
+}
+
+.goal-check {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid rgba(148, 163, 184, 0.36);
+  background: rgba(255, 255, 255, 0.8);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.goal-row.done .goal-check {
+  background: #10b981;
+  border-color: #10b981;
+  color: #ffffff;
+}
+
 @media (max-width: 900px) {
   .single-view-grid,
   .mylabs-grid {
@@ -1861,5 +1932,14 @@ select:focus-visible,
   }
   .sparkline-meta {
     align-items: flex-start;
+  }
+  .art-hud-badge {
+    font-size: 0.63rem;
+    padding: 5px 9px;
+    gap: 5px;
+    white-space: nowrap;
+  }
+  .hud-desktop-only {
+    display: none;
   }
 }

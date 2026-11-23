@@ -88,6 +88,7 @@ interface WingConduitPulse {
 
 export type CameraPreset = "iso" | "top" | "pet" | "molecule";
 export type LightingMood = "daylight" | "silver" | "moonlit";
+export type AtmosphereMode = "clear" | "snow" | "motes";
 
 export interface InteractiveEvent {
   kind: "pet-clicked" | "atom-popped";
@@ -148,6 +149,9 @@ export class Alchemy3DRenderer {
   private rimLight: THREE.DirectionalLight | null = null;
   private causticLight: THREE.PointLight | null = null;
   private lightingMood: LightingMood = "daylight";
+  private atmosphereMode: AtmosphereMode = "clear";
+  private atmosphereGroup = new THREE.Group();
+  private atmosphereMotes: Array<{ mesh: THREE.Mesh; baseX: number; baseZ: number; y: number; speed: number; phase: number }> = [];
 
   private rootGroup = new THREE.Group();
   private dynamicGroup = new THREE.Group();
@@ -155,6 +159,9 @@ export class Alchemy3DRenderer {
   private previewSectorId: number | null = null;
   private buildPopScale = 1;
   private proteinChainLength = -1;
+  private proteinRibbonMesh: THREE.Mesh | null = null;
+  private proteinRibbonCurvePts: THREE.Vector3[] = [];
+  private lastRibbonUpdateMs = 0;
   private causticShaderMat: THREE.ShaderMaterial | null = null;
   private cryoHelixes: THREE.Object3D[] = [];
   private greenhouseStems: THREE.Object3D[] = [];
@@ -204,6 +211,7 @@ export class Alchemy3DRenderer {
   private excitement = 0;
   private discoveryFlash = 0;
   private shockwaveLife = 0;
+  private lastSleepBubbleAt = 0;
   private builtSeed = "";
   private builtTier = -1;
   private builtSectorsMask = -1;
@@ -303,6 +311,7 @@ export class Alchemy3DRenderer {
     this.scene.add(this.rootGroup);
     this.rootGroup.add(this.dynamicGroup);
     this.rootGroup.add(this.previewGhostGroup);
+    this.rootGroup.add(this.atmosphereGroup);
 
     this.syncFillTarget();
     this.displayFill = this.targetFill;
@@ -420,6 +429,48 @@ export class Alchemy3DRenderer {
   public setLightingMood(mood: LightingMood) {
     this.lightingMood = mood;
     this.applyLightingMood();
+  }
+
+  public setAtmosphereMode(mode: AtmosphereMode) {
+    if (mode === this.atmosphereMode) return;
+    this.atmosphereMode = mode;
+    this.disposeObjectChildren(this.atmosphereGroup);
+    this.atmosphereMotes = [];
+    if (mode === "clear") return;
+
+    const isSnow = mode === "snow";
+    const geo = new THREE.SphereGeometry(isSnow ? 0.028 : 0.024, 8, 8);
+    const mat = new THREE.MeshBasicMaterial({
+      color: isSnow ? "#ffffff" : "#fde68a",
+      transparent: true,
+      opacity: isSnow ? 0.85 : 0.78
+    });
+    for (let i = 0; i < 42; i++) {
+      const m = new THREE.Mesh(geo, mat);
+      const bx = (Math.random() - 0.5) * 6.8;
+      const bz = (Math.random() - 0.5) * 6.8;
+      const y = 0.4 + Math.random() * 4.4;
+      m.position.set(bx, y, bz);
+      if (!isSnow) m.add(this.makeGlowSprite("#fbbf24", 0.22, 0.55));
+      this.atmosphereGroup.add(m);
+      this.atmosphereMotes.push({
+        mesh: m,
+        baseX: bx,
+        baseZ: bz,
+        y,
+        speed: isSnow ? 0.28 + Math.random() * 0.26 : 0.14 + Math.random() * 0.18,
+        phase: Math.random() * Math.PI * 2
+      });
+    }
+  }
+
+  /**
+   * Renders one crisp studio frame on demand and returns a shareable PNG data URL
+   * (zero ongoing preserveDrawingBuffer overhead!).
+   */
+  public captureSnapshotDataUrl(): string {
+    this.renderer.render(this.scene, this.camera);
+    return this.renderer.domElement.toDataURL("image/png");
   }
 
   private applyLightingMood() {
@@ -932,6 +983,8 @@ export class Alchemy3DRenderer {
     this.renderer.domElement.removeEventListener("pointerup", this.handlePointerUp);
     this.renderer.domElement.removeEventListener("pointermove", this.handlePointerMove);
     this.disposeObjectChildren(this.previewGhostGroup);
+    this.disposeObjectChildren(this.atmosphereGroup);
+    this.atmosphereMotes = [];
     this.clearDynamicGroup();
     this.terrazzoTex.dispose();
     this.titaniumTex.dispose();
@@ -1030,6 +1083,8 @@ export class Alchemy3DRenderer {
     this.toyBall = null;
     this.bursts = [];
     this.proteinChainLength = -1;
+    this.proteinRibbonMesh = null;
+    this.proteinRibbonCurvePts = [];
     this.liquidMesh = null;
     this.liquidTopMesh = null;
     this.liquidTopBasePos = null;
@@ -2058,9 +2113,17 @@ export class Alchemy3DRenderer {
     for (const c of this.bondCylinders) {
       this.proteinGroup.remove(c);
     }
+    if (this.proteinRibbonMesh) {
+      this.proteinGroup.remove(this.proteinRibbonMesh);
+      this.proteinRibbonMesh.geometry.dispose();
+      (this.proteinRibbonMesh.material as THREE.Material).dispose();
+      this.proteinRibbonMesh = null;
+    }
     this.residueMeshes = [];
     this.bondCylinders = [];
+    this.proteinRibbonCurvePts = residues.map(() => new THREE.Vector3());
     this.proteinChainLength = residues.length;
+    this.lastRibbonUpdateMs = 0;
 
     const sphereR = residues.length > 26 ? 0.044 : 0.056;
     const resGeo = new THREE.SphereGeometry(sphereR, 16, 16);
@@ -2127,6 +2190,24 @@ export class Alchemy3DRenderer {
       const cyl = new THREE.Mesh(bondGeo, bondMat);
       this.proteinGroup.add(cyl);
       this.bondCylinders.push(cyl);
+    }
+
+    // Smooth Mol*-inspired translucent silver-opal 3D backbone spline ribbon
+    if (residues.length >= 4) {
+      const initPts = residues.map((_, idx) => new THREE.Vector3(idx * 0.02, 0, 0));
+      const ribbonGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(initPts), Math.min(72, residues.length * 3), 0.022, 6, false);
+      const ribbonMat = new THREE.MeshPhysicalMaterial({
+        color: pal.liquidTop,
+        emissive: pal.liquidMid,
+        emissiveIntensity: 0.34,
+        roughness: 0.16,
+        metalness: 0.45,
+        clearcoat: 1.0,
+        transparent: true,
+        opacity: 0.62
+      });
+      this.proteinRibbonMesh = new THREE.Mesh(ribbonGeo, ribbonMat);
+      this.proteinGroup.add(this.proteinRibbonMesh);
     }
   }
 
@@ -3373,6 +3454,28 @@ export class Alchemy3DRenderer {
       for (let i = 0; i < snap.residues.length; i++) {
         const r = snap.residues[i];
         this.residueMeshes[i].position.set(r.x * angstromScale, r.y * angstromScale, r.z * angstromScale);
+        if (this.proteinRibbonCurvePts[i]) {
+          this.proteinRibbonCurvePts[i].copy(this.residueMeshes[i].position);
+        }
+      }
+
+      // Leak-free smooth CatmullRom spline ribbon update (~7 Hz, disposes previous buffer!)
+      if (
+        this.proteinRibbonMesh &&
+        this.proteinRibbonCurvePts.length >= 4 &&
+        now - this.lastRibbonUpdateMs > 140
+      ) {
+        this.lastRibbonUpdateMs = now;
+        const curve = new THREE.CatmullRomCurve3(this.proteinRibbonCurvePts);
+        const nextGeo = new THREE.TubeGeometry(
+          curve,
+          Math.min(72, this.proteinRibbonCurvePts.length * 3),
+          0.022,
+          6,
+          false
+        );
+        this.proteinRibbonMesh.geometry.dispose();
+        this.proteinRibbonMesh.geometry = nextGeo;
       }
 
       // Orient real 3D cylindrical covalent bonds between sequential residues
@@ -3475,10 +3578,18 @@ export class Alchemy3DRenderer {
 
     const blinking = Math.sin(t * 0.88) > 0.968;
     const activeTreat = this.treats.find((tr) => !tr.eaten) || null;
-    for (const c of this.companions) {
+    const hasPetLounge = Boolean((this.impact.sectorsMask ?? 0) & (1 << 3));
+    const isSleepy =
+      (this.impact.petMoodScore ?? 80) < 48 &&
+      this.excitement < 0.08 &&
+      !this.toyBall &&
+      !activeTreat;
+
+    for (let ci = 0; ci < this.companions.length; ci++) {
+      const c = this.companions[ci];
       c.petReaction = Math.max(0, c.petReaction - dt * 0.75);
 
-      // Autonomous 3D Pet AI: chase the bouncing toy ball, trot to dropped treats, or return to cushion!
+      // Autonomous 3D Pet AI: chase the bouncing toy ball, trot to dropped treats, stroll to Pet Lounge, or nap!
       let targetX = c.homePos.x;
       let targetZ = c.homePos.z;
       let moveSpeed = 1.15;
@@ -3500,6 +3611,16 @@ export class Alchemy3DRenderer {
         targetZ = activeTreat.pos.z;
         moveSpeed = 1.75;
         chasing = true;
+      } else if (hasPetLounge && ci === 0 && !isSleepy && t % 20 > 13.5) {
+        // Cozy periodic stroll toward the Pet Lounge glass bridge when Sector 3 is built
+        targetX = 1.28;
+        targetZ = 1.06;
+        moveSpeed = 0.72;
+      }
+
+      if (isSleepy && ci === 0 && c.petReaction < 0.05 && now - this.lastSleepBubbleAt > 6500) {
+        this.lastSleepBubbleAt = now;
+        this.spawnMoodBubble(c.group.position.clone().add(new THREE.Vector3(0, 0.72, 0)), "zzz");
       }
 
       const dx = targetX - c.group.position.x;
@@ -3575,7 +3696,7 @@ export class Alchemy3DRenderer {
         c.tail.rotation.z = Math.sin(t * (2.2 + (this.excitement + c.petReaction) * 4)) * 0.24;
         if (c.paw) c.paw.rotation.x = 0.7 + Math.sin(t * (2.8 + (this.excitement + c.petReaction) * 5)) * 0.35;
       }
-      for (const eye of c.eyes) eye.scale.y = blinking ? 0.15 : 1.0;
+      for (const eye of c.eyes) eye.scale.y = blinking || (isSleepy && c.petReaction < 0.05) ? 0.16 : 1.0;
     }
 
     // Clean out eaten treats array once all finished
@@ -3627,6 +3748,25 @@ export class Alchemy3DRenderer {
       this.shockwaveLife = Math.max(0, this.shockwaveLife - dt * 1.15);
       this.shockwaveRing.scale.setScalar(1 + (1 - this.shockwaveLife) * 4.2);
       (this.shockwaveRing.material as THREE.MeshBasicMaterial).opacity = this.shockwaveLife * 0.8;
+    }
+
+    // Subtle courtyard atmosphere particles (Silver Snow or Warm Light Motes)
+    if (this.atmosphereMotes.length > 0) {
+      const isSnow = this.atmosphereMode === "snow";
+      for (const m of this.atmosphereMotes) {
+        if (isSnow) {
+          m.y -= m.speed * dt;
+          if (m.y < 0.35) m.y = 4.6;
+        } else {
+          m.y += m.speed * 0.45 * dt;
+          if (m.y > 4.6) m.y = 0.45;
+        }
+        m.mesh.position.set(
+          m.baseX + Math.sin(t * 0.9 + m.phase) * 0.25,
+          m.y,
+          m.baseZ + Math.cos(t * 0.8 + m.phase) * 0.25
+        );
+      }
     }
 
     for (const wc of this.wingConduits) {

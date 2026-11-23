@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUpCircle,
   ArrowUpRight,
   Award,
   Building2,
+  Camera,
   Check,
+  ChevronDown,
+  ChevronUp,
+  CloudSnow,
   Coins,
   Cookie,
   Cpu,
@@ -14,6 +18,7 @@ import {
   Grid2x2,
   Heart,
   HeartHandshake,
+  ListChecks,
   Pencil,
   Pickaxe,
   ShieldCheck,
@@ -23,9 +28,9 @@ import {
   VolumeX,
   Wallet
 } from "lucide-react";
-import { ArtworkCanvas } from "./ArtworkCanvas";
+import { ArtworkCanvas, type ArtworkCanvasHandle } from "./ArtworkCanvas";
 import { ContactMapSvg } from "./ContactMapSvg";
-import type { CameraPreset, LightingMood } from "../engine/alchemy3DRenderer";
+import type { AtmosphereMode, CameraPreset, LightingMood } from "../engine/alchemy3DRenderer";
 import { deriveTraitsFromSeed } from "../engine/prng";
 import {
   PROTEIN_BENCHMARKS,
@@ -36,6 +41,7 @@ import {
 import {
   assignSecondaryStructurePSEA,
   computeContactMap,
+  computeNativeContactFractionQ,
   downloadMMCIFFromSnapshot
 } from "../engine/structuralAnalysis";
 import { soundEngine } from "../engine/soundEngine";
@@ -92,6 +98,33 @@ const LIGHTING_LABELS: Record<LightingMood, string> = {
   silver: "Silver",
   moonlit: "Mist"
 };
+const ATMOSPHERE_ORDER: AtmosphereMode[] = ["clear", "snow", "motes"];
+const ATMOSPHERE_LABELS: Record<AtmosphereMode, string> = {
+  clear: "Clear",
+  snow: "Snow",
+  motes: "Motes"
+};
+
+type GoalKey = "pet" | "proton" | "fold" | "claim" | "room";
+const LAB_GOALS_KEY = "alchemia.lab.goals.v1";
+
+function loadGoals(): Record<GoalKey, boolean> {
+  const empty: Record<GoalKey, boolean> = {
+    pet: false,
+    proton: false,
+    fold: false,
+    claim: false,
+    room: false
+  };
+  if (typeof window === "undefined") return empty;
+  try {
+    const raw = window.localStorage.getItem(LAB_GOALS_KEY);
+    if (!raw) return empty;
+    return { ...empty, ...(JSON.parse(raw) as Partial<Record<GoalKey, boolean>>) };
+  } catch {
+    return empty;
+  }
+}
 
 function EnergySparkline({ history }: { history: number[] }) {
   if (history.length < 3) return null;
@@ -148,12 +181,14 @@ export function MyLabsView({
   const selected =
     displayVessels.find((v) => v.tokenId === activeTokenId) || displayVessels[0] || null;
 
+  const artworkRef = useRef<ArtworkCanvasHandle>(null);
   const [tithePct, setTithePct] = useState(20);
   const [donateAmt, setDonateAmt] = useState(25);
   const [liveSnap, setLiveSnap] = useState<ComputeSnapshot | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [camPreset, setCamPreset] = useState<{ preset: CameraPreset; seq: number } | null>(null);
   const [lightingMood, setLightingMood] = useState<LightingMood>("daylight");
+  const [atmosphereMode, setAtmosphereMode] = useState<AtmosphereMode>("clear");
   const [soundOn, setSoundOn] = useState(() => soundEngine.isEnabled());
   const [previewSectorId, setPreviewSectorId] = useState<number | null>(null);
   const [selectedBenchmark, setSelectedBenchmark] = useState<number | null>(null);
@@ -161,6 +196,8 @@ export function MyLabsView({
     null
   );
   const [showContactMap, setShowContactMap] = useState(false);
+  const [showGoals, setShowGoals] = useState(false);
+  const [goals, setGoals] = useState<Record<GoalKey, boolean>>(() => loadGoals());
   const [editingPetName, setEditingPetName] = useState(false);
   const [petNameDraft, setPetNameDraft] = useState("");
   const [vitals, setVitals] = useState<CompanionVitals>(() =>
@@ -170,6 +207,23 @@ export function MyLabsView({
     null
   );
   const [feedback, setFeedback] = useState<string | null>(null);
+
+  const markGoalDone = (key: GoalKey) => {
+    setGoals((prev) => {
+      if (prev[key]) return prev;
+      const next = { ...prev, [key]: true };
+      try {
+        window.localStorage.setItem(LAB_GOALS_KEY, JSON.stringify(next));
+      } catch {
+        // ignore storage quota errors
+      }
+      if (Object.values(next).every(Boolean)) {
+        onAwardPlayBonus(5);
+        setFeedback("All 5 lab goals finished. +5 bonus sparks.");
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (selected) {
@@ -187,7 +241,7 @@ export function MyLabsView({
     return () => window.clearInterval(id);
   }, []);
 
-  // Whisper-quiet keyboard shortcuts (1-4 camera views, M sound, Space play)
+  // Whisper-quiet keyboard shortcuts (1-4 camera views, M sound, Space play ball)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -197,6 +251,10 @@ export function MyLabsView({
       else if (e.key === "3") setCamPreset((p) => ({ preset: "pet", seq: (p?.seq || 0) + 1 }));
       else if (e.key === "4") setCamPreset((p) => ({ preset: "molecule", seq: (p?.seq || 0) + 1 }));
       else if (e.key.toLowerCase() === "m") setSoundOn(soundEngine.toggle());
+      else if (e.code === "Space" && tag !== "BUTTON" && tag !== "A") {
+        e.preventDefault();
+        setTamaSignal((prev) => ({ action: "play", seq: (prev?.seq || 0) + 1 }));
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -204,10 +262,11 @@ export function MyLabsView({
 
   const structuralStats = useMemo(() => {
     const coords = liveSnap?.bestResidues?.length ? liveSnap.bestResidues : liveSnap?.residues || [];
-    if (coords.length < 4) return null;
+    if (coords.length < 4 || !liveSnap) return null;
     return {
       ss: assignSecondaryStructurePSEA(coords),
-      contacts: computeContactMap(coords)
+      contacts: computeContactMap(coords),
+      nativeQ: computeNativeContactFractionQ(liveSnap.pdbBenchmarkId, coords)
     };
   }, [liveSnap]);
 
@@ -276,9 +335,11 @@ export function MyLabsView({
       setFeedback("Treats dropped on the patio. Watch your pet trot over.");
     } else if (action === "pet") {
       onAwardPlayBonus(1);
+      markGoalDone("pet");
       setFeedback("Your pet loved that. +1 spark.");
     } else {
       onAwardPlayBonus(2);
+      markGoalDone("pet");
       setFeedback("Tossed a glowing ball onto the patio. +2 sparks.");
     }
     const next = applyTamagotchiAction(vitals, action);
@@ -300,6 +361,32 @@ export function MyLabsView({
     setLightingMood(LIGHTING_ORDER[idx]);
     soundEngine.playTap(987.77);
   };
+
+  const cycleAtmosphere = () => {
+    const idx = (ATMOSPHERE_ORDER.indexOf(atmosphereMode) + 1) % ATMOSPHERE_ORDER.length;
+    setAtmosphereMode(ATMOSPHERE_ORDER[idx]);
+    soundEngine.playTap(1046.5);
+  };
+
+  const handleSavePhoto = () => {
+    const dataUrl = artworkRef.current?.capturePhoto();
+    if (!dataUrl) return;
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = `alchemia-lab-${selected.tokenId}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    soundEngine.playTap(1318.5);
+    setFeedback(`Saved PNG photo of Lab #${selected.tokenId}.`);
+  };
+
+  const petMoodScore = Math.round((vitals.energy + vitals.mood + vitals.curiosity) / 3);
+  const effectiveGoals: Record<GoalKey, boolean> = {
+    ...goals,
+    room: goals.room || builtCount >= 1
+  };
+  const goalsDoneCount = Object.values(effectiveGoals).filter(Boolean).length;
 
   const badges = [
     { label: "First Room", earned: builtCount >= 1 },
@@ -386,9 +473,11 @@ export function MyLabsView({
         <div className="mylabs-left">
           <div className="floating-model-card">
             <ArtworkCanvas
+              ref={artworkRef}
               showHud
               cameraPreset={camPreset}
               lightingMood={lightingMood}
+              atmosphereMode={atmosphereMode}
               previewSectorId={previewSectorId}
               benchmarkIndex={selectedBenchmark}
               foldSignal={foldSignal}
@@ -400,9 +489,11 @@ export function MyLabsView({
                   setVitals(next);
                   saveCompanionVitals(selected.tokenId, next);
                   onAwardPlayBonus(ev.bonusCoins);
+                  markGoalDone("pet");
                   setFeedback(`Petted ${petDisplayName} in 3D. +${ev.bonusCoins} spark.`);
                 } else {
                   onAwardPlayBonus(ev.bonusCoins);
+                  markGoalDone("proton");
                   setFeedback(
                     ev.combo && ev.combo > 1
                       ? `Proton combo x${ev.combo}. +${ev.bonusCoins} sparks.`
@@ -419,6 +510,7 @@ export function MyLabsView({
                 complexityTier: tier,
                 sectorsMask: selected.sectorsMask,
                 petLevel: vitals.level,
+                petMoodScore,
                 workUnits: selected.workUnits,
                 tokenImpactEth: selected.impactEth,
                 causeImpactEth: state.causes[selected.causeId]?.raisedEth || 0,
@@ -432,7 +524,7 @@ export function MyLabsView({
             />
           </div>
 
-          {/* Camera Views + Studio Lighting + Sound Toggle */}
+          {/* Camera Views + Studio Lighting + Atmosphere + Photo + Sound */}
           <div className="camera-bar">
             {CAMERA_BUTTONS.map((btn) => (
               <button
@@ -450,6 +542,19 @@ export function MyLabsView({
             <button type="button" className="preset-chip clickable" onClick={cycleLighting}>
               <Sun size={11} style={{ verticalAlign: "-1px", marginRight: 4 }} />
               {LIGHTING_LABELS[lightingMood]}
+            </button>
+            <button type="button" className="preset-chip clickable" onClick={cycleAtmosphere}>
+              <CloudSnow size={11} style={{ verticalAlign: "-1px", marginRight: 4 }} />
+              {ATMOSPHERE_LABELS[atmosphereMode]}
+            </button>
+            <button
+              type="button"
+              className="preset-chip clickable"
+              onClick={handleSavePhoto}
+              title="Save PNG snapshot of your 3D lab"
+            >
+              <Camera size={11} style={{ verticalAlign: "-1px", marginRight: 4 }} />
+              Photo
             </button>
             <button
               type="button"
@@ -581,8 +686,45 @@ export function MyLabsView({
           </div>
         </div>
 
-        {/* Right: Coin Mining + Protein Workbench + Sims Room Builder */}
+        {/* Right: Lab Goals + Coin Mining + Protein Workbench + Sims Room Builder */}
         <div className="mylabs-right">
+          {/* Compact Collapsible First-Visit Lab Goals */}
+          <div className="glass-panel goals-card">
+            <button
+              type="button"
+              className="goals-toggle clickable"
+              onClick={() => setShowGoals((v) => !v)}
+              aria-expanded={showGoals}
+            >
+              <span className="goals-toggle-left">
+                <ListChecks size={14} />
+                <span>
+                  Lab goals · <strong>{goalsDoneCount} of 5</strong>
+                </span>
+              </span>
+              {showGoals ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+
+            {showGoals && (
+              <div className="goals-list">
+                {(
+                  [
+                    { key: "pet", label: "Pet or play with your lab companion" },
+                    { key: "proton", label: "Pop a floating proton inside the 3D view" },
+                    { key: "fold", label: "Wiggle or shake the live protein chain" },
+                    { key: "claim", label: "Claim mined ALCH coins" },
+                    { key: "room", label: "Build your first architectural room" }
+                  ] as const
+                ).map((g) => (
+                  <div key={g.key} className={`goal-row ${effectiveGoals[g.key] ? "done" : ""}`}>
+                    <span className="goal-check">{effectiveGoals[g.key] ? <Check size={11} /> : null}</span>
+                    <span>{g.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Coin Mining & Researcher Sharing */}
           <div className="glass-panel mining-panel">
             <div className="mining-head">
@@ -624,6 +766,7 @@ export function MyLabsView({
                   try {
                     await onClaimCoins(selected, pendingCoins, tithePct);
                     soundEngine.playTap(1174.66);
+                    markGoalDone("claim");
                     setFeedback(
                       `Claimed ${(pendingCoins * (1 - tithePct / 100)).toFixed(1)} ALCH and sent ${(
                         pendingCoins *
@@ -716,8 +859,12 @@ export function MyLabsView({
                     <span>Best energy</span>
                     <strong>{liveSnap.bestEnergy.toFixed(1)} kcal/mol</strong>
                   </div>
+                  <div className="science-metric" title="Best-Hummer-Eaton fraction of native protein contacts Q(X)">
+                    <span>Native fold Q</span>
+                    <strong>{structuralStats ? `${structuralStats.nativeQ}%` : "—"}</strong>
+                  </div>
                   <div className="science-metric">
-                    <span>Native size fit</span>
+                    <span>Size fit</span>
                     <strong>
                       {liveSnap.radiusOfGyration.toFixed(1)}Å ({liveSnap.compactnessMatchPct}%)
                     </strong>
@@ -726,16 +873,14 @@ export function MyLabsView({
                     <span>Core burial</span>
                     <strong>{liveSnap.hydrophobicBurialPct}%</strong>
                   </div>
-                  <div className="science-metric">
-                    <span>Contacts</span>
-                    <strong>{liveSnap.contactCount}</strong>
-                  </div>
                 </div>
 
                 <div className="sparkline-row">
                   <EnergySparkline history={liveSnap.energyHistory} />
                   <div className="sparkline-meta">
-                    <span>{liveSnap.opsPerSecond.toLocaleString()} steps/s</span>
+                    <span>
+                      {liveSnap.opsPerSecond.toLocaleString()} steps/s · {liveSnap.contactCount} contacts
+                    </span>
                     {structuralStats ? (
                       <span>
                         Helix {structuralStats.ss.helixPct}% · Sheet {structuralStats.ss.sheetPct}% ·{" "}
@@ -763,6 +908,7 @@ export function MyLabsView({
                     onClick={() => {
                       setFoldSignal((prev) => ({ action: "wiggle", seq: (prev?.seq || 0) + 1 }));
                       onAwardPlayBonus(1);
+                      markGoalDone("fold");
                       setFeedback("Wiggled protein backbone to lower energy. +1 spark.");
                     }}
                   >
@@ -774,6 +920,7 @@ export function MyLabsView({
                     onClick={() => {
                       setFoldSignal((prev) => ({ action: "shake", seq: (prev?.seq || 0) + 1 }));
                       onAwardPlayBonus(1);
+                      markGoalDone("fold");
                       setFeedback("Shook protein chain to explore a fresh fold. +1 spark.");
                     }}
                   >
@@ -798,7 +945,13 @@ export function MyLabsView({
                   <button
                     type="button"
                     className="subtle-pill-btn clickable"
-                    onClick={() => downloadScienceCertificateFromSnapshot(liveSnap)}
+                    onClick={() =>
+                      downloadScienceCertificateFromSnapshot(liveSnap, {
+                        nativeContactQ: structuralStats?.nativeQ,
+                        helixPct: structuralStats?.ss.helixPct,
+                        sheetPct: structuralStats?.ss.sheetPct
+                      })
+                    }
                   >
                     <FileJson size={13} />
                     .JSON
@@ -935,6 +1088,7 @@ export function MyLabsView({
                               try {
                                 await onBuildSector(selected, sector.id, true);
                                 setPreviewSectorId(null);
+                                markGoalDone("room");
                                 setFeedback(`Added ${sector.name} to Lab #${selected.tokenId}.`);
                               } catch (err) {
                                 setFeedback(
@@ -952,6 +1106,7 @@ export function MyLabsView({
                               try {
                                 await onBuildSector(selected, sector.id, false);
                                 setPreviewSectorId(null);
+                                markGoalDone("room");
                                 setFeedback(`Added ${sector.name} to Lab #${selected.tokenId}.`);
                               } catch (err) {
                                 setFeedback(

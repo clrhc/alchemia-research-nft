@@ -218,7 +218,7 @@ export function createSoftAOTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-export type MoodBubbleKind = "heart" | "treat" | "ball" | "sparkle";
+export type MoodBubbleKind = "heart" | "treat" | "ball" | "sparkle" | "zzz";
 
 /**
  * Crisp miniature frosted-glass 3D Tamagotchi mood bubble sprite texture.
@@ -287,6 +287,14 @@ export function createMoodBubbleTexture(kind: MoodBubbleKind): THREE.CanvasTextu
     ctx.beginPath();
     ctx.arc(64, 56, 16, 0, Math.PI * 2);
     ctx.fill();
+  } else if (kind === "zzz") {
+    ctx.fillStyle = "#64748b";
+    ctx.font = "600 22px 'Inter', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("z", 54, 62);
+    ctx.font = "600 17px 'Inter', sans-serif";
+    ctx.fillText("z", 71, 49);
   } else {
     ctx.fillStyle = "#f59e0b";
     ctx.beginPath();

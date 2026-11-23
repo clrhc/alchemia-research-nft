@@ -1040,7 +1040,10 @@ export function downloadPDBFromSnapshot(snap: ComputeSnapshot) {
   URL.revokeObjectURL(url);
 }
 
-export function downloadScienceCertificateFromSnapshot(snap: ComputeSnapshot) {
+export function downloadScienceCertificateFromSnapshot(
+  snap: ComputeSnapshot,
+  extraMetrics?: { nativeContactQ?: number; helixPct?: number; sheetPct?: number }
+) {
   const cert = {
     schema: "alchemia.open-science.certificate.v1",
     generatedAt: new Date().toISOString(),
@@ -1062,6 +1065,14 @@ export function downloadScienceCertificateFromSnapshot(snap: ComputeSnapshot) {
       bestEnergyKcalMol: Number(snap.bestEnergy.toFixed(6)),
       radiusOfGyrationAngstrom: Number(snap.radiusOfGyration.toFixed(4)),
       compactnessMatchPct: snap.compactnessMatchPct,
+      nativeContactFractionQPct: extraMetrics?.nativeContactQ ?? null,
+      secondaryStructurePSEA:
+        typeof extraMetrics?.helixPct === "number"
+          ? {
+              helixPct: extraMetrics.helixPct,
+              sheetPct: extraMetrics.sheetPct ?? 0
+            }
+          : null,
       endToEndDistanceAngstrom: Number(snap.endToEndDistance.toFixed(4)),
       hydrophobicCoreBurialPct: snap.hydrophobicBurialPct,
       nonLocalContacts: snap.contactCount

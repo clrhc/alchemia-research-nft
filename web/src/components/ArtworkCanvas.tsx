@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from "react";
 import { Cpu, Move3d, Pause, Play } from "lucide-react";
 import {
   Alchemy3DRenderer,
+  type AtmosphereMode,
   type CameraPreset,
   type InteractiveEvent,
   type LightingMood
@@ -9,6 +10,10 @@ import {
 import { type LiveImpactState } from "../engine/alchemyRenderer";
 import type { ComputeSnapshot } from "../engine/researchCompute";
 import type { TamagotchiAction } from "../engine/tamagotchi";
+
+export interface ArtworkCanvasHandle {
+  capturePhoto: () => string | null;
+}
 
 interface ArtworkCanvasProps {
   impact: LiveImpactState;
@@ -18,6 +23,7 @@ interface ArtworkCanvasProps {
   tamagotchiSignal?: { action: TamagotchiAction; seq: number } | null;
   previewSectorId?: number | null;
   lightingMood?: LightingMood;
+  atmosphereMode?: AtmosphereMode;
   benchmarkIndex?: number | null;
   foldSignal?: { action: "wiggle" | "shake"; seq: number } | null;
   onComputeSnapshot?: (snap: ComputeSnapshot) => void;
@@ -25,26 +31,34 @@ interface ArtworkCanvasProps {
   onPulseClick?: () => void;
 }
 
-export function ArtworkCanvas({
-  impact,
-  showHud = false,
-  compact = false,
-  cameraPreset = null,
-  tamagotchiSignal = null,
-  previewSectorId = null,
-  lightingMood = "daylight",
-  benchmarkIndex = null,
-  foldSignal = null,
-  onComputeSnapshot,
-  onInteractiveEvent,
-  onPulseClick
-}: ArtworkCanvasProps) {
+export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>(function ArtworkCanvas(
+  {
+    impact,
+    showHud = false,
+    compact = false,
+    cameraPreset = null,
+    tamagotchiSignal = null,
+    previewSectorId = null,
+    lightingMood = "daylight",
+    atmosphereMode = "clear",
+    benchmarkIndex = null,
+    foldSignal = null,
+    onComputeSnapshot,
+    onInteractiveEvent,
+    onPulseClick
+  },
+  ref
+) {
   const hostRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<Alchemy3DRenderer | null>(null);
   const onComputeRef = useRef(onComputeSnapshot);
   onComputeRef.current = onComputeSnapshot;
   const onInteractRef = useRef(onInteractiveEvent);
   onInteractRef.current = onInteractiveEvent;
+
+  useImperativeHandle(ref, () => ({
+    capturePhoto: () => rendererRef.current?.captureSnapshotDataUrl() ?? null
+  }));
 
   const [computeSnap, setComputeSnap] = useState<ComputeSnapshot | null>(null);
 
@@ -65,6 +79,7 @@ export function ArtworkCanvas({
     );
     rendererRef.current = renderer;
     renderer.setLightingMood(lightingMood);
+    renderer.setAtmosphereMode(atmosphereMode);
     renderer.start();
 
     const observer = new ResizeObserver(() => renderer.resize());
@@ -89,6 +104,7 @@ export function ArtworkCanvas({
     impact.complexityTier,
     impact.sectorsMask,
     impact.petLevel,
+    impact.petMoodScore,
     impact.workUnits,
     impact.tokenImpactEth,
     impact.causeImpactEth,
@@ -118,6 +134,10 @@ export function ArtworkCanvas({
   useEffect(() => {
     rendererRef.current?.setLightingMood(lightingMood);
   }, [lightingMood]);
+
+  useEffect(() => {
+    rendererRef.current?.setAtmosphereMode(atmosphereMode);
+  }, [atmosphereMode]);
 
   useEffect(() => {
     if (benchmarkIndex !== null && benchmarkIndex >= 0) {
@@ -175,9 +195,14 @@ export function ArtworkCanvas({
 
             <span className="art-hud-badge">
               <Move3d size={11} />
-              {compact
-                ? `Level ${impact.complexityTier}`
-                : `Drag to spin · Level ${impact.complexityTier}`}
+              {compact ? (
+                `Level ${impact.complexityTier}`
+              ) : (
+                <>
+                  <span className="hud-desktop-only">Drag to spin · </span>
+                  Level {impact.complexityTier}
+                </>
+              )}
             </span>
           </div>
 
@@ -217,4 +242,4 @@ export function ArtworkCanvas({
       )}
     </div>
   );
-}
+});

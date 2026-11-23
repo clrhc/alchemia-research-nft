@@ -1,6 +1,8 @@
-import { StrictMode, useEffect, useState } from "react";
+import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  Camera,
+  CloudSnow,
   Cookie,
   Download,
   Eye,
@@ -11,8 +13,8 @@ import {
   Volume2,
   VolumeX
 } from "lucide-react";
-import { ArtworkCanvas } from "./components/ArtworkCanvas";
-import type { CameraPreset, LightingMood } from "./engine/alchemy3DRenderer";
+import { ArtworkCanvas, type ArtworkCanvasHandle } from "./components/ArtworkCanvas";
+import type { AtmosphereMode, CameraPreset, LightingMood } from "./engine/alchemy3DRenderer";
 import { type LiveImpactState } from "./engine/alchemyRenderer";
 import { deriveTraitsFromSeed, normalizeSeed } from "./engine/prng";
 import { downloadPDBFromSnapshot, type ComputeSnapshot } from "./engine/researchCompute";
@@ -34,6 +36,12 @@ const LIGHTING_LABELS: Record<LightingMood, string> = {
   daylight: "Day",
   silver: "Silver",
   moonlit: "Mist"
+};
+const ATMOSPHERE_ORDER: AtmosphereMode[] = ["clear", "snow", "motes"];
+const ATMOSPHERE_LABELS: Record<AtmosphereMode, string> = {
+  clear: "Clear",
+  snow: "Snow",
+  motes: "Motes"
 };
 const CAM_PRESETS: Array<{ id: CameraPreset; label: string }> = [
   { id: "iso", label: "3D" },
@@ -61,8 +69,10 @@ function StandaloneAnimationViewer() {
   const initialTokenEth = Number(params.get("tokenEth") || String(usdToEth(initialUsd) * 0.6));
   const initialGlobalEth = Number(params.get("globalEth") || "5.41");
 
+  const artworkRef = useRef<ArtworkCanvasHandle>(null);
   const [showHud, setShowHud] = useState(true);
   const [lightingMood, setLightingMood] = useState<LightingMood>("daylight");
+  const [atmosphereMode, setAtmosphereMode] = useState<AtmosphereMode>("clear");
   const [soundOn, setSoundOn] = useState(() => soundEngine.isEnabled());
   const [camPreset, setCamPreset] = useState<{ preset: CameraPreset; seq: number } | null>(null);
   const [liveSnap, setLiveSnap] = useState<ComputeSnapshot | null>(null);
@@ -181,6 +191,25 @@ function StandaloneAnimationViewer() {
     soundEngine.playTap(987.77);
   };
 
+  const cycleAtmosphere = () => {
+    const idx = (ATMOSPHERE_ORDER.indexOf(atmosphereMode) + 1) % ATMOSPHERE_ORDER.length;
+    setAtmosphereMode(ATMOSPHERE_ORDER[idx]);
+    soundEngine.playTap(1046.5);
+  };
+
+  const handleSavePhoto = () => {
+    const dataUrl = artworkRef.current?.capturePhoto();
+    if (!dataUrl) return;
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = `alchemia-lab-${impact.tokenId}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    soundEngine.playTap(1318.5);
+    setToast(`Saved PNG photo of Lab #${impact.tokenId}.`);
+  };
+
   return (
     <div
       style={{
@@ -194,10 +223,12 @@ function StandaloneAnimationViewer() {
     >
       <div style={{ width: "min(100vw, 100vh)", height: "min(100vw, 100vh)", position: "relative" }}>
         <ArtworkCanvas
+          ref={artworkRef}
           impact={impact}
           showHud={showHud}
           cameraPreset={camPreset}
           lightingMood={lightingMood}
+          atmosphereMode={atmosphereMode}
           tamagotchiSignal={tamaSignal}
           onComputeSnapshot={setLiveSnap}
           onInteractiveEvent={(ev) => {
@@ -238,6 +269,26 @@ function StandaloneAnimationViewer() {
           >
             <Sun size={12} />
             {LIGHTING_LABELS[lightingMood]}
+          </button>
+
+          <button
+            type="button"
+            className="art-hud-badge clickable"
+            onClick={cycleAtmosphere}
+            style={{ cursor: "pointer" }}
+          >
+            <CloudSnow size={12} />
+            {ATMOSPHERE_LABELS[atmosphereMode]}
+          </button>
+
+          <button
+            type="button"
+            className="art-hud-badge clickable"
+            onClick={handleSavePhoto}
+            style={{ cursor: "pointer" }}
+          >
+            <Camera size={12} />
+            Photo
           </button>
 
           <button
