@@ -39,6 +39,7 @@ export interface ProteinBenchmark {
   shortName: string;
   taskTitle: string;
   targetMolecule: string;
+  humanSummary: string;
   foldClass: string;
   physicsModel: string;
   sequence: string;
@@ -119,6 +120,7 @@ export const PROTEIN_BENCHMARKS: readonly ProteinBenchmark[] = [
     shortName: "Trp-cage (1L2Y)",
     taskTitle: "Trp-cage Mini-Protein (1L2Y)",
     targetMolecule: "20-residue fast-folding alpha-helix",
+    humanSummary: "One of the smallest fast-folding proteins known—used worldwide to test 3D folding physics.",
     foldClass: "Alpha-helix cage",
     physicsModel: PHYSICS_LABEL,
     sequence: "NLYIQWLKDGGPSSGRPPPS",
@@ -130,6 +132,7 @@ export const PROTEIN_BENCHMARKS: readonly ProteinBenchmark[] = [
     shortName: "GB1 Hairpin (1GB1)",
     taskTitle: "GB1 Beta-Hairpin (1GB1)",
     targetMolecule: "16-residue beta-hairpin benchmark",
+    humanSummary: "A folded hairpin loop from protein G that shows how beta-sheets zip together in water.",
     foldClass: "Beta-hairpin",
     physicsModel: PHYSICS_LABEL,
     sequence: "GEWTYDDATKTFTVTE",
@@ -141,6 +144,7 @@ export const PROTEIN_BENCHMARKS: readonly ProteinBenchmark[] = [
     shortName: "Chignolin (1UAO)",
     taskTitle: "Chignolin Hairpin (1UAO)",
     targetMolecule: "10-residue beta-sheet nucleation fold",
+    humanSummary: "A tiny 10-piece designed hairpin built to study the first step of beta-sheet formation.",
     foldClass: "Short beta-hairpin",
     physicsModel: PHYSICS_LABEL,
     sequence: "GYDPETGTWG",
@@ -152,6 +156,7 @@ export const PROTEIN_BENCHMARKS: readonly ProteinBenchmark[] = [
     shortName: "CLN025 (2RVD)",
     taskTitle: "CLN025 Hairpin (2RVD)",
     targetMolecule: "10-residue thermostable hairpin",
+    humanSummary: "A heat-stable cousin of Chignolin where end-cap rings lock the fold tightly in place.",
     foldClass: "Stable beta-hairpin",
     physicsModel: PHYSICS_LABEL,
     sequence: "YYDPETGTWY",
@@ -163,6 +168,7 @@ export const PROTEIN_BENCHMARKS: readonly ProteinBenchmark[] = [
     shortName: "Villin HP36 (1VII)",
     taskTitle: "Villin Headpiece HP36 (1VII)",
     targetMolecule: "36-residue three-helix bundle",
+    humanSummary: "A 36-piece cell fragment that helped pioneer distributed protein folding benchmarks.",
     foldClass: "3-helix bundle",
     physicsModel: PHYSICS_LABEL,
     sequence: "MLSDEDFKAVFGMTRSAFANLPLWKQQNLKKEKGLF",
@@ -174,6 +180,7 @@ export const PROTEIN_BENCHMARKS: readonly ProteinBenchmark[] = [
     shortName: "Villin HP35 (2F4K)",
     taskTitle: "Villin HP35 Fast-Folder (2F4K)",
     targetMolecule: "35-residue sub-microsecond helix bundle",
+    humanSummary: "A trimmed, ultra-fast version of Villin that folds in less than a millionth of a second.",
     foldClass: "Fast 3-helix bundle",
     physicsModel: PHYSICS_LABEL,
     sequence: "LSDEDFKAVFGMTRSAFANLPLWKQQNLKKEKGLF",
@@ -185,6 +192,7 @@ export const PROTEIN_BENCHMARKS: readonly ProteinBenchmark[] = [
     shortName: "BBA5 (1FME)",
     taskTitle: "BBA5 Miniprotein (1FME)",
     targetMolecule: "28-residue mixed sheet-helix fold",
+    humanSummary: "A compact engineered protein combining both sheet and helix shapes in 28 residues.",
     foldClass: "Mixed beta-beta-alpha",
     physicsModel: PHYSICS_LABEL,
     sequence: "EQYTAKYKGRTFRNEKELRDFIEKFKGR",
@@ -196,6 +204,7 @@ export const PROTEIN_BENCHMARKS: readonly ProteinBenchmark[] = [
     shortName: "Trp-cage TC10b (2JOF)",
     taskTitle: "Trp-cage TC10b Variant (2JOF)",
     targetMolecule: "20-residue 64°C thermostable cage",
+    humanSummary: "A tougher Trp-cage variant engineered to stay folded even in hot water up to 64°C.",
     foldClass: "Thermostable cage",
     physicsModel: PHYSICS_LABEL,
     sequence: "DAYAQWLKDGGPSSGRPPPS",

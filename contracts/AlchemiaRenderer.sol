@@ -49,28 +49,28 @@ contract AlchemiaRenderer {
 
         t.vesselIdx = vesselIdx;
         string[5] memory vessels = [
-            "Erlenmeyer Alembic",
-            "Florence Retort Orb",
-            "Celestial Graduated Chalice",
-            "Twin Klein Crucible",
-            "Grand Distillation Spire"
+            "Erlenmeyer Flask",
+            "Round Lab Orb",
+            "Glass Chalice",
+            "Twin Glass Crucible",
+            "Tall Glass Spire"
         ];
         t.vessel = vessels[vesselIdx];
 
         if (fRoll < 16) {
-            t.familiarIdx = 0; t.familiar = "Alchemist Tuxedo Cat"; t.familiarKind = "Cat";
+            t.familiarIdx = 0; t.familiar = "Tuxedo Cat"; t.familiarKind = "Cat";
         } else if (fRoll < 32) {
-            t.familiarIdx = 1; t.familiar = "Astral Siamese Cat"; t.familiarKind = "Cat";
+            t.familiarIdx = 1; t.familiar = "Siamese Cat"; t.familiarKind = "Cat";
         } else if (fRoll < 47) {
-            t.familiarIdx = 2; t.familiar = "Nebula Calico Kitten"; t.familiarKind = "Cat";
+            t.familiarIdx = 2; t.familiar = "Calico Kitten"; t.familiarKind = "Cat";
         } else if (fRoll < 63) {
-            t.familiarIdx = 3; t.familiar = "Quantum Shiba Hound"; t.familiarKind = "Dog";
+            t.familiarIdx = 3; t.familiar = "Shiba Inu"; t.familiarKind = "Dog";
         } else if (fRoll < 79) {
-            t.familiarIdx = 4; t.familiar = "Celestial Sighthound"; t.familiarKind = "Dog";
+            t.familiarIdx = 4; t.familiar = "Silver Sighthound"; t.familiarKind = "Dog";
         } else if (fRoll < 94) {
-            t.familiarIdx = 5; t.familiar = "Labrador Catalyst Pup"; t.familiarKind = "Dog";
+            t.familiarIdx = 5; t.familiar = "Yellow Lab Pup"; t.familiarKind = "Dog";
         } else {
-            t.familiarIdx = 6; t.familiar = "Harmonic Cat & Dog Duo"; t.familiarKind = "Duo";
+            t.familiarIdx = 6; t.familiar = "Cat & Dog Pair"; t.familiarKind = "Duo";
         }
 
         string[9] memory palNames = [

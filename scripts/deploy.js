@@ -59,12 +59,12 @@ async function main() {
     rendererAddr,
     animationBaseUrl,
     [
-      "Companion Animal Welfare & Biology",
-      "Particle & Quantum Physics Grants",
-      "Biomedical & Cellular Alchemy",
-      "Clean Energy & Climate Catalysis"
+      "Animal Welfare & Vet Science",
+      "Physics Research Grants",
+      "Open Medical Research",
+      "Clean Energy & Climate"
     ],
-    ["Charity", "Physics", "Biomedical", "Climate"],
+    ["Animal Health", "Physics", "Medicine", "Climate"],
     researchWallets
   );
   await nft.waitForDeployment();

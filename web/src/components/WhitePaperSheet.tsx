@@ -93,6 +93,12 @@ export function WhitePaperSheet({
               </li>
             </ul>
 
+            <div className="wp-split-bar" aria-label="Phase 1 split: 60% research, 25% dev, 15% liquidity">
+              <span style={{ width: "60%", background: "#5b8def" }}>60% Research</span>
+              <span style={{ width: "25%", background: "#64748b" }}>25% Dev</span>
+              <span style={{ width: "15%", background: "#10b981" }}>15% LP</span>
+            </div>
+
             <div className="wp-lp-box">
               <div className="wp-lp-row">
                 <span>
@@ -127,6 +133,14 @@ export function WhitePaperSheet({
               <strong>{Math.round(state.coinTotalSupply).toLocaleString()} / 100,000,000</strong>{" "}
               minted so far).
             </p>
+            <div className="wp-safety-pills">
+              <span>0% Buy Tax</span>
+              <span>0% Sell Tax</span>
+              <span>0% Transfer Tax</span>
+              <span>100M Fixed Cap</span>
+              <span>EIP-2612 Permit</span>
+              <span>EIP-4906 Live Metadata</span>
+            </div>
           </div>
 
           <div>

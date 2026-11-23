@@ -88,6 +88,8 @@ export function ArtworkCanvas({
     impact.tokenValueUsd,
     impact.complexityTier,
     impact.sectorsMask,
+    impact.petLevel,
+    impact.workUnits,
     impact.tokenImpactEth,
     impact.causeImpactEth,
     impact.globalImpactEth,

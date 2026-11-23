@@ -217,3 +217,88 @@ export function createSoftAOTexture(): THREE.CanvasTexture {
   const tex = new THREE.CanvasTexture(canvas);
   return tex;
 }
+
+export type MoodBubbleKind = "heart" | "treat" | "ball" | "sparkle";
+
+/**
+ * Crisp miniature frosted-glass 3D Tamagotchi mood bubble sprite texture.
+ * Pure visual iconography (no cluttered text) for cozy pet feedback.
+ */
+export function createMoodBubbleTexture(kind: MoodBubbleKind): THREE.CanvasTexture {
+  const size = 128;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+
+  ctx.clearRect(0, 0, size, size);
+
+  // Soft white frosted-glass circular speech bubble with tiny tail
+  ctx.save();
+  ctx.shadowColor = "rgba(71, 85, 105, 0.22)";
+  ctx.shadowBlur = 12;
+  ctx.shadowOffsetY = 4;
+  ctx.fillStyle = "rgba(255, 255, 255, 0.94)";
+  ctx.beginPath();
+  ctx.arc(64, 56, 36, 0, Math.PI * 2);
+  ctx.fill();
+  // Little tail dot
+  ctx.beginPath();
+  ctx.arc(64, 102, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.strokeStyle = "rgba(148, 163, 184, 0.48)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(64, 56, 36, 0, Math.PI * 2);
+  ctx.stroke();
+
+  if (kind === "heart") {
+    ctx.fillStyle = "#f472b6";
+    ctx.beginPath();
+    ctx.moveTo(64, 71);
+    ctx.bezierCurveTo(64, 71, 44, 58, 44, 47);
+    ctx.bezierCurveTo(44, 40, 50, 36, 56, 39);
+    ctx.bezierCurveTo(60, 41, 64, 46, 64, 46);
+    ctx.bezierCurveTo(64, 46, 68, 41, 72, 39);
+    ctx.bezierCurveTo(78, 36, 84, 40, 84, 47);
+    ctx.bezierCurveTo(84, 58, 64, 71, 64, 71);
+    ctx.fill();
+  } else if (kind === "treat") {
+    ctx.fillStyle = "#10b981";
+    ctx.beginPath();
+    ctx.moveTo(64, 37);
+    ctx.lineTo(79, 56);
+    ctx.lineTo(64, 75);
+    ctx.lineTo(49, 56);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#a7f3d0";
+    ctx.beginPath();
+    ctx.arc(60, 51, 5, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (kind === "ball") {
+    const g = ctx.createRadialGradient(58, 50, 3, 64, 56, 17);
+    g.addColorStop(0, "#bae6fd");
+    g.addColorStop(0.55, "#38bdf8");
+    g.addColorStop(1, "#6366f1");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(64, 56, 16, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.fillStyle = "#f59e0b";
+    ctx.beginPath();
+    ctx.moveTo(64, 36);
+    ctx.quadraticCurveTo(64, 56, 84, 56);
+    ctx.quadraticCurveTo(64, 56, 64, 76);
+    ctx.quadraticCurveTo(64, 56, 44, 56);
+    ctx.quadraticCurveTo(64, 56, 64, 36);
+    ctx.fill();
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}

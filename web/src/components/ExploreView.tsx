@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -77,6 +77,21 @@ export function ExploreView({
 
   const [filter, setFilter] = useState<GalleryFilter>("all");
   const [searchId, setSearchId] = useState("");
+
+  useEffect(() => {
+    if (!selectedVessel) return;
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === "1") setCamPreset((p) => ({ preset: "iso", seq: (p?.seq || 0) + 1 }));
+      else if (e.key === "2") setCamPreset((p) => ({ preset: "top", seq: (p?.seq || 0) + 1 }));
+      else if (e.key === "3") setCamPreset((p) => ({ preset: "pet", seq: (p?.seq || 0) + 1 }));
+      else if (e.key === "4") setCamPreset((p) => ({ preset: "molecule", seq: (p?.seq || 0) + 1 }));
+      else if (e.key.toLowerCase() === "m") setSoundOn(soundEngine.toggle());
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedVessel]);
 
   const filteredVessels = useMemo(() => {
     const query = searchId.trim().replace(/^#/, "");
@@ -210,6 +225,7 @@ export function ExploreView({
                   tokenValueUsd: selectedVessel.valueUsd,
                   complexityTier: tier,
                   sectorsMask: selectedVessel.sectorsMask,
+                  workUnits: selectedVessel.workUnits,
                   tokenImpactEth: selectedVessel.impactEth,
                   causeImpactEth: state.causes[selectedVessel.causeId]?.raisedEth || 0,
                   globalImpactEth: state.globalDonatedEth,

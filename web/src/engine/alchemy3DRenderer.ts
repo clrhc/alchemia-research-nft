@@ -5,8 +5,10 @@ import {
   createAlabasterTerrazzoTexture,
   createArchitecturalBlueprintFloorTexture,
   createBrushedTitaniumTexture,
+  createMoodBubbleTexture,
   createRadialGlowTexture,
-  createSoftAOTexture
+  createSoftAOTexture,
+  type MoodBubbleKind
 } from "./architectTextures";
 import { SeededRNG, deriveTraitsFromSeed } from "./prng";
 import type { ComputeSnapshot, ResidueNode } from "./researchCompute";
@@ -68,6 +70,22 @@ interface TreatDrop3D {
   eaten: boolean;
 }
 
+interface MoodBubble3D {
+  sprite: THREE.Sprite;
+  life: number;
+  maxLife: number;
+  baseX: number;
+  baseZ: number;
+  startY: number;
+}
+
+interface WingConduitPulse {
+  mesh: THREE.Mesh;
+  curve: THREE.CatmullRomCurve3;
+  t: number;
+  speed: number;
+}
+
 export type CameraPreset = "iso" | "top" | "pet" | "molecule";
 export type LightingMood = "daylight" | "silver" | "moonlit";
 
@@ -121,6 +139,9 @@ export class Alchemy3DRenderer {
   private desiredCamTarget: THREE.Vector3 | null = null;
   private toyBall: { mesh: THREE.Mesh; vel: THREE.Vector3; life: number; bounceCooldown: number } | null = null;
   private treats: TreatDrop3D[] = [];
+  private moodBubbles: MoodBubble3D[] = [];
+  private moodTextures: Partial<Record<MoodBubbleKind, THREE.CanvasTexture>> = {};
+  private wingConduits: WingConduitPulse[] = [];
 
   private hemiLight: THREE.HemisphereLight | null = null;
   private keyLight: THREE.DirectionalLight | null = null;
@@ -186,6 +207,7 @@ export class Alchemy3DRenderer {
   private builtSeed = "";
   private builtTier = -1;
   private builtSectorsMask = -1;
+  private builtAccessoryRank = -1;
   private userDragging = false;
 
   // Scratch vectors for zero-GC bond cylinder alignment
@@ -623,6 +645,12 @@ export class Alchemy3DRenderer {
     }
   };
 
+  private getAccessoryRank(): number {
+    const petLvl = this.impact.petLevel ?? 1;
+    const wus = this.impact.workUnits ?? 0;
+    return (petLvl >= 2 ? 1 : 0) + (wus >= 10 ? 2 : 0);
+  }
+
   public updateState(next: Partial<LiveImpactState>) {
     const prevGlobal = this.impact.globalImpactEth;
     const prevSeed = this.impact.seed;
@@ -643,12 +671,14 @@ export class Alchemy3DRenderer {
     this.syncFillTarget();
 
     const nextSectors = this.impact.sectorsMask ?? 0;
+    const nextAccRank = this.getAccessoryRank();
     const prevBuilt = this.builtSectorsMask;
     const sectorsChanged = nextSectors !== prevBuilt && prevBuilt !== -1;
     if (
       this.impact.seed !== this.builtSeed ||
       this.impact.complexityTier !== this.builtTier ||
-      nextSectors !== this.builtSectorsMask
+      nextSectors !== this.builtSectorsMask ||
+      nextAccRank !== this.builtAccessoryRank
     ) {
       if (sectorsChanged) {
         this.buildPopScale = 0.92;
@@ -702,16 +732,45 @@ export class Alchemy3DRenderer {
     if (action === "pet") {
       soundEngine.playPet();
       this.spawnColoredBurst(origin, 16, ["#f472b6", "#fb7185", "#fda4af", "#ffffff"]);
+      this.spawnMoodBubble(origin, "heart");
     } else if (action === "feed") {
       soundEngine.playFeed();
       this.spawnColoredBurst(origin, 14, ["#fbbf24", "#34d399", "#ffffff"]);
+      this.spawnMoodBubble(origin, "treat");
       this.dropTreatCluster(origin);
     } else {
       soundEngine.playBounce();
       this.spawnColoredBurst(origin, 18, ["#38bdf8", "#818cf8", "#f472b6"]);
+      this.spawnMoodBubble(origin, "ball");
       this.shockwaveLife = 0.85;
       this.launchBouncingToyBall(origin);
     }
+  }
+
+  private spawnMoodBubble(origin: THREE.Vector3, kind: MoodBubbleKind) {
+    let tex = this.moodTextures[kind];
+    if (!tex) {
+      tex = createMoodBubbleTexture(kind);
+      this.moodTextures[kind] = tex;
+    }
+    const mat = new THREE.SpriteMaterial({
+      map: tex,
+      transparent: true,
+      opacity: 0.96,
+      depthWrite: false
+    });
+    const sprite = new THREE.Sprite(mat);
+    sprite.scale.set(0.46, 0.46, 1);
+    sprite.position.set(origin.x, origin.y + 0.34, origin.z);
+    this.dynamicGroup.add(sprite);
+    this.moodBubbles.push({
+      sprite,
+      life: 0,
+      maxLife: 1.75,
+      baseX: origin.x,
+      baseZ: origin.z,
+      startY: origin.y + 0.34
+    });
   }
 
   private dropTreatCluster(nearPet: THREE.Vector3) {
@@ -795,6 +854,12 @@ export class Alchemy3DRenderer {
     this.discoveryFlash = 1.0;
     this.excitement = Math.min(1.3, this.excitement + 0.45);
     this.spawnBurst(new THREE.Vector3(0, 3.05, 0), 10);
+    if (this.companions.length > 0 && this.moodBubbles.length < 2) {
+      this.spawnMoodBubble(
+        this.companions[0].group.position.clone().add(new THREE.Vector3(0, 0.85, 0)),
+        "sparkle"
+      );
+    }
     soundEngine.playDiscovery();
   }
 
@@ -872,6 +937,8 @@ export class Alchemy3DRenderer {
     this.titaniumTex.dispose();
     this.blueprintTex.dispose();
     this.aoTex.dispose();
+    Object.values(this.moodTextures).forEach((t) => t?.dispose());
+    this.moodTextures = {};
     this.controls.dispose();
     this.envRT.dispose();
     this.pmrem.dispose();
@@ -908,7 +975,8 @@ export class Alchemy3DRenderer {
       this.terrazzoTex,
       this.titaniumTex,
       this.blueprintTex,
-      this.aoTex
+      this.aoTex,
+      ...(Object.values(this.moodTextures).filter(Boolean) as THREE.Texture[])
     ]);
     parent.traverse((obj) => {
       if (obj === parent) return;
@@ -957,6 +1025,8 @@ export class Alchemy3DRenderer {
     this.spirePulseRing = null;
     this.companions = [];
     this.treats = [];
+    this.moodBubbles = [];
+    this.wingConduits = [];
     this.toyBall = null;
     this.bursts = [];
     this.proteinChainLength = -1;
@@ -989,6 +1059,7 @@ export class Alchemy3DRenderer {
     const sectorsMask = this.impact.sectorsMask ?? 0;
     this.builtTier = tier;
     this.builtSectorsMask = sectorsMask;
+    this.builtAccessoryRank = this.getAccessoryRank();
 
     const pal = this.traits.palette;
     const rng = new SeededRNG(this.traits.seed, 303);
@@ -1005,11 +1076,26 @@ export class Alchemy3DRenderer {
     this.buildCompanions3D(tier, sectorsMask);
 
     // Sims-Style Modular 3D Architectural Lab Wings built onto this NFT!
-    if (hasSector(sectorsMask, 0)) this.buildCryoFoldingWing3D();
-    if (hasSector(sectorsMask, 1)) this.buildQuantumMiningRigWing3D();
-    if (hasSector(sectorsMask, 2)) this.buildSolarCatalysisDome3D();
-    if (hasSector(sectorsMask, 3)) this.buildCompanionSanctuaryWing3D();
-    if (hasSector(sectorsMask, 4)) this.buildProtonAcceleratorSpire3D();
+    if (hasSector(sectorsMask, 0)) {
+      this.buildCryoFoldingWing3D();
+      this.addWingConduitPulse(new THREE.Vector3(-1.95, 0.72, -1.15), "#38bdf8");
+    }
+    if (hasSector(sectorsMask, 1)) {
+      this.buildQuantumMiningRigWing3D();
+      this.addWingConduitPulse(new THREE.Vector3(2.05, 0.85, 0.18), "#6366f1");
+    }
+    if (hasSector(sectorsMask, 2)) {
+      this.buildSolarCatalysisDome3D();
+      this.addWingConduitPulse(new THREE.Vector3(-1.85, 0.68, 1.3), "#10b981");
+    }
+    if (hasSector(sectorsMask, 3)) {
+      this.buildCompanionSanctuaryWing3D();
+      this.addWingConduitPulse(new THREE.Vector3(1.68, 0.64, 1.4), "#f472b6");
+    }
+    if (hasSector(sectorsMask, 4)) {
+      this.buildProtonAcceleratorSpire3D();
+      this.addWingConduitPulse(new THREE.Vector3(1.85, 1.15, -1.35), "#8b5cf6");
+    }
     if (hasSector(sectorsMask, 5)) this.buildObservatoryCrown3D();
 
     if (tier >= 3 || hasSector(sectorsMask, 4)) this.buildCelestialOrrery3D();
@@ -1025,6 +1111,31 @@ export class Alchemy3DRenderer {
     this.shockwaveRing.rotation.x = Math.PI / 2;
     this.shockwaveRing.position.y = 0.52;
     this.dynamicGroup.add(this.shockwaveRing);
+  }
+
+  private addWingConduitPulse(startPos: THREE.Vector3, colorHex: string) {
+    const mid = startPos.clone().multiplyScalar(0.5);
+    mid.y += 0.34;
+    const end = new THREE.Vector3(0, 0.54, 0);
+    const curve = new THREE.CatmullRomCurve3([startPos, mid, end]);
+    const tube = new THREE.Mesh(
+      new THREE.TubeGeometry(curve, 22, 0.012, 8, false),
+      new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 0.34 })
+    );
+    this.dynamicGroup.add(tube);
+
+    const pulseGeo = new THREE.SphereGeometry(0.036, 10, 10);
+    const pulseMat = new THREE.MeshStandardMaterial({
+      color: "#ffffff",
+      emissive: colorHex,
+      emissiveIntensity: 1.4
+    });
+    for (let k = 0; k < 2; k++) {
+      const m = new THREE.Mesh(pulseGeo, pulseMat);
+      m.add(this.makeGlowSprite(colorHex, 0.24, 0.68));
+      this.dynamicGroup.add(m);
+      this.wingConduits.push({ mesh: m, curve, t: k * 0.5, speed: 0.38 });
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -2246,7 +2357,11 @@ export class Alchemy3DRenderer {
     nose.position.set(0, -0.04, 0.22);
     head.add(nose);
 
-    if (variant === "siamese-cat" || this.traits.sub.companionAccessory === "halo") {
+    if (
+      variant === "siamese-cat" ||
+      this.traits.sub.companionAccessory === "halo" ||
+      (this.impact.workUnits ?? 0) >= 10
+    ) {
       const halo = new THREE.Mesh(
         new THREE.TorusGeometry(0.16, 0.014, 10, 32),
         new THREE.MeshStandardMaterial({
@@ -2259,6 +2374,28 @@ export class Alchemy3DRenderer {
       halo.rotation.x = Math.PI / 2;
       halo.position.y = 0.36;
       head.add(halo);
+    }
+
+    if ((this.impact.petLevel ?? 1) >= 2) {
+      const rimMat = new THREE.MeshStandardMaterial({ color: "#cbd5e1", metalness: 0.88, roughness: 0.18 });
+      const lensMat = new THREE.MeshPhysicalMaterial({
+        color: pal.liquidTop,
+        emissive: pal.electron,
+        emissiveIntensity: 0.35,
+        roughness: 0.08,
+        transmission: 0.62,
+        transparent: true
+      });
+      for (const side of [-1, 1]) {
+        const gRim = new THREE.Mesh(new THREE.TorusGeometry(0.056, 0.01, 10, 22), rimMat);
+        gRim.position.set(side * 0.072, 0.145, 0.17);
+        gRim.rotation.x = -0.32;
+        head.add(gRim);
+        const lens = new THREE.Mesh(new THREE.CircleGeometry(0.05, 18), lensMat);
+        lens.position.copy(gRim.position);
+        lens.rotation.copy(gRim.rotation);
+        head.add(lens);
+      }
     }
 
     if ((this.impact.sectorsMask ?? 0) === 0b111111 || (this.impact.complexityTier || 1) >= 5) {
@@ -2404,7 +2541,11 @@ export class Alchemy3DRenderer {
       eyes.push(eye);
     }
 
-    if (variant === "shiba-dog" || this.traits.sub.companionAccessory === "goggles") {
+    if (
+      variant === "shiba-dog" ||
+      this.traits.sub.companionAccessory === "goggles" ||
+      (this.impact.petLevel ?? 1) >= 2
+    ) {
       const strap = new THREE.Mesh(
         new THREE.TorusGeometry(0.205, 0.015, 8, 32),
         new THREE.MeshStandardMaterial({ color: "#475569", roughness: 0.38 })
@@ -3486,6 +3627,30 @@ export class Alchemy3DRenderer {
       this.shockwaveLife = Math.max(0, this.shockwaveLife - dt * 1.15);
       this.shockwaveRing.scale.setScalar(1 + (1 - this.shockwaveLife) * 4.2);
       (this.shockwaveRing.material as THREE.MeshBasicMaterial).opacity = this.shockwaveLife * 0.8;
+    }
+
+    for (const wc of this.wingConduits) {
+      wc.t = (wc.t + wc.speed * (1 + this.excitement * 0.6) * dt) % 1;
+      wc.curve.getPointAt(Math.max(0, Math.min(0.999, wc.t)), wc.mesh.position);
+    }
+
+    for (let i = this.moodBubbles.length - 1; i >= 0; i--) {
+      const mb = this.moodBubbles[i];
+      mb.life += dt;
+      const p = mb.life / mb.maxLife;
+      const pop = Math.min(1, p * 5);
+      mb.sprite.scale.setScalar(0.46 * (0.65 + pop * 0.35));
+      mb.sprite.position.set(
+        mb.baseX + Math.sin(t * 3.5 + i) * 0.05,
+        mb.startY + p * 0.68,
+        mb.baseZ
+      );
+      (mb.sprite.material as THREE.SpriteMaterial).opacity = Math.max(0, 1 - Math.pow(p, 1.8));
+      if (mb.life >= mb.maxLife) {
+        this.dynamicGroup.remove(mb.sprite);
+        (mb.sprite.material as THREE.SpriteMaterial).dispose();
+        this.moodBubbles.splice(i, 1);
+      }
     }
 
     for (let i = this.bursts.length - 1; i >= 0; i--) {

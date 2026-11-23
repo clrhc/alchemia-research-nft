@@ -149,6 +149,7 @@ export function MyLabsView({
     displayVessels.find((v) => v.tokenId === activeTokenId) || displayVessels[0] || null;
 
   const [tithePct, setTithePct] = useState(20);
+  const [donateAmt, setDonateAmt] = useState(25);
   const [liveSnap, setLiveSnap] = useState<ComputeSnapshot | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [camPreset, setCamPreset] = useState<{ preset: CameraPreset; seq: number } | null>(null);
@@ -184,6 +185,21 @@ export function MyLabsView({
   useEffect(() => {
     const id = window.setInterval(() => setNowTick(Date.now()), 1000);
     return () => window.clearInterval(id);
+  }, []);
+
+  // Whisper-quiet keyboard shortcuts (1-4 camera views, M sound, Space play)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === "1") setCamPreset((p) => ({ preset: "iso", seq: (p?.seq || 0) + 1 }));
+      else if (e.key === "2") setCamPreset((p) => ({ preset: "top", seq: (p?.seq || 0) + 1 }));
+      else if (e.key === "3") setCamPreset((p) => ({ preset: "pet", seq: (p?.seq || 0) + 1 }));
+      else if (e.key === "4") setCamPreset((p) => ({ preset: "molecule", seq: (p?.seq || 0) + 1 }));
+      else if (e.key.toLowerCase() === "m") setSoundOn(soundEngine.toggle());
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   const structuralStats = useMemo(() => {
@@ -402,6 +418,8 @@ export function MyLabsView({
                 tokenValueUsd: selected.valueUsd,
                 complexityTier: tier,
                 sectorsMask: selected.sectorsMask,
+                petLevel: vitals.level,
+                workUnits: selected.workUnits,
                 tokenImpactEth: selected.impactEth,
                 causeImpactEth: state.causes[selected.causeId]?.raisedEth || 0,
                 globalImpactEth: state.globalDonatedEth,
@@ -621,26 +639,38 @@ export function MyLabsView({
                 Claim ALCH
               </button>
 
-              <button
-                type="button"
-                className="subtle-pill-btn clickable"
-                onClick={async () => {
-                  if (state.userCoinBalance < 25) {
-                    setFeedback("Claim at least 25 ALCH first to donate.");
-                    return;
-                  }
-                  try {
-                    await onDonateCoins(selected, 25);
-                    soundEngine.playPet();
-                    setFeedback("Sent 25 ALCH straight to the research wallet.");
-                  } catch (err) {
-                    setFeedback(err instanceof Error ? err.message : "Donation cancelled.");
-                  }
-                }}
-              >
-                <HeartHandshake size={14} />
-                Donate 25 ALCH
-              </button>
+              <div className="donate-quick-group">
+                {([10, 25, 100] as const).map((amt) => (
+                  <button
+                    key={amt}
+                    type="button"
+                    className={`donate-chip clickable ${donateAmt === amt ? "active" : ""}`}
+                    onClick={() => setDonateAmt(amt)}
+                  >
+                    {amt}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="subtle-pill-btn clickable"
+                  onClick={async () => {
+                    if (state.userCoinBalance < donateAmt) {
+                      setFeedback(`Claim at least ${donateAmt} ALCH first to donate.`);
+                      return;
+                    }
+                    try {
+                      await onDonateCoins(selected, donateAmt);
+                      soundEngine.playPet();
+                      setFeedback(`Sent ${donateAmt} ALCH straight to the research wallet.`);
+                    } catch (err) {
+                      setFeedback(err instanceof Error ? err.message : "Donation cancelled.");
+                    }
+                  }}
+                >
+                  <HeartHandshake size={14} />
+                  Donate {donateAmt} ALCH
+                </button>
+              </div>
             </div>
           </div>
 
@@ -677,6 +707,10 @@ export function MyLabsView({
 
             {liveSnap && (
               <>
+                <p className="science-summary">
+                  {PROTEIN_BENCHMARKS[liveSnap.benchmarkIndex]?.humanSummary}
+                </p>
+
                 <div className="science-metrics-row">
                   <div className="science-metric">
                     <span>Best energy</span>

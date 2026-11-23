@@ -1757,6 +1757,76 @@ body {
   display: inline-block;
 }
 
+/* Plain-English Science Summary & Quick Donation Chips */
+.science-summary {
+  margin: -4px 0 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--ink-secondary);
+}
+
+.donate-quick-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.donate-chip {
+  appearance: none;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  padding: 5px 9px;
+  border-radius: 999px;
+  transition: all 0.16s ease;
+}
+
+.donate-chip.active {
+  background: #232a38;
+  border-color: #232a38;
+  color: #ffffff;
+}
+
+/* White Paper Split Bar & Zero-Tax Safety Pills */
+.wp-split-bar {
+  display: flex;
+  overflow: hidden;
+  border-radius: 999px;
+  margin: 8px 0 10px;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: #ffffff;
+}
+
+.wp-split-bar span {
+  padding: 6px 8px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wp-safety-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.wp-safety-pills span {
+  font-family: var(--font-mono);
+  font-size: 0.69rem;
+  color: #047857;
+  background: rgba(236, 253, 245, 0.9);
+  border: 1px solid rgba(16, 185, 129, 0.28);
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
 /* Clean Keyboard Accessibility Focus Rings */
 button:focus-visible,
 a:focus-visible,

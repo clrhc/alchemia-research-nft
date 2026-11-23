@@ -65,78 +65,78 @@ export interface AlchemyTraits {
 }
 
 export const VESSELS = [
-  "Erlenmeyer Alembic",
-  "Florence Retort Orb",
-  "Celestial Graduated Chalice",
-  "Twin Klein Crucible",
-  "Grand Distillation Spire"
+  "Erlenmeyer Flask",
+  "Round Lab Orb",
+  "Glass Chalice",
+  "Twin Glass Crucible",
+  "Tall Glass Spire"
 ] as const;
 
 export const ATOM_CONFIGS = [
-  "Helium Resonance Core",
-  "Carbon Hexagonal Lattice",
-  "Platinum Orbital Halo",
-  "Quantum Proton Cascade",
-  "Aether Double Helix"
+  "Helium Core",
+  "Carbon Ring",
+  "Platinum Halo",
+  "Proton Ring",
+  "Double Helix"
 ] as const;
 
 export const ELEMENTS = [
-  "Argentum (Silver)",
-  "Aether (Quintessence)",
-  "Hydrargyrum (Mercury)",
-  "Phosphorus (Light-Bearer)",
-  "Aurum (Solar Catalyst)"
+  "Silver",
+  "Quartz",
+  "Mercury",
+  "Phosphorus",
+  "Gold"
 ] as const;
 
 export const FAMILIARS: readonly FamiliarDef[] = [
   {
     id: 0,
-    name: "Alchemist Tuxedo Cat",
+    name: "Tuxedo Cat",
     species: "Cat",
     archetype: "tuxedo-cat",
-    description: "Sharp-eyed feline researcher batting softly at drifting protons."
+    description: "Sharp-eyed cat batting softly at drifting protons."
   },
   {
     id: 1,
-    name: "Astral Siamese Cat",
+    name: "Siamese Cat",
     species: "Cat",
     archetype: "siamese-cat",
-    description: "Poised ivory-and-slate cat humming in quantum resonance with the elixir."
+    description: "Calm ivory-and-slate cat keeping watch beside the glass."
   },
   {
     id: 2,
-    name: "Nebula Calico Kitten",
+    name: "Calico Kitten",
     species: "Cat",
     archetype: "calico-kitten",
-    description: "Curious pastel-patched kitten chasing orbiting electrons around the glass."
+    description: "Curious kitten chasing orbiting particles around the flask."
   },
   {
     id: 3,
-    name: "Quantum Shiba Hound",
+    name: "Shiba Inu",
     species: "Dog",
     archetype: "shiba-dog",
-    description: "Goggle-wearing Shiba thrilled by every bubbling catalytic milestone."
+    description: "Goggle-wearing Shiba excited by every new discovery."
   },
   {
     id: 4,
-    name: "Celestial Sighthound",
+    name: "Silver Sighthound",
     species: "Dog",
     archetype: "sighthound-dog",
-    description: "Sculptural silver-lined greyhound watching constellations unfold."
+    description: "Tall silver greyhound watching the folding protein above."
   },
   {
     id: 5,
-    name: "Labrador Catalyst Pup",
+    name: "Yellow Lab Pup",
     species: "Dog",
     archetype: "lab-pup",
-    description: "Joyful floppy-eared lab assistant wagging faster with every donation."
+    description: "Friendly floppy-eared pup wagging faster with every visit."
   },
   {
     id: 6,
-    name: "Harmonic Cat & Dog Duo",
+    name: "Cat & Dog Pair",
     species: "Duo",
     archetype: "harmonic-duo",
-    description: "Rare mythic pairing—feline precision and canine heart catalyzing together."
+    description: "Rare pairing of both a lab cat and dog sharing the patio."
   }
 ];
 
