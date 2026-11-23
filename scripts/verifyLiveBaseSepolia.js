@@ -97,6 +97,18 @@ async function main() {
       `  Lab #${id}: Tier ${snap.complexityTier} | SectorsMask ${snap.sectorsMask} | Rate ${ethers.formatEther(snap.miningRatePerHour)} ALCH/hr | Pending ${Number(ethers.formatEther(snap.pendingCoins)).toFixed(2)} ALCH | SVG valid: ${svg.includes("<svg")} | animUrl OK: ${parsed.animation_url.startsWith("https://")}`
     );
   }
+
+  console.log("\n=== LIVE CLOUDFLARE ENDPOINTS ===");
+  for (const url of [
+    "https://alchemia-labs.s2celerity.workers.dev/",
+    "https://alchemia-labs.s2celerity.workers.dev/animation.html",
+    "https://alchemia-labs.s2celerity.workers.dev/favicon.svg",
+    "https://alchemia-labs.s2celerity.workers.dev/og-card.png"
+  ]) {
+    const res = await fetch(url);
+    console.log(`  [${res.status}] ${url}`);
+    if (!res.ok) process.exitCode = 1;
+  }
 }
 
 main().catch((err) => {

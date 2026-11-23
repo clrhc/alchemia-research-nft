@@ -1,0 +1,38 @@
+name: ALCHEMIA CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  contracts-and-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install root & web dependencies
+        run: |
+          npm ci
+          npm --prefix web ci
+
+      - name: Compile Solidity contracts
+        run: npm run compile
+
+      - name: Run Hardhat security, tokenomics & 1-wei fuzz tests
+        run: npm test
+
+      - name: Run EIP-170 size, gas & Blockaid invariant audit
+        run: npm run audit
+
+      - name: Run open-science & Tamagotchi unit tests (Vitest)
+        run: npm run web:test
+
+      - name: Type-check & build production web app
+        run: npm run web:build
