@@ -61,9 +61,17 @@ export const DEFAULT_CAUSES: ResearchCauseInfo[] = [
 export const CHAIN_RPC_URLS: Record<number, string> = {
   1: import.meta.env.VITE_MAINNET_RPC_URL || "https://ethereum-rpc.publicnode.com",
   11155111: import.meta.env.VITE_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com",
-  84532: import.meta.env.VITE_BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org",
-  8453: import.meta.env.VITE_BASE_RPC_URL || "https://mainnet.base.org",
+  84532: import.meta.env.VITE_BASE_SEPOLIA_RPC_URL || "https://base-sepolia-rpc.publicnode.com",
+  8453: import.meta.env.VITE_BASE_RPC_URL || "https://base-rpc.publicnode.com",
   31337: "http://127.0.0.1:8545"
+};
+
+export const CHAIN_RPC_FALLBACKS: Record<number, string[]> = {
+  1: ["https://ethereum-rpc.publicnode.com", "https://eth.llamarpc.com"],
+  11155111: ["https://ethereum-sepolia-rpc.publicnode.com"],
+  84532: ["https://base-sepolia-rpc.publicnode.com", "https://sepolia.base.org"],
+  8453: ["https://base-rpc.publicnode.com", "https://mainnet.base.org"],
+  31337: ["http://127.0.0.1:8545"]
 };
 
 export const CHAIN_NAMES: Record<number, string> = {

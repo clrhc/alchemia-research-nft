@@ -121,7 +121,7 @@ export function App() {
       }
     };
     sync();
-    const id = window.setInterval(sync, 12000);
+    const id = window.setInterval(sync, 20000);
     return () => {
       active = false;
       window.clearInterval(id);

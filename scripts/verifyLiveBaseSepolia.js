@@ -1,7 +1,7 @@
 const { ethers } = require("ethers");
 require("dotenv").config();
 
-const RPC = process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org";
+const RPC = "https://base-sepolia-rpc.publicnode.com";
 const NFT_ADDR = "0x6f6D4c12EF3b3de964E2C8C84Bed4eBb8a83677F";
 const COIN_ADDR = "0x4Da32048ab4Fc630FED0ECc5a48D6cE3c31Ea382";
 const RENDERER_ADDR = "0x5Bfc9ABf9f2aA81C38a11235A85E70501Fc6EAFb";

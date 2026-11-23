@@ -2,6 +2,7 @@ import { BrowserProvider, Contract, JsonRpcProvider, ethers } from "ethers";
 import { ALCHEMIA_ABI, ALCHEMIA_COIN_ABI } from "./abi";
 import {
   BASE_MINT_PRICE_ETH,
+  CHAIN_RPC_FALLBACKS,
   CHAIN_RPC_URLS,
   COIN_CONTRACT_ADDRESS,
   CONTRACT_ADDRESS,
@@ -254,21 +255,38 @@ export function buildAnimationUrl(params: {
 }
 
 let activeEip1193Provider: ethers.Eip1193Provider | null = null;
-const readProviderCache = new Map<number, JsonRpcProvider>();
+const readProviderCache = new Map<string, JsonRpcProvider>();
 
-function getReadProvider(chainId: number): JsonRpcProvider {
-  const existing = readProviderCache.get(chainId);
+// Canonical Multicall3 address deployed identically across Ethereum, Base, Base Sepolia & Sepolia
+const MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11";
+const MULTICALL3_ABI = [
+  "function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) view returns (tuple(bool success, bytes returnData)[])"
+];
+
+function getReadProvider(chainId: number, customUrl?: string): JsonRpcProvider {
+  const rpcUrl = customUrl || CHAIN_RPC_URLS[chainId] || CHAIN_RPC_URLS[1];
+  const key = `${chainId}:${rpcUrl}`;
+  const existing = readProviderCache.get(key);
   if (existing) return existing;
-  const rpcUrl = CHAIN_RPC_URLS[chainId] || CHAIN_RPC_URLS[1];
   const network = ethers.Network.from(chainId);
-  // Keep staticNetwork (zero redundant eth_chainId calls) and batchMaxCount: 1
-  // because public RPCs like sepolia.base.org return HTTP 413 on large JSON-RPC batches.
   const provider = new JsonRpcProvider(rpcUrl, network, {
     staticNetwork: network,
     batchMaxCount: 1
   });
-  readProviderCache.set(chainId, provider);
+  readProviderCache.set(key, provider);
   return provider;
+}
+
+async function runMulticall3(
+  provider: JsonRpcProvider,
+  calls: Array<{ target: string; callData: string }>
+): Promise<Array<{ success: boolean; returnData: string }>> {
+  const mc = new Contract(MULTICALL3_ADDRESS, MULTICALL3_ABI, provider);
+  const payload = calls.map((c) => ({ target: c.target, allowFailure: true, callData: c.callData }));
+  return (await mc.aggregate3.staticCall(payload)) as Array<{
+    success: boolean;
+    returnData: string;
+  }>;
 }
 
 function getSelectedProvider(): ethers.Eip1193Provider | undefined {
@@ -346,64 +364,139 @@ export async function fetchOnChainCollectionSnapshot(
   walletAddress?: string | null
 ): Promise<Partial<CollectionState> | null> {
   if (!contractAddress || !ethers.isAddress(contractAddress)) return null;
-  const provider = getReadProvider(chainId);
-  const contract = new Contract(contractAddress, ALCHEMIA_ABI, provider);
 
-  // Split into two small concurrent groups of 6 to stay well under public RPC rate limits
-  const [
-    totalSupply,
-    maxSupply,
-    supplyLocked,
-    mintPriceWei,
-    totalDonatedWei,
-    liquidityReserveWei
-  ] = await Promise.all([
-    contract.totalSupply(),
-    contract.maxSupply(),
-    contract.supplyConfigLocked(),
-    contract.mintPriceWei(),
-    contract.totalDonatedWei(),
-    contract.liquidityReserveWei()
-  ]);
-
-  const [
-    liquidityThresholdWei,
-    liquiditySeeded,
-    totalCoinsTithed,
-    reactionStage,
-    rawCauses,
-    coinAddr
-  ] = await Promise.all([
-    contract.liquidityThresholdWei(),
-    contract.liquiditySeeded(),
-    contract.totalCoinsTithedToResearch(),
-    contract.currentReactionStage(),
-    contract.getAllCauses(),
-    contract.coin()
-  ]);
-
-  const causes: ResearchCauseInfo[] = rawCauses.map(
-    (
-      c: { name: string; category: string; researchWallet: string; totalRaisedWei: bigint; mintCount: bigint },
-      i: number
-    ) => {
-      const fb = DEFAULT_CAUSES[i % DEFAULT_CAUSES.length];
-      return {
-        id: i,
-        name: c.name,
-        shortName: fb.shortName,
-        category: c.category,
-        summary: fb.summary,
-        recipientLabel: `${c.researchWallet.slice(0, 6)}…${c.researchWallet.slice(-4)}`,
-        researchWallet: c.researchWallet,
-        raisedEth: Number(ethers.formatEther(c.totalRaisedWei)),
-        mintCount: Number(c.mintCount),
-        accent: fb.accent
-      };
-    }
+  const candidates = Array.from(
+    new Set([CHAIN_RPC_URLS[chainId] || CHAIN_RPC_URLS[1], ...(CHAIN_RPC_FALLBACKS[chainId] || [])])
   );
 
-  // Fetch up to 24 most recently minted live NFTs directly from the chain!
+  let lastErr: unknown = null;
+  for (const rpcUrl of candidates) {
+    try {
+      return await fetchCollectionWithProvider(
+        getReadProvider(chainId, rpcUrl),
+        contractAddress,
+        chainId,
+        walletAddress
+      );
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
+async function fetchCollectionWithProvider(
+  provider: JsonRpcProvider,
+  contractAddress: string,
+  chainId: number,
+  walletAddress?: string | null
+): Promise<Partial<CollectionState>> {
+  const contract = new Contract(contractAddress, ALCHEMIA_ABI, provider);
+  const nftIface = contract.interface;
+  const coinIface = new ethers.Interface(ALCHEMIA_COIN_ABI);
+  const useMulticall = chainId !== 31337;
+
+  let totalSupply: bigint;
+  let maxSupply: bigint;
+  let supplyLocked: boolean;
+  let mintPriceWei: bigint;
+  let totalDonatedWei: bigint;
+  let liquidityReserveWei: bigint;
+  let liquidityThresholdWei: bigint;
+  let liquiditySeeded: boolean;
+  let totalCoinsTithed: bigint;
+  let reactionStage: bigint;
+  let rawCauses: Array<{
+    name: string;
+    category: string;
+    researchWallet: string;
+    totalRaisedWei: bigint;
+    mintCount: bigint;
+  }>;
+  let coinAddr: string;
+
+  if (useMulticall) {
+    // Pack all 12 global contract reads into ONE single Multicall3 eth_call!
+    const globalFns = [
+      "totalSupply",
+      "maxSupply",
+      "supplyConfigLocked",
+      "mintPriceWei",
+      "totalDonatedWei",
+      "liquidityReserveWei",
+      "liquidityThresholdWei",
+      "liquiditySeeded",
+      "totalCoinsTithedToResearch",
+      "currentReactionStage",
+      "getAllCauses",
+      "coin"
+    ] as const;
+    const mcRes = await runMulticall3(
+      provider,
+      globalFns.map((fn) => ({ target: contractAddress, callData: nftIface.encodeFunctionData(fn) }))
+    );
+    if (mcRes.some((r) => !r.success)) {
+      throw new Error("Multicall3 global read failed");
+    }
+    totalSupply = nftIface.decodeFunctionResult("totalSupply", mcRes[0].returnData)[0];
+    maxSupply = nftIface.decodeFunctionResult("maxSupply", mcRes[1].returnData)[0];
+    supplyLocked = nftIface.decodeFunctionResult("supplyConfigLocked", mcRes[2].returnData)[0];
+    mintPriceWei = nftIface.decodeFunctionResult("mintPriceWei", mcRes[3].returnData)[0];
+    totalDonatedWei = nftIface.decodeFunctionResult("totalDonatedWei", mcRes[4].returnData)[0];
+    liquidityReserveWei = nftIface.decodeFunctionResult("liquidityReserveWei", mcRes[5].returnData)[0];
+    liquidityThresholdWei = nftIface.decodeFunctionResult("liquidityThresholdWei", mcRes[6].returnData)[0];
+    liquiditySeeded = nftIface.decodeFunctionResult("liquiditySeeded", mcRes[7].returnData)[0];
+    totalCoinsTithed = nftIface.decodeFunctionResult("totalCoinsTithedToResearch", mcRes[8].returnData)[0];
+    reactionStage = nftIface.decodeFunctionResult("currentReactionStage", mcRes[9].returnData)[0];
+    rawCauses = nftIface.decodeFunctionResult("getAllCauses", mcRes[10].returnData)[0];
+    coinAddr = String(nftIface.decodeFunctionResult("coin", mcRes[11].returnData)[0]);
+  } else {
+    [
+      totalSupply,
+      maxSupply,
+      supplyLocked,
+      mintPriceWei,
+      totalDonatedWei,
+      liquidityReserveWei,
+      liquidityThresholdWei,
+      liquiditySeeded,
+      totalCoinsTithed,
+      reactionStage,
+      rawCauses,
+      coinAddr
+    ] = await Promise.all([
+      contract.totalSupply(),
+      contract.maxSupply(),
+      contract.supplyConfigLocked(),
+      contract.mintPriceWei(),
+      contract.totalDonatedWei(),
+      contract.liquidityReserveWei(),
+      contract.liquidityThresholdWei(),
+      contract.liquiditySeeded(),
+      contract.totalCoinsTithedToResearch(),
+      contract.currentReactionStage(),
+      contract.getAllCauses(),
+      contract.coin()
+    ]);
+  }
+
+  const causes: ResearchCauseInfo[] = rawCauses.map((c, i) => {
+    const fb = DEFAULT_CAUSES[i % DEFAULT_CAUSES.length];
+    return {
+      id: i,
+      name: c.name,
+      shortName: fb.shortName,
+      category: c.category,
+      summary: fb.summary,
+      recipientLabel: `${c.researchWallet.slice(0, 6)}…${c.researchWallet.slice(-4)}`,
+      researchWallet: c.researchWallet,
+      raisedEth: Number(ethers.formatEther(c.totalRaisedWei)),
+      mintCount: Number(c.mintCount),
+      accent: fb.accent
+    };
+  });
+
+  // Fetch up to 24 most recently minted live NFTs + $ALCH supply/balance in ONE single Multicall3 eth_call!
   const supNum = Number(totalSupply);
   const fetchCount = Math.min(supNum, 24);
   const ids: number[] = [];
@@ -411,64 +504,142 @@ export async function fetchOnChainCollectionSnapshot(
     ids.push(id);
   }
 
-  const vessels: MintedVessel[] = await Promise.all(
-    ids.map(async (id) => {
-      const [snap, owner] = await Promise.all([
-        contract.getLiveImpactSnapshot(id),
-        contract.ownerOf(id)
-      ]);
-      const valEth = Number(ethers.formatEther(snap.tokenTotalValueWei));
-      const pendingCoinsNum = Number(ethers.formatEther(snap.pendingCoins));
-      const miningRateNum = Number(ethers.formatEther(snap.miningRatePerHour));
-      const nowMs = Date.now();
-      const approxElapsedMs =
-        miningRateNum > 0 ? Math.round((pendingCoinsNum / miningRateNum) * 3600000) : 0;
-      const isMine =
-        Boolean(walletAddress) &&
-        String(owner).toLowerCase() === String(walletAddress).toLowerCase();
-      return {
-        tokenId: id,
-        seed: String(snap.seed) as `0x${string}`,
-        causeId: Number(snap.causeId),
-        causeName: String(snap.causeName),
-        minter: isMine ? "You" : `${String(owner).slice(0, 6)}…${String(owner).slice(-4)}`,
-        ownedByUser: isMine,
-        onChain: true,
-        valueUsd: Math.max(1, Math.round(ethToUsd(valEth))),
-        impactEth: Number(ethers.formatEther(snap.tokenImpactWei)),
-        sectorsMask: Number(snap.sectorsMask),
-        workUnits: Number(snap.workUnits),
-        lastClaimMs: nowMs - approxElapsedMs,
-        onChainPendingCoins: pendingCoinsNum,
-        onChainMiningRate: miningRateNum,
-        syncedAtMs: nowMs,
-        mintedAt: Number(snap.mintedAt)
-      };
-    })
-  );
-
+  let vessels: MintedVessel[] = [];
   let userCoinBalance = 0;
   let coinTotalSupply = 0;
   let directCoinDonations = 0;
-  if (ethers.isAddress(String(coinAddr))) {
-    const coin = new Contract(String(coinAddr), ALCHEMIA_COIN_ABI, provider);
-    const [rawSup, rawDirect] = await Promise.all([
-      coin.totalSupply(),
-      coin.totalDonatedToResearch()
-    ]);
-    coinTotalSupply = Number(ethers.formatEther(rawSup));
-    directCoinDonations = Number(ethers.formatEther(rawDirect));
-    if (walletAddress && ethers.isAddress(walletAddress)) {
-      const rawBal = await coin.balanceOf(walletAddress);
-      userCoinBalance = Number(ethers.formatEther(rawBal));
+  const hasCoin = ethers.isAddress(String(coinAddr));
+  const hasWallet = Boolean(walletAddress && ethers.isAddress(walletAddress));
+
+  const formatVessel = (
+    id: number,
+    snap: {
+      seed: string;
+      causeId: bigint;
+      mintedAt: bigint;
+      tokenTotalValueWei: bigint;
+      tokenImpactWei: bigint;
+      sectorsMask: bigint;
+      pendingCoins: bigint;
+      miningRatePerHour: bigint;
+      workUnits: bigint;
+      causeName: string;
+    },
+    owner: string
+  ): MintedVessel => {
+    const valEth = Number(ethers.formatEther(snap.tokenTotalValueWei));
+    const pendingCoinsNum = Number(ethers.formatEther(snap.pendingCoins));
+    const miningRateNum = Number(ethers.formatEther(snap.miningRatePerHour));
+    const nowMs = Date.now();
+    const approxElapsedMs =
+      miningRateNum > 0 ? Math.round((pendingCoinsNum / miningRateNum) * 3600000) : 0;
+    const isMine =
+      Boolean(walletAddress) && String(owner).toLowerCase() === String(walletAddress).toLowerCase();
+    return {
+      tokenId: id,
+      seed: String(snap.seed) as `0x${string}`,
+      causeId: Number(snap.causeId),
+      causeName: String(snap.causeName),
+      minter: isMine ? "You" : `${String(owner).slice(0, 6)}…${String(owner).slice(-4)}`,
+      ownedByUser: isMine,
+      onChain: true,
+      valueUsd: Math.max(1, Math.round(ethToUsd(valEth))),
+      impactEth: Number(ethers.formatEther(snap.tokenImpactWei)),
+      sectorsMask: Number(snap.sectorsMask),
+      workUnits: Number(snap.workUnits),
+      lastClaimMs: nowMs - approxElapsedMs,
+      onChainPendingCoins: pendingCoinsNum,
+      onChainMiningRate: miningRateNum,
+      syncedAtMs: nowMs,
+      mintedAt: Number(snap.mintedAt)
+    };
+  };
+
+  if (useMulticall && (ids.length > 0 || hasCoin)) {
+    const batchCalls: Array<{ target: string; callData: string }> = [];
+    for (const id of ids) {
+      batchCalls.push({
+        target: contractAddress,
+        callData: nftIface.encodeFunctionData("getLiveImpactSnapshot", [id])
+      });
+      batchCalls.push({
+        target: contractAddress,
+        callData: nftIface.encodeFunctionData("ownerOf", [id])
+      });
+    }
+    const coinStartIdx = batchCalls.length;
+    if (hasCoin) {
+      batchCalls.push({ target: coinAddr, callData: coinIface.encodeFunctionData("totalSupply") });
+      batchCalls.push({
+        target: coinAddr,
+        callData: coinIface.encodeFunctionData("totalDonatedToResearch")
+      });
+      if (hasWallet && walletAddress) {
+        batchCalls.push({
+          target: coinAddr,
+          callData: coinIface.encodeFunctionData("balanceOf", [walletAddress])
+        });
+      }
+    }
+
+    const res = await runMulticall3(provider, batchCalls);
+    for (let i = 0; i < ids.length; i++) {
+      const snapRes = res[i * 2];
+      const ownRes = res[i * 2 + 1];
+      if (!snapRes?.success || !ownRes?.success) continue;
+      const snap = nftIface.decodeFunctionResult("getLiveImpactSnapshot", snapRes.returnData)[0];
+      const owner = String(nftIface.decodeFunctionResult("ownerOf", ownRes.returnData)[0]);
+      vessels.push(formatVessel(ids[i], snap, owner));
+    }
+    if (hasCoin) {
+      if (res[coinStartIdx]?.success) {
+        coinTotalSupply = Number(
+          ethers.formatEther(coinIface.decodeFunctionResult("totalSupply", res[coinStartIdx].returnData)[0])
+        );
+      }
+      if (res[coinStartIdx + 1]?.success) {
+        directCoinDonations = Number(
+          ethers.formatEther(
+            coinIface.decodeFunctionResult("totalDonatedToResearch", res[coinStartIdx + 1].returnData)[0]
+          )
+        );
+      }
+      if (hasWallet && res[coinStartIdx + 2]?.success) {
+        userCoinBalance = Number(
+          ethers.formatEther(coinIface.decodeFunctionResult("balanceOf", res[coinStartIdx + 2].returnData)[0])
+        );
+      }
+    }
+  } else {
+    vessels = await Promise.all(
+      ids.map(async (id) => {
+        const [snap, owner] = await Promise.all([
+          contract.getLiveImpactSnapshot(id),
+          contract.ownerOf(id)
+        ]);
+        return formatVessel(id, snap, String(owner));
+      })
+    );
+    if (hasCoin) {
+      const coin = new Contract(String(coinAddr), ALCHEMIA_COIN_ABI, provider);
+      const [rawSup, rawDirect] = await Promise.all([
+        coin.totalSupply(),
+        coin.totalDonatedToResearch()
+      ]);
+      coinTotalSupply = Number(ethers.formatEther(rawSup));
+      directCoinDonations = Number(ethers.formatEther(rawDirect));
+      if (hasWallet && walletAddress) {
+        const rawBal = await coin.balanceOf(walletAddress);
+        userCoinBalance = Number(ethers.formatEther(rawBal));
+      }
     }
   }
 
-  // Fetch recent on-chain ResearchDiscoveryAnchored logs cleanly within public RPC 10k-block limit
+  // Fetch recent on-chain ResearchDiscoveryAnchored logs cleanly within public RPC limits
   let recentDiscoveries: ResearchDiscoveryLog[] = [];
   try {
     const latestBlock = await provider.getBlockNumber();
-    const fromBlock = Math.max(0, latestBlock - 9000);
+    const fromBlock = Math.max(0, latestBlock - 5000);
     const logs = await contract.queryFilter(
       contract.filters.ResearchDiscoveryAnchored(),
       fromBlock,
