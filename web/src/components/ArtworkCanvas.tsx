@@ -48,6 +48,7 @@ export interface ArtworkCanvasHandle {
   waterGardenPlotFX: (plotId: string) => void;
   walkToPark: (parkId: string) => void;
   fireSocialBeamToNeighbor: (tokenId: number, colorHex?: string) => void;
+  triggerVehicleHonk: (vehicleId: string) => void;
   triggerCatalyticPulse: (intensity?: number) => void;
   arriveAtFrontDoor: () => void;
   triggerHostReaction: (emote: CharacterEmote, bubble?: MoodBubbleKind) => void;
@@ -195,6 +196,7 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
     walkToPark: (parkId) => rendererRef.current?.walkToPark(parkId),
     fireSocialBeamToNeighbor: (tokenId, colorHex) =>
       rendererRef.current?.fireSocialBeamToNeighbor(tokenId, colorHex),
+    triggerVehicleHonk: (vehicleId) => rendererRef.current?.triggerVehicleHonk(vehicleId),
     triggerCatalyticPulse: (intensity = 1.0) =>
       rendererRef.current?.triggerCatalyticPulse(intensity),
     arriveAtFrontDoor: () => rendererRef.current?.arriveAtFrontDoor(),

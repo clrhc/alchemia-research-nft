@@ -81,13 +81,45 @@ export interface NeighborhoodGrowthStage {
   progressPct: number;
   transitUnlocked: boolean;
   skylineUnlocked: boolean;
+  expansionBandsUnlocked: number;
 }
 
-/** Walkable world radius covering the full orthogonal grid neighborhood, 4 Block Parks & Outer Suburb Streets */
+/** Base walkable world radius covering Ring 1 + Ring 2 + 4 Block Parks inside the reflecting canal */
 export const NEIGHBORHOOD_WALK_LIMIT = 29.5;
 
-/** Maximum individually rendered neighborhood plots in the live 3D town (120+ minted NFTs!) */
-export const MAX_NEIGHBORHOOD_PLOTS = 120;
+/** Maximum individually rendered neighborhood plots in the live 3D town (240+ minted NFTs across 9 expansion rings!) */
+export const MAX_NEIGHBORHOOD_PLOTS = 240;
+
+/** Outer Expansion Ring Road geometry constants (shared by 3D paved roads, plots & District Mini-Map!) */
+export const EXPANSION_BAND_FIRST_SPAN = 35.4;
+export const EXPANSION_BAND_STEP = 10.6;
+export const EXPANSION_PLOTS_PER_BAND = 24;
+
+/** Centerline half-span of Outer Expansion Ring Avenue `bandIndex` (0 -> 35.4m, 1 -> 46.0m, 2 -> 56.6m...) */
+export function getExpansionBandAvenueSpan(bandIndex: number): number {
+  return Number((EXPANSION_BAND_FIRST_SPAN + Math.max(0, bandIndex) * EXPANSION_BAND_STEP).toFixed(2));
+}
+
+/**
+ * Computes how many Outer Expansion Ring Road bands beyond the canal (Ring 3+) should be paved
+ * to serve `totalPlotsWithSurveyed` neighbor plots + upcoming blueprint lots.
+ */
+export function getExpansionBandCount(totalPlotsWithSurveyed: number): number {
+  const outer = Math.max(0, totalPlotsWithSurveyed - 24);
+  if (outer <= 0) return 0;
+  return Math.ceil(outer / EXPANSION_PLOTS_PER_BAND);
+}
+
+/**
+ * Computes the dynamic walkable town boundary radius as more people mint NFTs and new
+ * Outer Expansion Ring Roads & canal bridges form!
+ */
+export function getNeighborhoodWalkLimit(totalMintedLabs: number): number {
+  const occupiedNeighbors = Math.max(0, totalMintedLabs - 1);
+  const bands = getExpansionBandCount(Math.min(MAX_NEIGHBORHOOD_PLOTS, occupiedNeighbors + 4));
+  if (bands <= 0) return NEIGHBORHOOD_WALK_LIMIT;
+  return Math.min(132, Number((getExpansionBandAvenueSpan(bands - 1) + 7.5).toFixed(2)));
+}
 
 /**
  * Orthogonal Neighborhood Street Grid Coordinates (single source of truth shared by
@@ -217,11 +249,24 @@ const OUTER_SUBURB_SLOTS: ReadonlyArray<Omit<PlotCoordSlot, "ring">> = [
   { x: 15.2, z: -25.6, rotY: 0, visitX: 15.2, visitZ: -22.6, districtName: "North Orchard Ave" }
 ];
 
+// Clean non-overlapping along-avenue lot centers for Ring 3+ Expansion Bands (6 per side = 24/band),
+// spaced strictly clear of the 4 cardinal connector roads (x = ±6.8, z = -6.8 & +8.4) and corner junctions!
+const EXPANSION_EW_SIDE_ZS: readonly number[] = [-26.2, -19.0, -11.8, 0.8, 14.2, 22.4];
+const EXPANSION_NS_SIDE_XS: readonly number[] = [-25.6, -18.4, -11.6, 11.6, 18.4, 25.6];
+
+const EXPANSION_DISTRICT_NAMES = [
+  "Skyline Heights",
+  "Innovation Ridge",
+  "Horizon Estates",
+  "Starlight Commons"
+] as const;
+
 /**
- * Generates deterministic orthogonal residential plot coordinates for ANY plot index 0..119+:
+ * Generates deterministic orthogonal residential plot coordinates for ANY plot index 0..239+:
  *  - 0..7:   Ring 1 Inner Neighborhood Streets (8 walkable fenced plots on Willow, Maple, Oakwood & Main)
  *  - 8..23:  Ring 2 Suburb Park Boulevards (16 walkable fenced estates overlooking the 4 City-Block Parks!)
- *  - 24..∞:  Ring 3 Expanding Orthogonal Outer Neighborhood Blocks stretching across the valley!
+ *  - 24..∞:  Ring 3+ Dynamically Paved Outer Expansion Ring Avenues (24 street-facing plots per ring band,
+ *            cleanly aligned onto each newly formed Expansion Avenue across the canal bridges!)
  */
 export function getNeighborhoodPlotSlot(plotIndex: number): PlotCoordSlot {
   if (plotIndex < INNER_RING_SLOTS.length) {
@@ -237,45 +282,66 @@ export function getNeighborhoodPlotSlot(plotIndex: number): PlotCoordSlot {
     return { ring: 2, ...slot };
   }
 
-  // Ring 3+: Orthogonal Outer City Blocks arranged neatly along the 4 cardinal neighborhood edges!
+  // Ring 3+: Dynamically Paved Orthogonal Outer Expansion Ring Avenues!
   const outerIdx = ring2Idx - OUTER_SUBURB_SLOTS.length;
-  const band = Math.floor(outerIdx / 24);
-  const idxInBand = outerIdx % 24;
-  const side = Math.floor(idxInBand / 6); // 0=East, 1=South, 2=West, 3=North
-  const along = (idxInBand % 6) - 2.5; // -2.5 .. +2.5
-  const span = 34.5 + band * 7.0;
-  const step = 7.4;
+  const band = Math.floor(outerIdx / EXPANSION_PLOTS_PER_BAND);
+  const idxInBand = outerIdx % EXPANSION_PLOTS_PER_BAND;
+  // Interleave across East (0), South (1), West (2), North (3) so outer districts grow symmetrically!
+  const side = idxInBand % 4;
+  const posOnSide = Math.floor(idxInBand / 4); // 0..5
+
+  const avenueSpan = getExpansionBandAvenueSpan(band);
+  const houseSpan = Number((avenueSpan + 4.35).toFixed(2));
+  const visitSpan = Number((avenueSpan + 1.55).toFixed(2));
 
   let x = 0;
   let z = 0;
+  let visitX = 0;
+  let visitZ = 0;
   let rotY = 0;
   if (side === 0) {
-    x = span;
-    z = along * step;
+    // East Expansion Avenue (house faces West onto x = +avenueSpan)
+    x = houseSpan;
+    z = EXPANSION_EW_SIDE_ZS[posOnSide];
+    visitX = visitSpan;
+    visitZ = z;
     rotY = -Math.PI / 2;
   } else if (side === 1) {
-    x = along * step;
-    z = span;
+    // South Expansion Avenue (house faces North onto z = +avenueSpan)
+    x = EXPANSION_NS_SIDE_XS[posOnSide];
+    z = houseSpan;
+    visitX = x;
+    visitZ = visitSpan;
     rotY = Math.PI;
   } else if (side === 2) {
-    x = -span;
-    z = along * step;
+    // West Expansion Avenue (house faces East onto x = -avenueSpan)
+    x = -houseSpan;
+    z = EXPANSION_EW_SIDE_ZS[posOnSide];
+    visitX = -visitSpan;
+    visitZ = z;
     rotY = Math.PI / 2;
   } else {
-    x = along * step;
-    z = -span;
+    // North Expansion Avenue (house faces South onto z = -avenueSpan)
+    x = EXPANSION_NS_SIDE_XS[posOnSide];
+    z = -houseSpan;
+    visitX = x;
+    visitZ = -visitSpan;
     rotY = 0;
   }
 
-  const len = Math.hypot(x, z) || 1;
+  const districtName =
+    band < EXPANSION_DISTRICT_NAMES.length
+      ? EXPANSION_DISTRICT_NAMES[band]
+      : `Frontier Sector ${band - EXPANSION_DISTRICT_NAMES.length + 1}`;
+
   return {
     ring: 3,
-    districtName: band === 0 ? "Skyline Heights" : band === 1 ? "Innovation Ridge" : "Horizon District",
+    districtName,
     x,
     z,
     rotY,
-    visitX: (x / len) * 26.5,
-    visitZ: (z / len) * 26.5
+    visitX,
+    visitZ
   };
 }
 
@@ -284,6 +350,7 @@ export function getNeighborhoodPlotSlot(plotIndex: number): PlotCoordSlot {
  */
 export function getNeighborhoodGrowthStage(totalMintedLabs: number): NeighborhoodGrowthStage {
   const n = Math.max(1, totalMintedLabs);
+  const expansionBandsUnlocked = getExpansionBandCount(Math.max(0, n - 1) + 4);
   if (n < 4) {
     return {
       level: 1,
@@ -292,7 +359,8 @@ export function getNeighborhoodGrowthStage(totalMintedLabs: number): Neighborhoo
       nextMilestone: 4,
       progressPct: Math.round((n / 4) * 100),
       transitUnlocked: false,
-      skylineUnlocked: false
+      skylineUnlocked: false,
+      expansionBandsUnlocked
     };
   }
   if (n < 10) {
@@ -303,39 +371,43 @@ export function getNeighborhoodGrowthStage(totalMintedLabs: number): Neighborhoo
       nextMilestone: 10,
       progressPct: Math.round(((n - 4) / 6) * 100),
       transitUnlocked: false,
-      skylineUnlocked: false
+      skylineUnlocked: false,
+      expansionBandsUnlocked
     };
   }
   if (n < 25) {
     return {
       level: 3,
       title: "Canal-Side Village",
-      subtitle: "Suburb estates across the 4 canal bridges + Hover-Shuttle online",
+      subtitle: "Suburb estates along the 4 park boulevards + Hover-Shuttle online",
       nextMilestone: 25,
       progressPct: Math.round(((n - 10) / 15) * 100),
       transitUnlocked: true,
-      skylineUnlocked: false
+      skylineUnlocked: false,
+      expansionBandsUnlocked
     };
   }
   if (n < 50) {
     return {
       level: 4,
       title: "Alchemia Town",
-      subtitle: "Outer Skyline Heights illuminated across the research valley",
+      subtitle: "Arched canal bridges & Outer Skyline Heights expansion avenues open!",
       nextMilestone: 50,
       progressPct: Math.round(((n - 25) / 25) * 100),
       transitUnlocked: true,
-      skylineUnlocked: true
+      skylineUnlocked: true,
+      expansionBandsUnlocked
     };
   }
   return {
     level: 5,
     title: "Research Metropolis",
-    subtitle: "Thriving open-science city stretching across the sunlit horizon",
+    subtitle: `Thriving open-science metropolis with ${Math.max(1, expansionBandsUnlocked)} outer expansion road ring${expansionBandsUnlocked === 1 ? "" : "s"}!`,
     nextMilestone: null,
     progressPct: 100,
     transitUnlocked: true,
-    skylineUnlocked: true
+    skylineUnlocked: true,
+    expansionBandsUnlocked
   };
 }
 

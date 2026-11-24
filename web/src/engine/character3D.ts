@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { createFastArchitecturalGlass } from "./browserCompat";
 import { createRadialGlowTexture } from "./architectTextures";
 import { BUILD_SCALE_MULTIPLIER, type CharacterProfile } from "./characterConfig";
 
@@ -251,13 +252,10 @@ export class ResearcherAvatar3D {
       roughness: 0.18,
       metalness: 0.9
     });
-    const glassMat = new THREE.MeshPhysicalMaterial({
-      color: "#ffffff",
-      transmission: 0.86,
-      roughness: 0.06,
-      ior: 1.47,
-      thickness: 0.08,
-      transparent: true
+    const glassMat = createFastArchitecturalGlass({
+      color: "#e8f3ff",
+      opacity: 0.52,
+      roughness: 0.06
     });
 
     // Soft architectural ground contact shadow directly under boots
@@ -810,10 +808,9 @@ export class ResearcherAvatar3D {
         emissiveIntensity: 0.72,
         roughness: 0.08,
         metalness: 0.15,
-        transmission: 0.45,
         clearcoat: 1.0,
         transparent: true,
-        opacity: 0.92
+        opacity: 0.9
       });
       const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.088, 0), pMat);
       crystal.scale.set(0.68, 1.48, 0.68);
@@ -1332,14 +1329,12 @@ export class ResearcherAvatar3D {
       this.torsoGroup.add(drone);
     } else if (backpack === "wings") {
       // Translucent Iridescent Glass Fairy Wings (animated flutter in update()!)
-      const wingMat = new THREE.MeshPhysicalMaterial({
+      const wingMat = createFastArchitecturalGlass({
         color: accentHex,
         emissive: accentHex,
         emissiveIntensity: 0.42,
-        transmission: 0.65,
         roughness: 0.08,
-        transparent: true,
-        opacity: 0.82,
+        opacity: 0.68,
         side: THREE.DoubleSide
       });
       for (const side of [-1, 1]) {

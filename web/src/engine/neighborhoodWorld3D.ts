@@ -8,7 +8,13 @@ import {
   createRadialGlowTexture,
   type MoodBubbleKind
 } from "./architectTextures";
+import {
+  createFastArchitecturalGlass,
+  detectDevicePerfProfile,
+  type DevicePerfProfile
+} from "./browserCompat";
 import { ResearcherAvatar3D } from "./character3D";
+import { TownTraffic3D } from "./townVehicles3D";
 import {
   COMMUNITY_FOUNTAIN_POS,
   TOWN_PARK_CENTER,
@@ -16,7 +22,10 @@ import {
   computeNeighborhoodPlacements,
   computeUpcomingBlueprintLots,
   deriveNeighborCharacterProfile,
+  getExpansionBandAvenueSpan,
+  getExpansionBandCount,
   getNeighborhoodGrowthStage,
+  getNeighborhoodWalkLimit,
   type NeighborLabSummary,
   type NeighborhoodPlotPlacement,
   type UpcomingBlueprintLot
@@ -74,6 +83,12 @@ interface SocialBeamFX {
   curve: THREE.CatmullRomCurve3;
   t: number;
   line: THREE.Mesh;
+}
+
+interface ConstructionBurstFX {
+  ring: THREE.Mesh;
+  pillar: THREE.Mesh;
+  life: number;
 }
 
 const SKY_VERT = `
@@ -151,6 +166,7 @@ const CANAL_FRAG = `
  */
 export class NeighborhoodWorld3D {
   public readonly group = new THREE.Group();
+  private expansionInfraGroup = new THREE.Group();
   private neighborsGroup = new THREE.Group();
   private blueprintsGroup = new THREE.Group();
   private npcsGroup = new THREE.Group();
@@ -163,6 +179,16 @@ export class NeighborhoodWorld3D {
   private beamGlowTextures = new Map<string, THREE.CanvasTexture>();
   private bubbleTextures: Partial<Record<MoodBubbleKind, THREE.CanvasTexture>> = {};
 
+  // Shared road & streetscape materials reused across dynamically paved Outer Expansion Ring Roads!
+  private pavedRoadMat!: THREE.MeshStandardMaterial;
+  private intersectionMat!: THREE.MeshStandardMaterial;
+  private sidewalkMat!: THREE.MeshStandardMaterial;
+  private laneLineMat!: THREE.MeshBasicMaterial;
+  private stripeMat!: THREE.MeshBasicMaterial;
+  private metalMat!: THREE.MeshStandardMaterial;
+  private canalBridgesBuilt = false;
+  private builtExpansionBands = 0;
+
   private skyMat: THREE.ShaderMaterial;
   private canalMat!: THREE.ShaderMaterial;
   private starPoints: THREE.Points;
@@ -174,6 +200,10 @@ export class NeighborhoodWorld3D {
   private fountainSpire: THREE.Mesh | null = null;
   private fountainHalo: THREE.Mesh | null = null;
 
+  // Autonomous right-hand-lane driving electric sedans, flower trucks, research vans & eco buses!
+  private traffic: TownTraffic3D;
+  private perfProfile: DevicePerfProfile;
+
   // Civic Hover-Shuttle gliding along the Outer Suburb Boulevard (unlocks at 10+ minted labs!)
   private shuttleGroup: THREE.Group | null = null;
   private shuttleAngle = 0.4;
@@ -183,24 +213,34 @@ export class NeighborhoodWorld3D {
   private blueprintRigs: BlueprintLotRig[] = [];
   private npcRigs: NeighborNpcRig[] = [];
   private socialBeams: SocialBeamFX[] = [];
+  private constructionFx: ConstructionBurstFX[] = [];
   private lastPlacements: NeighborhoodPlotPlacement[] = [];
   private knownTokenIds = new Set<number>();
   private initializedRoster = false;
 
-  constructor(terrazzoTex: THREE.Texture, titaniumTex: THREE.Texture) {
+  constructor(
+    terrazzoTex: THREE.Texture,
+    titaniumTex: THREE.Texture,
+    perfProfile?: DevicePerfProfile
+  ) {
+    this.perfProfile = perfProfile ?? detectDevicePerfProfile();
     this.terrazzoTex = terrazzoTex;
     this.titaniumTex = titaniumTex;
     this.groundTex = createDistrictGroundTexture();
     this.groundTex.wrapS = THREE.RepeatWrapping;
     this.groundTex.wrapT = THREE.RepeatWrapping;
-    this.groundTex.repeat.set(2.4, 2.4);
+    this.groundTex.repeat.set(3.8, 3.8);
 
+    this.traffic = new TownTraffic3D(this.perfProfile.maxTrafficVehicles);
+
+    this.group.add(this.expansionInfraGroup);
+    this.group.add(this.traffic.group);
     this.group.add(this.neighborsGroup);
     this.group.add(this.blueprintsGroup);
     this.group.add(this.npcsGroup);
     this.group.add(this.fxGroup);
 
-    // 1. Custom GLSL Procedural Sky Dome (expanded for wide metropolis skyline!)
+    // 1. Custom GLSL Procedural Sky Dome (expanded for unbounded metropolis skyline!)
     this.skyMat = new THREE.ShaderMaterial({
       vertexShader: SKY_VERT,
       fragmentShader: SKY_FRAG,
@@ -213,24 +253,24 @@ export class NeighborhoodWorld3D {
         uSunDir: { value: new THREE.Vector3(0.45, 0.62, -0.55) }
       }
     });
-    const skyDome = new THREE.Mesh(new THREE.SphereGeometry(96, 32, 20), this.skyMat);
+    const skyDome = new THREE.Mesh(new THREE.SphereGeometry(168, 32, 20), this.skyMat);
     this.group.add(skyDome);
 
     // Subtle Twilight Stars (fade in cleanly during moonlit mode)
-    const starPositions = new Float32Array(180 * 3);
-    for (let i = 0; i < 180; i++) {
+    const starPositions = new Float32Array(220 * 3);
+    for (let i = 0; i < 220; i++) {
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.random() * Math.PI * 0.42;
-      const r = 82;
+      const r = 142;
       starPositions[i * 3] = Math.sin(phi) * Math.cos(theta) * r;
-      starPositions[i * 3 + 1] = Math.cos(phi) * r + 6;
+      starPositions[i * 3 + 1] = Math.cos(phi) * r + 8;
       starPositions[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * r;
     }
     const starGeo = new THREE.BufferGeometry();
     starGeo.setAttribute("position", new THREE.BufferAttribute(starPositions, 3));
     this.starPoints = new THREE.Points(
       starGeo,
-      new THREE.PointsMaterial({ color: "#ffffff", size: 0.48, transparent: true, opacity: 0 })
+      new THREE.PointsMaterial({ color: "#ffffff", size: 0.62, transparent: true, opacity: 0 })
     );
     this.group.add(this.starPoints);
 
@@ -283,6 +323,25 @@ export class NeighborhoodWorld3D {
     }
   }
 
+  private applyWorldTopUVs(
+    geo: THREE.BoxGeometry,
+    tileSize: number,
+    swapAxes = false
+  ): THREE.BoxGeometry {
+    const pos = geo.attributes.position as THREE.BufferAttribute;
+    const norm = geo.attributes.normal as THREE.BufferAttribute;
+    const uv = geo.attributes.uv as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      if (norm.getY(i) > 0.5) {
+        const u = pos.getX(i) / tileSize + 0.5;
+        const v = pos.getZ(i) / tileSize + 0.5;
+        uv.setXY(i, swapAxes ? v : u, swapAxes ? u : v);
+      }
+    }
+    uv.needsUpdate = true;
+    return geo;
+  }
+
   private buildTownRoadsAndCanal() {
     const roadTex = createPavedRoadTexture();
     const intersectionTex = createIntersectionPavementTexture();
@@ -290,24 +349,24 @@ export class NeighborhoodWorld3D {
     gardenPathTex.repeat.set(6, 6);
     this.ownedTextures.push(roadTex, intersectionTex, gardenPathTex);
 
-    const pavedRoadMat = new THREE.MeshStandardMaterial({
+    this.pavedRoadMat = new THREE.MeshStandardMaterial({
       map: roadTex,
       color: "#cfd8e4",
       roughness: 0.72,
       metalness: 0.08
     });
-    const intersectionMat = new THREE.MeshStandardMaterial({
+    this.intersectionMat = new THREE.MeshStandardMaterial({
       map: intersectionTex,
       color: "#cfd8e4",
       roughness: 0.72,
       metalness: 0.08
     });
-    const sidewalkMat = new THREE.MeshStandardMaterial({
+    this.sidewalkMat = new THREE.MeshStandardMaterial({
       map: this.terrazzoTex,
       color: "#f4f7fb",
       roughness: 0.48
     });
-    const laneLineMat = new THREE.MeshBasicMaterial({
+    this.laneLineMat = new THREE.MeshBasicMaterial({
       color: "#f8fafc",
       transparent: true,
       opacity: 0.82,
@@ -316,7 +375,7 @@ export class NeighborhoodWorld3D {
       polygonOffsetFactor: -2,
       polygonOffsetUnits: -2
     });
-    const stripeMat = new THREE.MeshBasicMaterial({
+    this.stripeMat = new THREE.MeshBasicMaterial({
       color: "#ffffff",
       transparent: true,
       opacity: 0.94,
@@ -325,7 +384,7 @@ export class NeighborhoodWorld3D {
       polygonOffsetFactor: -2,
       polygonOffsetUnits: -2
     });
-    const metalMat = new THREE.MeshStandardMaterial({
+    this.metalMat = new THREE.MeshStandardMaterial({
       map: this.titaniumTex,
       color: "#cbd5e1",
       roughness: 0.22,
@@ -337,31 +396,20 @@ export class NeighborhoodWorld3D {
       metalness: 0.35
     });
 
-    // Helper: scales top-face UVs to exact real-world meter tiling so every road segment & sidewalk
-    // slab renders unstretched, uniform granite pavers without cloning materials!
-    const applyWorldTopUVs = (
-      geo: THREE.BoxGeometry,
-      tileSize: number,
-      swapAxes = false
-    ): THREE.BoxGeometry => {
-      const pos = geo.attributes.position as THREE.BufferAttribute;
-      const norm = geo.attributes.normal as THREE.BufferAttribute;
-      const uv = geo.attributes.uv as THREE.BufferAttribute;
-      for (let i = 0; i < pos.count; i++) {
-        if (norm.getY(i) > 0.5) {
-          const u = pos.getX(i) / tileSize + 0.5;
-          const v = pos.getZ(i) / tileSize + 0.5;
-          uv.setXY(i, swapAxes ? v : u, swapAxes ? u : v);
-        }
-      }
-      uv.needsUpdate = true;
-      return geo;
-    };
+    const pavedRoadMat = this.pavedRoadMat;
+    const intersectionMat = this.intersectionMat;
+    const sidewalkMat = this.sidewalkMat;
+    const laneLineMat = this.laneLineMat;
+    const stripeMat = this.stripeMat;
+    const metalMat = this.metalMat;
+    const applyWorldTopUVs = (geo: THREE.BoxGeometry, tileSize: number, swapAxes = false) =>
+      this.applyWorldTopUVs(geo, tileSize, swapAxes);
 
     // Wide Sunlit Botanical Meadow Valley Parkland Terrain with clean rectangular
     // architectural foundation cutout under Plot #1 so the sunken B1 Basement opens cleanly!
+    const meadowRadius = 144;
     const meadowShape = new THREE.Shape();
-    meadowShape.absarc(0, 0, 86, 0, Math.PI * 2, false);
+    meadowShape.absarc(0, 0, meadowRadius, 0, Math.PI * 2, false);
     const basementCut = 3.5;
     const holePath = new THREE.Path();
     holePath.moveTo(-basementCut, -basementCut);
@@ -371,12 +419,16 @@ export class NeighborhoodWorld3D {
     holePath.closePath();
     meadowShape.holes.push(holePath);
 
-    const groundGeo = new THREE.ShapeGeometry(meadowShape, 48);
-    // Normalize ShapeGeometry UVs from world [-86..86] to [0..1] so groundTex matches CircleGeometry seamlessly!
+    const groundGeo = new THREE.ShapeGeometry(meadowShape, 64);
+    // Normalize ShapeGeometry UVs from world [-144..144] to [0..1]
     const uvAttr = groundGeo.attributes.uv as THREE.BufferAttribute;
     const posAttr = groundGeo.attributes.position as THREE.BufferAttribute;
     for (let i = 0; i < posAttr.count; i++) {
-      uvAttr.setXY(i, posAttr.getX(i) / 172 + 0.5, posAttr.getY(i) / 172 + 0.5);
+      uvAttr.setXY(
+        i,
+        posAttr.getX(i) / (meadowRadius * 2) + 0.5,
+        posAttr.getY(i) / (meadowRadius * 2) + 0.5
+      );
     }
     uvAttr.needsUpdate = true;
 
@@ -442,6 +494,11 @@ export class NeighborhoodWorld3D {
     const nsSegments = buildSegments(TOWN_STREETS.ew);
     const ewSegments = buildSegments(TOWN_STREETS.ns);
 
+    // Batch ALL road lane dashes, crosswalk zebra stripes & stop bars into InstancedMeshes
+    // (cuts ~280+ individual draw calls down to just 2 ultra-fast GPU instanced draw calls!)
+    const dashTransforms: Array<{ x: number; z: number; sx: number; sz: number }> = [];
+    const stripeTransforms: Array<{ x: number; z: number; sx: number; sz: number }> = [];
+
     // 1. Non-overlapping North-South paved street blocks & flanking raised curb sidewalks
     for (const sx of TOWN_STREETS.ns) {
       for (const [zA, zB] of nsSegments) {
@@ -464,10 +521,7 @@ export class NeighborhoodWorld3D {
 
         // Dashed white center lane dashes cleanly inside this block segment (clear of stop bars)
         for (let z = zA + 1.1; z <= zB - 1.1; z += 2.4) {
-          const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.085, 0.9), laneLineMat);
-          dash.rotation.x = -Math.PI / 2;
-          dash.position.set(sx, paintY, z);
-          this.group.add(dash);
+          dashTransforms.push({ x: sx, z, sx: 0.085, sz: 0.9 });
         }
       }
     }
@@ -494,10 +548,7 @@ export class NeighborhoodWorld3D {
 
         // Dashed white center lane dashes cleanly inside this block segment
         for (let x = xA + 1.1; x <= xB - 1.1; x += 2.4) {
-          const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.085), laneLineMat);
-          dash.rotation.x = -Math.PI / 2;
-          dash.position.set(x, paintY, sz);
-          this.group.add(dash);
+          dashTransforms.push({ x, z: sz, sx: 0.9, sz: 0.085 });
         }
       }
     }
@@ -508,10 +559,6 @@ export class NeighborhoodWorld3D {
     const nsApronGeo = applyWorldTopUVs(new THREE.BoxGeometry(roadW, roadH, curbW), 2.2, false);
     const ewApronGeo = applyWorldTopUVs(new THREE.BoxGeometry(curbW, roadH, roadW), 2.2, true);
     const cornerCurbGeo = applyWorldTopUVs(new THREE.BoxGeometry(curbW, walkH, curbW), 2.4, false);
-    const nsStripeGeo = new THREE.PlaneGeometry(0.18, 0.42);
-    const ewStripeGeo = new THREE.PlaneGeometry(0.42, 0.18);
-    const nsStopBarGeo = new THREE.PlaneGeometry(roadW - 0.18, 0.075);
-    const ewStopBarGeo = new THREE.PlaneGeometry(0.075, roadW - 0.18);
 
     for (const sx of TOWN_STREETS.ns) {
       for (const sz of TOWN_STREETS.ew) {
@@ -532,23 +579,13 @@ export class NeighborhoodWorld3D {
           this.group.add(nsApron, ewApron);
 
           for (const off of [-0.66, -0.22, 0.22, 0.66]) {
-            const s1 = new THREE.Mesh(nsStripeGeo, stripeMat);
-            s1.rotation.x = -Math.PI / 2;
-            s1.position.set(sx + off, paintY, sz + side * curbOffset);
-            const s2 = new THREE.Mesh(ewStripeGeo, stripeMat);
-            s2.rotation.x = -Math.PI / 2;
-            s2.position.set(sx + side * curbOffset, paintY, sz + off);
-            this.group.add(s1, s2);
+            stripeTransforms.push({ x: sx + off, z: sz + side * curbOffset, sx: 0.18, sz: 0.42 });
+            stripeTransforms.push({ x: sx + side * curbOffset, z: sz + off, sx: 0.42, sz: 0.18 });
           }
 
           // Crisp architectural pedestrian stop bars just behind each crosswalk
-          const stopNS = new THREE.Mesh(nsStopBarGeo, laneLineMat);
-          stopNS.rotation.x = -Math.PI / 2;
-          stopNS.position.set(sx, paintY, sz + side * (halfWalk + 0.14));
-          const stopEW = new THREE.Mesh(ewStopBarGeo, laneLineMat);
-          stopEW.rotation.x = -Math.PI / 2;
-          stopEW.position.set(sx + side * (halfWalk + 0.14), paintY, sz);
-          this.group.add(stopNS, stopEW);
+          dashTransforms.push({ x: sx, z: sz + side * (halfWalk + 0.14), sx: roadW - 0.18, sz: 0.075 });
+          dashTransforms.push({ x: sx + side * (halfWalk + 0.14), z: sz, sx: 0.075, sz: roadW - 0.18 });
         }
 
         // 4 Raised Corner Sidewalk Quadrants (0.55m × 0.55m, flush with flanking sidewalks at top y = 0.048!)
@@ -572,6 +609,35 @@ export class NeighborhoodWorld3D {
           this.group.add(post, bladeA, bladeB);
         }
       }
+    }
+
+    // Emit 2 InstancedMeshes for all lane dashes, stop bars & crosswalk stripes
+    const unitPlane = new THREE.PlaneGeometry(1, 1);
+    unitPlane.rotateX(-Math.PI / 2);
+    const dummy = new THREE.Object3D();
+    if (dashTransforms.length > 0) {
+      const dashInst = new THREE.InstancedMesh(unitPlane, laneLineMat, dashTransforms.length);
+      dashTransforms.forEach((tr, idx) => {
+        dummy.position.set(tr.x, paintY, tr.z);
+        dummy.scale.set(tr.sx, 1, tr.sz);
+        dummy.updateMatrix();
+        dashInst.setMatrixAt(idx, dummy.matrix);
+      });
+      dashInst.instanceMatrix.needsUpdate = true;
+      dashInst.frustumCulled = false;
+      this.group.add(dashInst);
+    }
+    if (stripeTransforms.length > 0) {
+      const stripeInst = new THREE.InstancedMesh(unitPlane, stripeMat, stripeTransforms.length);
+      stripeTransforms.forEach((tr, idx) => {
+        dummy.position.set(tr.x, paintY, tr.z);
+        dummy.scale.set(tr.sx, 1, tr.sz);
+        dummy.updateMatrix();
+        stripeInst.setMatrixAt(idx, dummy.matrix);
+      });
+      stripeInst.instanceMatrix.needsUpdate = true;
+      stripeInst.frustumCulled = false;
+      this.group.add(stripeInst);
     }
 
     // Welcoming Paved Town Square Plaza connecting your Home Front Gate (z = 4.95) seamlessly
@@ -757,16 +823,25 @@ export class NeighborhoodWorld3D {
   }
 
   private buildStreetlamps() {
-    const metalMat = new THREE.MeshStandardMaterial({
-      map: this.titaniumTex,
-      color: "#cbd5e1",
-      roughness: 0.22,
-      metalness: 0.88
-    });
     const postGeo = new THREE.CylinderGeometry(0.032, 0.048, 1.9, 8);
     const bulbGeo = new THREE.SphereGeometry(0.11, 10, 10);
+    const sharedBulbMat = new THREE.MeshStandardMaterial({
+      color: "#fffbeb",
+      emissive: "#fbbf24",
+      emissiveIntensity: 0.35,
+      roughness: 0.14
+    });
+    this.lampBulbs.push(sharedBulbMat);
+
     const glowTex = createRadialGlowTexture("#fde68a");
     this.ownedTextures.push(glowTex);
+    const sharedHaloMat = new THREE.SpriteMaterial({
+      map: glowTex,
+      transparent: true,
+      opacity: 0.2,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
 
     // Place streetlamps cleanly on the sidewalk corners of all 16 grid intersections + block midpoints!
     const lampCoords: Array<[number, number]> = [];
@@ -783,42 +858,35 @@ export class NeighborhoodWorld3D {
       [5.25, 6.8]
     );
 
-    for (const [lx, lz] of lampCoords) {
-      const g = new THREE.Group();
-      g.position.set(lx, 0, lz);
+    // Instance all streetlamp posts & bulbs into 2 draw calls instead of 42!
+    const postsMesh = new THREE.InstancedMesh(postGeo, this.metalMat, lampCoords.length);
+    const bulbsMesh = new THREE.InstancedMesh(bulbGeo, sharedBulbMat, lampCoords.length);
+    const dummy = new THREE.Object3D();
 
-      const post = new THREE.Mesh(postGeo, metalMat);
-      post.position.y = 0.95;
-      g.add(post);
+    lampCoords.forEach(([lx, lz], idx) => {
+      dummy.position.set(lx, 0.95, lz);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      postsMesh.setMatrixAt(idx, dummy.matrix);
 
-      const bulbMat = new THREE.MeshStandardMaterial({
-        color: "#fffbeb",
-        emissive: "#fbbf24",
-        emissiveIntensity: 0.35,
-        roughness: 0.14
-      });
-      this.lampBulbs.push(bulbMat);
+      dummy.position.set(lx, 1.95, lz);
+      dummy.updateMatrix();
+      bulbsMesh.setMatrixAt(idx, dummy.matrix);
 
-      const bulb = new THREE.Mesh(bulbGeo, bulbMat);
-      bulb.position.y = 1.95;
-      g.add(bulb);
+      if (this.perfProfile.tier !== "mobile" || idx % 2 === 0) {
+        const halo = new THREE.Sprite(sharedHaloMat);
+        halo.scale.set(0.84, 0.84, 1);
+        halo.position.set(lx, 1.95, lz);
+        this.lampHalos.push(halo);
+        this.group.add(halo);
+      }
+    });
 
-      const halo = new THREE.Sprite(
-        new THREE.SpriteMaterial({
-          map: glowTex,
-          transparent: true,
-          opacity: 0.2,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false
-        })
-      );
-      halo.scale.set(0.84, 0.84, 1);
-      halo.position.y = 1.95;
-      this.lampHalos.push(halo);
-      g.add(halo);
-
-      this.group.add(g);
-    }
+    postsMesh.instanceMatrix.needsUpdate = true;
+    bulbsMesh.instanceMatrix.needsUpdate = true;
+    postsMesh.frustumCulled = false;
+    bulbsMesh.frustumCulled = false;
+    this.group.add(postsMesh, bulbsMesh);
   }
 
   private buildCommunityFountain() {
@@ -864,15 +932,12 @@ export class NeighborhoodWorld3D {
 
     const spire = new THREE.Mesh(
       new THREE.OctahedronGeometry(0.32, 0),
-      new THREE.MeshPhysicalMaterial({
+      createFastArchitecturalGlass({
         color: "#e0f2fe",
         emissive: "#5b8def",
         emissiveIntensity: 0.55,
         roughness: 0.08,
-        transmission: 0.52,
-        clearcoat: 1.0,
-        transparent: true,
-        opacity: 0.92
+        opacity: 0.9
       })
     );
     spire.scale.set(0.65, 1.9, 0.65);
@@ -911,12 +976,10 @@ export class NeighborhoodWorld3D {
       roughness: 0.24,
       metalness: 0.22
     });
-    const canopyMat = new THREE.MeshPhysicalMaterial({
+    const canopyMat = createFastArchitecturalGlass({
       color: "#e0f2fe",
-      transmission: 0.78,
       roughness: 0.06,
-      transparent: true,
-      opacity: 0.9
+      opacity: 0.62
     });
     const glowMat = new THREE.MeshStandardMaterial({
       color: "#38bdf8",
@@ -987,6 +1050,7 @@ export class NeighborhoodWorld3D {
   private setNightGlow(lampEmissive: number, haloOpacity: number) {
     for (const m of this.lampBulbs) m.emissiveIntensity = lampEmissive;
     for (const h of this.lampHalos) (h.material as THREE.SpriteMaterial).opacity = haloOpacity;
+    this.traffic.setNightGlow(lampEmissive);
     for (const rig of this.plotRigs.values()) {
       for (const wm of rig.windowGlowMats) {
         wm.emissiveIntensity = Math.max(0.45, lampEmissive * 0.75);
@@ -1003,7 +1067,8 @@ export class NeighborhoodWorld3D {
 
   /**
    * Synchronizes the entire 3D growing town whenever new NFTs are minted or rooms change!
-   * Newly minted NFTs rise cleanly out of their surveyed blueprint lots!
+   * Newly minted NFTs rise cleanly out of their surveyed blueprint lots and dynamically pave
+   * new Outer Expansion Ring Roads & Canal Bridges as totalSupply grows!
    */
   public syncNeighbors(neighbors: readonly NeighborLabSummary[]): NeighborhoodPlotPlacement[] {
     const placements = computeNeighborhoodPlacements(neighbors);
@@ -1013,6 +1078,14 @@ export class NeighborhoodWorld3D {
     this.shuttleVisible = growth.transitUnlocked;
     if (this.shuttleGroup) {
       this.shuttleGroup.visible = this.shuttleVisible;
+    }
+
+    // Dynamically pave Canal Bridges + Outer Expansion Ring Roads whenever minted plots
+    // or their upcoming surveyed blueprint lots cross into Ring 3+ expansion districts!
+    const upcomingLots = computeUpcomingBlueprintLots(placements.length, 4);
+    const neededBands = getExpansionBandCount(placements.length + upcomingLots.length);
+    if (neededBands > this.builtExpansionBands) {
+      this.ensureExpansionBands(neededBands);
     }
 
     const nextById = new Map(placements.map((p) => [p.lab.tokenId, p]));
@@ -1039,17 +1112,411 @@ export class NeighborhoodWorld3D {
       this.plotRigs.set(pl.lab.tokenId, rig);
       this.neighborsGroup.add(rig.group);
       this.knownTokenIds.add(pl.lab.tokenId);
+      if (isFreshMint) {
+        const accent = deriveTraitsFromSeed(pl.lab.seed).palette.liquidMid;
+        this.spawnConstructionFx(pl.x, pl.z, accent);
+      }
     }
 
     // Rebuild the next 4 upcoming "Next Mint" Holographic Blueprint Lots down the street!
-    this.syncUpcomingBlueprintLots(computeUpcomingBlueprintLots(placements.length, 4));
+    this.syncUpcomingBlueprintLots(upcomingLots);
+
+    // Sync autonomous driving vehicles fleet across paved streets & newly formed Expansion Rings!
+    this.traffic.syncTownScale(placements.length + 1, this.builtExpansionBands);
 
     // Sync living strolling NPC researchers across BOTH Inner Boulevard (Ring 1) & Canal Suburbs (Ring 2)!
-    const walkablePlots = placements.filter((p) => p.ring === 1 || p.ring === 2).slice(0, 10);
+    const walkablePlots = placements
+      .filter((p) => p.ring === 1 || p.ring === 2)
+      .slice(0, this.perfProfile.maxNpcResearchers);
     this.syncNeighborNpcs(walkablePlots);
 
     this.initializedRoster = true;
     return placements;
+  }
+
+  public triggerVehicleHonk(vehicleId: string) {
+    this.traffic.triggerFriendlyHonk(vehicleId);
+  }
+
+  public getWalkLimit(): number {
+    return getNeighborhoodWalkLimit(this.lastPlacements.length + 1);
+  }
+
+  public getBuiltExpansionBands(): number {
+    return this.builtExpansionBands;
+  }
+
+  private spawnConstructionFx(x: number, z: number, accentHex: string) {
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.9, 1.35, 28),
+      new THREE.MeshBasicMaterial({
+        color: accentHex,
+        transparent: true,
+        opacity: 0.85,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(x, 0.08, z);
+
+    const pillar = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.32, 0.55, 5.2, 16, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: accentHex,
+        transparent: true,
+        opacity: 0.32,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      })
+    );
+    pillar.position.set(x, 2.6, z);
+
+    this.fxGroup.add(ring, pillar);
+    this.constructionFx.push({ ring, pillar, life: 1.0 });
+  }
+
+  /**
+   * Dynamically paves sleek Arched Alabaster Canal Bridges & Zero-Overlap Segmented Outer
+   * Expansion Ring Roads whenever minted NFTs expand past the inner 24 neighborhood plots!
+   */
+  private ensureExpansionBands(neededBands: number) {
+    const roadW = TOWN_STREETS.roadWidth; // 2.2m
+    const walkW = TOWN_STREETS.sidewalkTotalWidth; // 3.3m
+    const halfRoad = roadW / 2; // 1.1m
+    const halfWalk = walkW / 2; // 1.65m
+    const curbW = halfWalk - halfRoad; // 0.55m
+    const curbOffset = halfRoad + curbW / 2; // 1.375m
+    const roadH = 0.036;
+    const roadCenterY = 0.006; // top = +0.024 (flush with inner grid!)
+    const walkH = 0.06;
+    const walkCenterY = 0.018; // top = +0.048 (crisp raised limestone curb!)
+    const paintY = 0.034;
+
+    const addRoadBlockNS = (sx: number, zA: number, zB: number) => {
+      const len = zB - zA;
+      if (len < 0.08) return;
+      const zMid = (zA + zB) * 0.5;
+      const road = new THREE.Mesh(
+        this.applyWorldTopUVs(new THREE.BoxGeometry(roadW, roadH, len), 2.2, false),
+        this.pavedRoadMat
+      );
+      road.position.set(sx, roadCenterY, zMid);
+      road.receiveShadow = true;
+      this.expansionInfraGroup.add(road);
+
+      for (const side of [-1, 1]) {
+        const sw = new THREE.Mesh(
+          this.applyWorldTopUVs(new THREE.BoxGeometry(curbW, walkH, len), 2.4, false),
+          this.sidewalkMat
+        );
+        sw.position.set(sx + side * curbOffset, walkCenterY, zMid);
+        sw.receiveShadow = true;
+        this.expansionInfraGroup.add(sw);
+      }
+
+      for (let z = zA + 1.1; z <= zB - 1.1; z += 2.5) {
+        const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.085, 0.9), this.laneLineMat);
+        dash.rotation.x = -Math.PI / 2;
+        dash.position.set(sx, paintY, z);
+        this.expansionInfraGroup.add(dash);
+      }
+    };
+
+    const addRoadBlockEW = (sz: number, xA: number, xB: number) => {
+      const len = xB - xA;
+      if (len < 0.08) return;
+      const xMid = (xA + xB) * 0.5;
+      const road = new THREE.Mesh(
+        this.applyWorldTopUVs(new THREE.BoxGeometry(len, roadH, roadW), 2.2, true),
+        this.pavedRoadMat
+      );
+      road.position.set(xMid, roadCenterY, sz);
+      road.receiveShadow = true;
+      this.expansionInfraGroup.add(road);
+
+      for (const side of [-1, 1]) {
+        const sw = new THREE.Mesh(
+          this.applyWorldTopUVs(new THREE.BoxGeometry(len, walkH, curbW), 2.4, false),
+          this.sidewalkMat
+        );
+        sw.position.set(xMid, walkCenterY, sz + side * curbOffset);
+        sw.receiveShadow = true;
+        this.expansionInfraGroup.add(sw);
+      }
+
+      for (let x = xA + 1.1; x <= xB - 1.1; x += 2.5) {
+        const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.085), this.laneLineMat);
+        dash.rotation.x = -Math.PI / 2;
+        dash.position.set(x, paintY, sz);
+        this.expansionInfraGroup.add(dash);
+      }
+    };
+
+    const interCenterGeo = new THREE.BoxGeometry(roadW, roadH, roadW);
+    const nsApronGeo = this.applyWorldTopUVs(new THREE.BoxGeometry(roadW, roadH, curbW), 2.2, false);
+    const ewApronGeo = this.applyWorldTopUVs(new THREE.BoxGeometry(curbW, roadH, roadW), 2.2, true);
+    const nsCurbCapGeo = this.applyWorldTopUVs(new THREE.BoxGeometry(roadW, walkH, curbW), 2.4, false);
+    const ewCurbCapGeo = this.applyWorldTopUVs(new THREE.BoxGeometry(curbW, walkH, roadW), 2.4, false);
+    const cornerCurbGeo = this.applyWorldTopUVs(new THREE.BoxGeometry(curbW, walkH, curbW), 2.4, false);
+    const nsStripeGeo = new THREE.PlaneGeometry(0.18, 0.42);
+    const ewStripeGeo = new THREE.PlaneGeometry(0.42, 0.18);
+
+    const addPavedIntersection = (
+      ix: number,
+      iz: number,
+      openN: boolean,
+      openS: boolean,
+      openW: boolean,
+      openE: boolean
+    ) => {
+      const center = new THREE.Mesh(interCenterGeo, this.intersectionMat);
+      center.position.set(ix, roadCenterY, iz);
+      center.receiveShadow = true;
+      this.expansionInfraGroup.add(center);
+
+      const addSideNS = (side: -1 | 1, open: boolean) => {
+        if (open) {
+          const ap = new THREE.Mesh(nsApronGeo, this.pavedRoadMat);
+          ap.position.set(ix, roadCenterY, iz + side * curbOffset);
+          ap.receiveShadow = true;
+          this.expansionInfraGroup.add(ap);
+          for (const off of [-0.66, -0.22, 0.22, 0.66]) {
+            const st = new THREE.Mesh(nsStripeGeo, this.stripeMat);
+            st.rotation.x = -Math.PI / 2;
+            st.position.set(ix + off, paintY, iz + side * curbOffset);
+            this.expansionInfraGroup.add(st);
+          }
+        } else {
+          const cap = new THREE.Mesh(nsCurbCapGeo, this.sidewalkMat);
+          cap.position.set(ix, walkCenterY, iz + side * curbOffset);
+          cap.receiveShadow = true;
+          this.expansionInfraGroup.add(cap);
+        }
+      };
+
+      const addSideEW = (side: -1 | 1, open: boolean) => {
+        if (open) {
+          const ap = new THREE.Mesh(ewApronGeo, this.pavedRoadMat);
+          ap.position.set(ix + side * curbOffset, roadCenterY, iz);
+          ap.receiveShadow = true;
+          this.expansionInfraGroup.add(ap);
+          for (const off of [-0.66, -0.22, 0.22, 0.66]) {
+            const st = new THREE.Mesh(ewStripeGeo, this.stripeMat);
+            st.rotation.x = -Math.PI / 2;
+            st.position.set(ix + side * curbOffset, paintY, iz + off);
+            this.expansionInfraGroup.add(st);
+          }
+        } else {
+          const cap = new THREE.Mesh(ewCurbCapGeo, this.sidewalkMat);
+          cap.position.set(ix + side * curbOffset, walkCenterY, iz);
+          cap.receiveShadow = true;
+          this.expansionInfraGroup.add(cap);
+        }
+      };
+
+      addSideNS(-1, openN);
+      addSideNS(1, openS);
+      addSideEW(-1, openW);
+      addSideEW(1, openE);
+
+      for (const cx of [-1, 1]) {
+        for (const cz of [-1, 1]) {
+          const corner = new THREE.Mesh(cornerCurbGeo, this.sidewalkMat);
+          corner.position.set(ix + cx * curbOffset, walkCenterY, iz + cz * curbOffset);
+          corner.receiveShadow = true;
+          this.expansionInfraGroup.add(corner);
+        }
+      }
+    };
+
+    // 1. Build 8 Sleek Alabaster & Glass Canal Bridges once Expansion Band 0 forms!
+    //    Connects Willow Ln (-6.8), Maple Ln (+6.8), Oakwood St (-6.8) & Main St (+8.4)
+    //    edge-to-edge from inner grid boundary (±30.0) across the reflecting canal to Band 0 (±33.75)!
+    if (!this.canalBridgesBuilt && neededBands >= 1) {
+      this.canalBridgesBuilt = true;
+      const bridgeStart = 30.0;
+      const bridgeEnd = getExpansionBandAvenueSpan(0) - halfWalk; // 33.75
+      const railGlassMat = createFastArchitecturalGlass({
+        color: "#e0f2fe",
+        roughness: 0.1,
+        opacity: 0.56
+      });
+      const bollardGlowMat = new THREE.MeshStandardMaterial({
+        color: "#e0f2fe",
+        emissive: "#38bdf8",
+        emissiveIntensity: 0.9
+      });
+      const bridgeLen = bridgeEnd - bridgeStart;
+      const bridgeMid = (bridgeStart + bridgeEnd) * 0.5;
+
+      // North & South Bridges along Willow Ln (-6.8) and Maple Ln (+6.8)
+      for (const sx of [-6.8, 6.8]) {
+        for (const dir of [-1, 1]) {
+          const zA = dir > 0 ? bridgeStart : -bridgeEnd;
+          const zB = dir > 0 ? bridgeEnd : -bridgeStart;
+          addRoadBlockNS(sx, zA, zB);
+          // Sleek side glass balustrades + glowing bridge abutment bollards
+          for (const side of [-1, 1]) {
+            const rail = new THREE.Mesh(
+              new THREE.BoxGeometry(0.06, 0.52, bridgeLen - 0.16),
+              railGlassMat
+            );
+            rail.position.set(sx + side * (halfWalk - 0.05), 0.3, dir * bridgeMid);
+            const cap = new THREE.Mesh(
+              new THREE.BoxGeometry(0.09, 0.05, bridgeLen - 0.1),
+              this.metalMat
+            );
+            cap.position.set(sx + side * (halfWalk - 0.05), 0.58, dir * bridgeMid);
+            const bollard = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.72, 8), bollardGlowMat);
+            bollard.position.set(sx + side * (halfWalk - 0.05), 0.38, dir * bridgeStart);
+            this.expansionInfraGroup.add(rail, cap, bollard);
+          }
+        }
+      }
+
+      // East & West Bridges along Oakwood St (-6.8) and Main St (+8.4)
+      for (const sz of [-6.8, 8.4]) {
+        for (const dir of [-1, 1]) {
+          const xA = dir > 0 ? bridgeStart : -bridgeEnd;
+          const xB = dir > 0 ? bridgeEnd : -bridgeStart;
+          addRoadBlockEW(sz, xA, xB);
+          for (const side of [-1, 1]) {
+            const rail = new THREE.Mesh(
+              new THREE.BoxGeometry(bridgeLen - 0.16, 0.52, 0.06),
+              railGlassMat
+            );
+            rail.position.set(dir * bridgeMid, 0.3, sz + side * (halfWalk - 0.05));
+            const cap = new THREE.Mesh(
+              new THREE.BoxGeometry(bridgeLen - 0.1, 0.05, 0.09),
+              this.metalMat
+            );
+            cap.position.set(dir * bridgeMid, 0.58, sz + side * (halfWalk - 0.05));
+            const bollard = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.72, 8), bollardGlowMat);
+            bollard.position.set(dir * bridgeStart, 0.38, sz + side * (halfWalk - 0.05));
+            this.expansionInfraGroup.add(rail, cap, bollard);
+          }
+        }
+      }
+    }
+
+    // 2. Dynamically build each newly unlocked Outer Expansion Ring Avenue & radial connectors!
+    const treeTrunkMat = new THREE.MeshStandardMaterial({ color: "#b6987e", roughness: 0.85 });
+    const treeFoliageMat = new THREE.MeshStandardMaterial({
+      color: "#86efac",
+      roughness: 0.72,
+      flatShading: true
+    });
+    const sakuraMat = new THREE.MeshStandardMaterial({
+      color: "#fbcfe8",
+      roughness: 0.7,
+      flatShading: true
+    });
+    const lampBulbMat = new THREE.MeshStandardMaterial({
+      color: "#fffbeb",
+      emissive: "#fde68a",
+      emissiveIntensity: 0.45
+    });
+    this.lampBulbs.push(lampBulbMat);
+
+    for (let b = this.builtExpansionBands; b < neededBands; b++) {
+      const span = getExpansionBandAvenueSpan(b);
+
+      // East & West Ring Avenues (x = ±span) segmented cleanly between corners & z = -6.8 / +8.4
+      const ewSegs: Array<[number, number]> = [
+        [-span + halfWalk, -6.8 - halfWalk],
+        [-6.8 + halfWalk, 8.4 - halfWalk],
+        [8.4 + halfWalk, span - halfWalk]
+      ];
+      for (const sx of [-span, span]) {
+        for (const [zA, zB] of ewSegs) addRoadBlockNS(sx, zA, zB);
+      }
+
+      // North & South Ring Avenues (z = ±span) segmented cleanly between corners & x = -6.8 / +6.8
+      const nsSegs: Array<[number, number]> = [
+        [-span + halfWalk, -6.8 - halfWalk],
+        [-6.8 + halfWalk, 6.8 - halfWalk],
+        [6.8 + halfWalk, span - halfWalk]
+      ];
+      for (const sz of [-span, span]) {
+        for (const [xA, xB] of nsSegs) addRoadBlockEW(sz, xA, xB);
+      }
+
+      // 4 Corner Intersections (±span, ±span) — inward aprons only, continuous raised outer corner curb!
+      addPavedIntersection(-span, -span, false, true, false, true);
+      addPavedIntersection(span, -span, false, true, true, false);
+      addPavedIntersection(-span, span, true, false, false, true);
+      addPavedIntersection(span, span, true, false, true, false);
+
+      // 8 Radial Junction Intersections (4-way paved junctions ready for further outer expansion!)
+      for (const sz of [-6.8, 8.4]) {
+        addPavedIntersection(-span, sz, true, true, true, true);
+        addPavedIntersection(span, sz, true, true, true, true);
+      }
+      for (const sx of [-6.8, 6.8]) {
+        addPavedIntersection(sx, -span, true, true, true, true);
+        addPavedIntersection(sx, span, true, true, true, true);
+      }
+
+      // Connect radial avenues smoothly from previous Expansion Band (b - 1) to Band b!
+      if (b >= 1) {
+        const prevSpan = getExpansionBandAvenueSpan(b - 1);
+        const rA = prevSpan + halfWalk;
+        const rB = span - halfWalk;
+        for (const sx of [-6.8, 6.8]) {
+          addRoadBlockNS(sx, rA, rB);
+          addRoadBlockNS(sx, -rB, -rA);
+        }
+        for (const sz of [-6.8, 8.4]) {
+          addRoadBlockEW(sz, rA, rB);
+          addRoadBlockEW(sz, -rB, -rA);
+        }
+      }
+
+      // Add Boulevard Trees & Architectural Streetlamps around the newly paved Expansion Avenue!
+      const lampSpots: Array<[number, number]> = [
+        [-span + 2.1, -span + 2.1],
+        [span - 2.1, -span + 2.1],
+        [-span + 2.1, span - 2.1],
+        [span - 2.1, span - 2.1],
+        [-span + 2.1, 0.8],
+        [span - 2.1, 0.8],
+        [0, -span + 2.1],
+        [0, span - 2.1]
+      ];
+      for (const [lx, lz] of lampSpots) {
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.045, 2.35, 8), this.metalMat);
+        pole.position.set(lx, 1.18, lz);
+        const globe = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 10), lampBulbMat);
+        globe.position.set(lx, 2.42, lz);
+        this.expansionInfraGroup.add(pole, globe);
+      }
+
+      const treeSpots: Array<[number, number, boolean]> = [
+        [-(span + 2.4), -(span - 4.2), true],
+        [span + 2.4, -(span - 4.2), false],
+        [-(span + 2.4), span - 4.2, false],
+        [span + 2.4, span - 4.2, true],
+        [0, -(span + 3.8), true],
+        [0, span + 3.8, false],
+        [-(span - 2.4), -15.5, false],
+        [span - 2.4, -15.5, true],
+        [-(span - 2.4), 18.2, true],
+        [span - 2.4, 18.2, false]
+      ];
+      for (const [tx, tz, isSakura] of treeSpots) {
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.13, 1.25, 7), treeTrunkMat);
+        trunk.position.set(tx, 0.62, tz);
+        const canopy = new THREE.Mesh(
+          new THREE.IcosahedronGeometry(0.92, 1),
+          isSakura ? sakuraMat : treeFoliageMat
+        );
+        canopy.position.set(tx, 1.72, tz);
+        this.expansionInfraGroup.add(trunk, canopy);
+      }
+    }
+
+    this.builtExpansionBands = Math.max(this.builtExpansionBands, neededBands);
   }
 
   private removePlotRig(rig: NeighborPlotRig) {
@@ -1180,18 +1647,15 @@ export class NeighborhoodWorld3D {
   public getRaycastTargets(): THREE.Object3D[] {
     const targets: THREE.Object3D[] = [this.fountainGroup];
     for (const rig of this.plotRigs.values()) {
-      if (rig.placement.ring === 1 || rig.placement.ring === 2) {
-        targets.push(rig.group);
-      }
+      targets.push(rig.group);
     }
     for (const br of this.blueprintRigs) {
-      if (br.lot.ring === 1 || br.lot.ring === 2) {
-        targets.push(br.group);
-      }
+      targets.push(br.group);
     }
     for (const npc of this.npcRigs) {
       targets.push(npc.avatar.root);
     }
+    targets.push(...this.traffic.getRaycastTargets());
     return targets;
   }
 
@@ -1200,9 +1664,7 @@ export class NeighborhoodWorld3D {
       [COMMUNITY_FOUNTAIN_POS[0], COMMUNITY_FOUNTAIN_POS[1], 1.72]
     ];
     for (const rig of this.plotRigs.values()) {
-      if (rig.placement.ring === 1 || rig.placement.ring === 2) {
-        obs.push([rig.placement.x, rig.placement.z, 2.25]);
-      }
+      obs.push([rig.placement.x, rig.placement.z, rig.placement.ring === 3 ? 2.15 : 2.25]);
     }
     return obs;
   }
@@ -1300,14 +1762,10 @@ export class NeighborhoodWorld3D {
       emissiveIntensity: 0.68,
       roughness: 0.16
     });
-    const glassMat = new THREE.MeshPhysicalMaterial({
-      color: "#ffffff",
-      transmission: 0.8,
+    const glassMat = createFastArchitecturalGlass({
+      color: "#eaf4ff",
       roughness: 0.08,
-      ior: 1.46,
-      thickness: 0.2,
-      transparent: true,
-      opacity: 0.88
+      opacity: 0.56
     });
 
     const windowGlowMats: THREE.MeshStandardMaterial[] = [elixirMat];
@@ -1317,33 +1775,78 @@ export class NeighborhoodWorld3D {
     let conduitPulse: NeighborPlotRig["conduitPulse"];
 
     if (pl.ring === 3) {
-      // Lightweight Outer Skyline Architectural Tower (renders 96+ outer labs smoothly at 60fps!)
-      const base = new THREE.Mesh(new THREE.BoxGeometry(3.5, 0.24, 3.5), stoneMat);
+      // Lightweight Walkable Subdivided Outer Expansion Residence (5.0m × 4.8m green yard + driveway
+      // + modern multi-story architect glass villa — keeps 240+ outer plots smooth at 60fps!)
+      const lawn = new THREE.Mesh(
+        new THREE.BoxGeometry(5.0, 0.05, 4.8),
+        new THREE.MeshStandardMaterial({ color: "#bbf7d0", roughness: 0.86 })
+      );
+      lawn.position.y = 0.025;
+      lawn.receiveShadow = true;
+      g.add(lawn);
+
+      // Paved stone driveway connecting front steps directly onto the Expansion Avenue sidewalk (+Z)!
+      const driveway = new THREE.Mesh(new THREE.BoxGeometry(1.18, 0.056, 1.35), stoneMat);
+      driveway.position.set(0, 0.032, 2.02);
+      driveway.receiveShadow = true;
+      g.add(driveway);
+
+      const base = new THREE.Mesh(new THREE.BoxGeometry(3.45, 0.2, 3.2), stoneMat);
       base.position.y = 0.12;
       g.add(base);
 
-      const rot = new THREE.Mesh(new THREE.CylinderGeometry(1.38, 1.5, 0.26, 16), stoneMat);
-      rot.position.y = 0.36;
-      g.add(rot);
+      // Multi-story cantilevered modern architect massing tailored to NFT tier & built wings
+      const stories = Math.min(3, 1 + Math.floor((lab.complexityTier + countSectors(lab.sectorsMask)) / 3));
+      const bodyH = 1.35 + stories * 0.62;
+      const body = new THREE.Mesh(new THREE.BoxGeometry(2.9, bodyH, 2.45), stoneMat);
+      body.position.set(0, 0.22 + bodyH / 2, -0.1);
+      g.add(body);
 
-      const coreH = 1.85 + lab.complexityTier * 0.38 + countSectors(lab.sectorsMask) * 0.14;
-      const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.7, coreH, 14), glassMat);
-      tower.position.y = 0.48 + coreH / 2;
-      g.add(tower);
+      // Illuminated vertical glass atrium core glowing with this NFT's unique elixir palette
+      const glassCore = new THREE.Mesh(new THREE.BoxGeometry(1.42, bodyH * 0.88, 2.52), glassMat);
+      glassCore.position.set(0, 0.22 + bodyH * 0.5, -0.04);
+      g.add(glassCore);
 
-      const innerGlow = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.3, 0.46, coreH * 0.76, 10),
+      const innerElixir = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.32, 0.44, bodyH * 0.72, 12),
         elixirMat
       );
-      innerGlow.position.y = 0.48 + coreH * 0.42;
-      g.add(innerGlow);
+      innerElixir.position.set(0, 0.26 + bodyH * 0.42, -0.04);
+      g.add(innerElixir);
+
+      // Crisp cantilevered roofline overhang
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(3.35, 0.14, 2.85), stoneMat);
+      roof.position.set(0, 0.26 + bodyH, -0.05);
+      g.add(roof);
 
       if (hasSector(lab.sectorsMask, 5) || lab.complexityTier >= 4) {
-        const dome = new THREE.Mesh(new THREE.IcosahedronGeometry(0.96, 1), glassMat);
+        const dome = new THREE.Mesh(new THREE.IcosahedronGeometry(0.86, 1), glassMat);
         dome.scale.set(1, 0.56, 1);
-        dome.position.y = 0.5 + coreH;
+        dome.position.set(0, 0.34 + bodyH, -0.05);
         g.add(dome);
       }
+
+      // Floating street plaque (capped cleanly by device VRAM budget) & Sims raycast target!
+      if (pl.plotIndex < this.perfProfile.maxDetailPlaques) {
+        const plaqueTex = this.createPlotPlaqueTexture(lab, pal.liquidMid, pl.districtName);
+        const plaque = new THREE.Sprite(
+          new THREE.SpriteMaterial({ map: plaqueTex, transparent: true, depthWrite: false })
+        );
+        plaque.scale.set(1.48, 0.56, 1);
+        plaque.position.set(0, 1.05 + bodyH, 0);
+        g.add(plaque);
+      }
+
+      const simsTarget: SimsObjectTarget = {
+        kind: "neighbor-lab",
+        label: `Lab #${lab.tokenId}`,
+        tokenId: lab.tokenId,
+        worldX: pl.visitX,
+        worldZ: pl.visitZ
+      };
+      g.traverse((obj) => {
+        obj.userData.simsTarget = simsTarget;
+      });
     } else {
       // Full-Detail Walkable Subdivided Neighborhood Plot (5.4m × 5.2m) with Fence, Driveway, Mailbox & Mini-Greenhouse!
       const yardLawnMat = new THREE.MeshStandardMaterial({ color: "#bbf7d0", roughness: 0.85 });
@@ -1515,12 +2018,11 @@ export class NeighborhoodWorld3D {
       if (hasSector(lab.sectorsMask, 2)) {
         const dome = new THREE.Mesh(
           new THREE.IcosahedronGeometry(0.48, 1),
-          new THREE.MeshPhysicalMaterial({
+          createFastArchitecturalGlass({
             color: "#ecfdf5",
             emissive: "#10b981",
             emissiveIntensity: 0.25,
-            transmission: 0.78,
-            transparent: true
+            opacity: 0.54
           })
         );
         dome.position.set(-1.42, 0.36, 1.15);
@@ -1906,6 +2408,10 @@ export class NeighborhoodWorld3D {
       }
     }
 
+    // Update Autonomous Right-Hand-Lane Driving Vehicles (politely yielding to player & strolling NPCs!)
+    const npcCoords: Array<readonly [number, number]> = this.npcRigs.map((n) => [n.x, n.z]);
+    this.traffic.update(dt, t, playerX, playerZ, npcCoords);
+
     // Animate arcing social research-spark beams between labs
     for (let i = this.socialBeams.length - 1; i >= 0; i--) {
       const sb = this.socialBeams[i];
@@ -1924,6 +2430,26 @@ export class NeighborhoodWorld3D {
       } else {
         sb.curve.getPointAt(sb.t, sb.mesh.position);
         (sb.line.material as THREE.MeshBasicMaterial).opacity = (1 - sb.t) * 0.65;
+      }
+    }
+
+    // Animate newly minted plot construction beacon rings & rising light pillars
+    for (let i = this.constructionFx.length - 1; i >= 0; i--) {
+      const fx = this.constructionFx[i];
+      fx.life -= dt * 0.46;
+      if (fx.life <= 0) {
+        this.fxGroup.remove(fx.ring, fx.pillar);
+        fx.ring.geometry.dispose();
+        (fx.ring.material as THREE.Material).dispose();
+        fx.pillar.geometry.dispose();
+        (fx.pillar.material as THREE.Material).dispose();
+        this.constructionFx.splice(i, 1);
+      } else {
+        const prog = 1 - fx.life;
+        fx.ring.scale.setScalar(1 + prog * 2.2);
+        (fx.ring.material as THREE.MeshBasicMaterial).opacity = fx.life * 0.85;
+        fx.pillar.scale.set(1 + prog * 0.35, 0.6 + fx.life * 0.8, 1 + prog * 0.35);
+        (fx.pillar.material as THREE.MeshBasicMaterial).opacity = fx.life * 0.32;
       }
     }
   }
@@ -1963,6 +2489,8 @@ export class NeighborhoodWorld3D {
     this.blueprintRigs = [];
     this.plotRigs.clear();
     this.socialBeams = [];
+    this.constructionFx = [];
+    this.traffic.dispose();
     this.disposeObjectTree(this.group);
     this.groundTex.dispose();
     for (const tex of this.ownedTextures) tex.dispose();

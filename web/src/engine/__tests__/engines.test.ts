@@ -88,6 +88,8 @@ import {
 import { declutterFloatingLabels } from "../spatialDeclutter";
 import {
   COMMUNITY_FOUNTAIN_POS,
+  MAX_NEIGHBORHOOD_PLOTS,
+  NEIGHBORHOOD_WALK_LIMIT,
   TOWN_PARKS,
   TOWN_PARK_CENTER,
   TOWN_STREETS,
@@ -95,8 +97,28 @@ import {
   computeNeighborhoodPlacements,
   computeUpcomingBlueprintLots,
   deriveNeighborCharacterProfile,
-  getNeighborhoodGrowthStage
+  getExpansionBandAvenueSpan,
+  getExpansionBandCount,
+  getNeighborhoodGrowthStage,
+  getNeighborhoodPlotSlot,
+  getNeighborhoodWalkLimit
 } from "../neighborhoodLayout";
+import {
+  createSimulatedNeighborVessels,
+  mergeMintedVessels
+} from "../../web3/contractService";
+import {
+  AdaptivePixelRatioController,
+  detectDevicePerfProfile
+} from "../browserCompat";
+import {
+  TRAFFIC_LANE_OFFSET,
+  buildTrafficRoutes,
+  computeVehicleCountForTown,
+  sampleRoutePose,
+  selectActiveVehicleBlueprints,
+  shouldVehicleYield
+} from "../townVehicles";
 import {
   GARDEN_PLOT_DEFS,
   PLANT_SPECIES,
@@ -942,5 +964,182 @@ describe("Living Minted NFT Neighborhood & Sims Interactivity", () => {
       getSimsPieActions({ kind: "park-bench", label: "Sakura Picnic Park", worldX: -14.8, worldZ: 14.5 })
         .some((a) => a.id === "park-feed-koi")
     ).toBe(true);
+  });
+
+  it("scales neighborhood plots, outer expansion road bands, walk limits & vessel merging seamlessly from 1 to 240+ minted NFTs", () => {
+    expect(MAX_NEIGHBORHOOD_PLOTS).toBeGreaterThanOrEqual(240);
+
+    // Expansion road bands & dynamic walkable radius unlock automatically as totalSupply grows!
+    expect(getExpansionBandCount(8)).toBe(0);
+    expect(getExpansionBandCount(24)).toBe(0);
+    expect(getExpansionBandCount(25)).toBe(1); // Band 0 (Skyline Heights)
+    expect(getExpansionBandCount(48)).toBe(1);
+    expect(getExpansionBandCount(49)).toBe(2); // Band 1 (Innovation Ridge)
+    expect(getExpansionBandCount(73)).toBe(3); // Band 2 (Horizon Estates)
+
+    expect(getNeighborhoodWalkLimit(6)).toBe(NEIGHBORHOOD_WALK_LIMIT);
+    expect(getNeighborhoodWalkLimit(21)).toBe(NEIGHBORHOOD_WALK_LIMIT);
+    // At 22 minted labs (21 neighbors + 4 surveyed blueprint lots = 25), Band 0 road & bridges form!
+    expect(getNeighborhoodWalkLimit(22)).toBeGreaterThan(NEIGHBORHOOD_WALK_LIMIT + 10);
+    expect(getNeighborhoodWalkLimit(50)).toBeGreaterThan(getNeighborhoodWalkLimit(25));
+    expect(getExpansionBandAvenueSpan(1) - getExpansionBandAvenueSpan(0)).toBeCloseTo(10.6, 5);
+
+    // Every upcoming blueprint lot transforms into the EXACT next minted plot's position & facing!
+    for (const supply of [1, 6, 9, 24, 25, 49, 130]) {
+      const rosterBefore = buildNeighborhoodRoster(1, [], supply);
+      const nextLots = computeUpcomingBlueprintLots(rosterBefore.length, 4);
+      expect(nextLots).toHaveLength(4);
+      const rosterAfter = buildNeighborhoodRoster(1, [], supply + 1);
+      expect(rosterAfter).toHaveLength(rosterBefore.length + 1);
+      const placedAfter = computeNeighborhoodPlacements(rosterAfter);
+      const newestPlot = placedAfter[placedAfter.length - 1];
+      expect(newestPlot.x).toBe(nextLots[0].x);
+      expect(newestPlot.z).toBe(nextLots[0].z);
+      expect(newestPlot.rotY).toBe(nextLots[0].rotY);
+      expect(newestPlot.districtName).toBe(nextLots[0].districtName);
+    }
+
+    // Stress-test 160 minted NFTs across Ring 1, Ring 2 & 6 Outer Expansion Road Bands:
+    // ZERO overlapping plots, 100% 90° street alignment, strictly clear of canal & radial bridges!
+    const largeRoster = buildNeighborhoodRoster(1, [], 161);
+    expect(largeRoster).toHaveLength(160);
+    const largePlacements = computeNeighborhoodPlacements(largeRoster);
+    expect(largePlacements.filter((p) => p.ring === 1)).toHaveLength(8);
+    expect(largePlacements.filter((p) => p.ring === 2)).toHaveLength(16);
+    expect(largePlacements.filter((p) => p.ring === 3)).toHaveLength(136);
+
+    for (let i = 0; i < largePlacements.length; i++) {
+      const a = largePlacements[i];
+      const qTurns = Math.round(a.rotY / (Math.PI / 2));
+      expect(Math.abs(a.rotY - qTurns * (Math.PI / 2))).toBeLessThan(0.001);
+      expect(Math.hypot(a.visitX, a.visitZ)).toBeLessThan(Math.hypot(a.x, a.z));
+      // Must never collide with any other plot in the entire expanding metropolis
+      for (let j = i + 1; j < largePlacements.length; j++) {
+        const b = largePlacements[j];
+        expect(Math.hypot(a.x - b.x, a.z - b.z)).toBeGreaterThanOrEqual(5.4);
+      }
+      // Outer Ring 3 plots stay strictly outside the r=30.2..32.0 canal!
+      if (a.ring === 3) {
+        expect(Math.max(Math.abs(a.x), Math.abs(a.z))).toBeGreaterThan(38);
+      }
+    }
+
+    // District names evolve cleanly across bands
+    expect(getNeighborhoodPlotSlot(24).districtName).toBe("Skyline Heights");
+    expect(getNeighborhoodPlotSlot(48).districtName).toBe("Innovation Ridge");
+    expect(getNeighborhoodPlotSlot(72).districtName).toBe("Horizon Estates");
+    expect(getNeighborhoodPlotSlot(96).districtName).toBe("Starlight Commons");
+    expect(getNeighborhoodPlotSlot(120).districtName).toBe("Frontier Sector 1");
+
+    // On-chain & simulated vessel merging preserves older real tokens & applies live updates without dupes
+    const wave1 = createSimulatedNeighborVessels(2, 5);
+    expect(wave1.vessels).toHaveLength(5);
+    expect(wave1.addedImpactEth).toBeGreaterThan(0);
+    const wave2 = createSimulatedNeighborVessels(7, 4);
+    const upgradedToken2 = { ...wave1.vessels[0], sectorsMask: 0b111111, valueUsd: 500 };
+    const merged = mergeMintedVessels(wave1.vessels, [upgradedToken2, ...wave2.vessels]);
+    expect(merged).toHaveLength(9);
+    expect(merged.find((v) => v.tokenId === 2)?.sectorsMask).toBe(0b111111);
+    expect(merged.find((v) => v.tokenId === 2)?.valueUsd).toBe(500);
+    expect(merged[0].tokenId).toBe(10);
+  });
+
+  it("drives autonomous town vehicles cleanly in right-hand road lanes, yields to pedestrians & optimizes per device tier", () => {
+    // Base routes cover inner boulevard, outer park boulevards & cross-town commuter loops
+    const baseRoutes = buildTrafficRoutes(0);
+    expect(baseRoutes).toHaveLength(6);
+    expect(baseRoutes.every((r) => !r.isExpansionRoute)).toBe(true);
+
+    // Expanding town appends Outer Expansion Ring driving routes across the newly paved roads!
+    const expandedRoutes = buildTrafficRoutes(2);
+    expect(expandedRoutes).toHaveLength(8);
+    expect(expandedRoutes[6].isExpansionRoute).toBe(true);
+    expect(expandedRoutes[7].isExpansionRoute).toBe(true);
+
+    // Every sampled vehicle pose along straight segments sits strictly inside a paved 2.2m road lane!
+    const innerCw = baseRoutes[0];
+    const midNorth = sampleRoutePose(innerCw, 6.8);
+    expect(midNorth.z).toBeCloseTo(-6.8 + TRAFFIC_LANE_OFFSET, 2);
+    // Corner turn near intersection smoothly curves inside the intersection without NaN
+    const cornerPose = sampleRoutePose(innerCw, innerCw.segLengths[0] - 0.2);
+    expect(Number.isFinite(cornerPose.x)).toBe(true);
+    expect(Number.isFinite(cornerPose.z)).toBe(true);
+    expect(Number.isFinite(cornerPose.yaw)).toBe(true);
+
+    // Vehicle politely yields when a researcher steps ahead in its lane, ignores pedestrians behind or far sideways
+    expect(shouldVehicleYield(0, 0, 0, 0.2, 1.8)).toBe(true);   // Directly ahead (+Z)
+    expect(shouldVehicleYield(0, 0, 0, 0.2, -1.8)).toBe(false); // Behind vehicle
+    expect(shouldVehicleYield(0, 0, 0, 2.5, 1.5)).toBe(false);  // Safe on sidewalk
+
+    // Vehicle fleet grows with totalSupply and respects device tier performance caps
+    expect(computeVehicleCountForTown(3, 12)).toBe(4);
+    expect(computeVehicleCountForTown(15, 12)).toBe(8);
+    expect(computeVehicleCountForTown(50, 12)).toBe(12);
+    expect(computeVehicleCountForTown(50, 5)).toBe(5);
+    const activeBps = selectActiveVehicleBlueprints(30, 10, expandedRoutes.length);
+    expect(activeBps).toHaveLength(10);
+    expect(activeBps.some((b) => b.routeIndex === 6)).toBe(true);
+
+    // Sims Pie Actions exist for clicking passing town vehicles
+    const vehActions = getSimsPieActions({
+      kind: "vehicle",
+      label: "Pearl EV Sedan",
+      vehicleId: "veh-1",
+      worldX: 6.3,
+      worldZ: 2.0
+    });
+    expect(vehActions[0].id).toBe("vehicle-wave");
+    expect(vehActions[1].id).toBe("vehicle-beep");
+
+    // Cross-browser & mobile performance profile classification
+    const iphoneProf = detectDevicePerfProfile({
+      userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1",
+      cores: 4,
+      deviceMemory: 3,
+      coarsePointer: true,
+      screenWidth: 390
+    });
+    expect(iphoneProf.tier).toBe("mobile");
+    expect(iphoneProf.enableHeroTransmission).toBe(false);
+    expect(iphoneProf.maxPixelRatio).toBeLessThanOrEqual(1.4);
+    expect(iphoneProf.maxTrafficVehicles).toBeLessThanOrEqual(6);
+
+    const safariDesktop = detectDevicePerfProfile({
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 Version/17.0 Safari/605.1.15",
+      cores: 8,
+      deviceMemory: 16,
+      coarsePointer: false,
+      screenWidth: 1440
+    });
+    expect(safariDesktop.tier).toBe("balanced");
+    expect(safariDesktop.enableHeroTransmission).toBe(false);
+
+    const desktopChrome = detectDevicePerfProfile({
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36",
+      cores: 12,
+      deviceMemory: 16,
+      coarsePointer: false,
+      screenWidth: 1920
+    });
+    expect(desktopChrome.tier).toBe("high");
+    expect(desktopChrome.maxPixelRatio).toBe(2.0);
+
+    // Adaptive DPR smoothly trims pixel ratio on sustained heavy frames and restores when fast!
+    const dprCtrl = new AdaptivePixelRatioController(2.0, 1.0, 2.0);
+    expect(dprCtrl.getPixelRatio()).toBe(2.0);
+    let lowered: number | null = null;
+    for (let f = 0; f < 100; f++) {
+      const next = dprCtrl.recordFrame(0.036); // ~27fps sustained
+      if (next !== null) lowered = next;
+    }
+    expect(lowered).not.toBeNull();
+    expect(lowered!).toBeLessThan(2.0);
+    let restored: number | null = null;
+    for (let f = 0; f < 400; f++) {
+      const next = dprCtrl.recordFrame(0.015); // ~66fps sustained
+      if (next !== null) restored = next;
+    }
+    expect(restored).not.toBeNull();
+    expect(restored!).toBeGreaterThan(lowered!);
   });
 });

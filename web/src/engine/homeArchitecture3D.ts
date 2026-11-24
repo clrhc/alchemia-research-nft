@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { createFastArchitecturalGlass } from "./browserCompat";
 import { createFloorFinishTexture, createRadialGlowTexture } from "./architectTextures";
 import {
   BASEMENT_Y,
@@ -273,14 +274,10 @@ export class HomeArchitecture3D {
       roughness: 0.2,
       metalness: 0.88
     });
-    const glassMat = new THREE.MeshPhysicalMaterial({
+    const glassMat = createFastArchitecturalGlass({
       color: "#f4f9ff",
-      transmission: 0.82,
-      roughness: 0.06,
-      ior: 1.46,
-      thickness: 0.08,
-      transparent: true,
-      opacity: 0.58
+      opacity: 0.46,
+      roughness: 0.06
     });
     return { floorMat, wallMat, trimMat, woodMat, metalMat, glassMat };
   }

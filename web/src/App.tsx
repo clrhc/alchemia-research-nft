@@ -33,6 +33,7 @@ import {
   buildAnimationUrl,
   clearSelectedWalletProvider,
   connectInjectedWallet,
+  createSimulatedNeighborVessels,
   executeOnChainBuildSector,
   executeOnChainClaimCoins,
   executeOnChainDonateCoins,
@@ -43,6 +44,7 @@ import {
   fetchOnChainCollectionSnapshot,
   fetchRecentResearchDiscoveries,
   loadInitialCollectionState,
+  mergeMintedVessels,
   saveChainCache,
   saveDemoState,
   subscribeWalletEvents,
@@ -158,16 +160,46 @@ export function App() {
         );
         if (!active || !snap) return;
         setState((prev) => {
+          const mergedVessels = Array.isArray(snap.vessels)
+            ? mergeMintedVessels(prev.vessels, snap.vessels)
+            : prev.vessels;
+          const nextSupply = Math.max(
+            typeof snap.totalSupply === "number" ? snap.totalSupply : prev.totalSupply,
+            mergedVessels.length
+          );
+          const supplyDelta = prev.chainSynced ? nextSupply - prev.totalSupply : 0;
           const grew =
             prev.chainSynced &&
             typeof snap.globalDonatedEth === "number" &&
             snap.globalDonatedEth > prev.globalDonatedEth + 1e-7;
-          if (grew) {
+
+          const next: CollectionState = {
+            ...prev,
+            ...snap,
+            totalSupply: nextSupply,
+            vessels: mergedVessels,
+            chainSynced: true
+          };
+          saveChainCache(next);
+
+          if (grew || supplyDelta > 0) {
             setLastPulseAt(Date.now());
             setBgPulseSignal((n) => n + 1);
+            channelRef.current?.postMessage({
+              type: "IMPACT_UPDATE",
+              globalDonatedEth: next.globalDonatedEth,
+              totalSupply: next.totalSupply,
+              maxSupply: next.maxSupply,
+              vessels: next.vessels.slice(0, 72)
+            });
           }
-          const next = { ...prev, ...snap, chainSynced: true };
-          saveChainCache(next);
+          if (supplyDelta > 0) {
+            setNotice(
+              supplyDelta === 1
+                ? `New neighbor Lab #${nextSupply} just minted on-chain and formed a new plot in Alchemia Town!`
+                : `+${supplyDelta} newly minted NFTs just formed new plots in Alchemia Town (${nextSupply} total)!`
+            );
+          }
           return next;
         });
       } catch {
@@ -184,7 +216,7 @@ export function App() {
         });
     };
     sync();
-    const id = window.setInterval(sync, 20000);
+    const id = window.setInterval(sync, 12000);
     return () => {
       active = false;
       window.clearInterval(id);
@@ -245,7 +277,7 @@ export function App() {
       globalDonatedEth: next.globalDonatedEth,
       totalSupply: next.totalSupply,
       maxSupply: next.maxSupply,
-      vessels: next.vessels.slice(0, 28),
+      vessels: next.vessels.slice(0, 72),
       tokenId,
       tokenValueUsd,
       complexityTier: tokenValueUsd ? complexityTierFromUsd(tokenValueUsd) : undefined,
@@ -622,9 +654,44 @@ export function App() {
     return false;
   };
 
+  const handleSimulateNewNeighbor = (count = 1) => {
+    if (state.contractAddress) return;
+    const safeCount = Math.max(1, Math.min(25, Math.floor(count)));
+    setState((prev) => {
+      const startId = Math.max(prev.totalSupply, ...prev.vessels.map((v) => v.tokenId), 0) + 1;
+      const { vessels: minted, addedImpactEth } = createSimulatedNeighborVessels(startId, safeCount);
+      const nextGlobal = Number((prev.globalDonatedEth + addedImpactEth).toFixed(6));
+      const nextCauses = prev.causes.map((c) => {
+        const addedForCause = minted
+          .filter((v) => v.causeId === c.id)
+          .reduce((sum, v) => sum + v.impactEth, 0);
+        const countForCause = minted.filter((v) => v.causeId === c.id).length;
+        if (countForCause === 0) return c;
+        return {
+          ...c,
+          raisedEth: Number((c.raisedEth + addedForCause).toFixed(6)),
+          mintCount: c.mintCount + countForCause
+        };
+      });
+      const next: CollectionState = {
+        ...prev,
+        totalSupply: prev.totalSupply + safeCount,
+        globalDonatedEth: nextGlobal,
+        reactionStage: stageFromEth(nextGlobal),
+        causes: nextCauses,
+        vessels: mergeMintedVessels(prev.vessels, minted)
+      };
+      saveDemoState(next);
+      broadcastUpdate(next);
+      return next;
+    });
+    setLastPulseAt(Date.now());
+    setBgPulseSignal((n) => n + 1);
+  };
+
   return (
     <>
-      <BackgroundCanvas impactPulseSignal={bgPulseSignal} />
+      {page !== "mylabs" && <BackgroundCanvas impactPulseSignal={bgPulseSignal} />}
       <CustomCursor />
 
       <div className={`open-stage ${page === "mylabs" ? "is-mylabs-world" : ""}`}>
@@ -824,6 +891,7 @@ export function App() {
               onAwardPlayBonus={handleAwardPlayBonus}
               onConnectWallet={handleConnectWallet}
               onSpendCoinsForTreat={handleSpendSparksForTreat}
+              onSimulateNewNeighbor={!state.contractAddress ? handleSimulateNewNeighbor : undefined}
               onGoMint={() => setPage("mint")}
             />
           </Suspense>

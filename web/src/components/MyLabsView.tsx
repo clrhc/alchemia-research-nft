@@ -25,6 +25,7 @@ interface MyLabsViewProps {
   onAwardPlayBonus: (sparks: number) => void;
   onConnectWallet: () => Promise<void>;
   onSpendCoinsForTreat: (cost: number) => boolean;
+  onSimulateNewNeighbor?: (count?: number) => void;
   onGoMint: () => void;
 }
 
@@ -44,6 +45,7 @@ export function MyLabsView({
   onAwardPlayBonus,
   onConnectWallet,
   onSpendCoinsForTreat,
+  onSimulateNewNeighbor,
   onGoMint
 }: MyLabsViewProps) {
   const userVessels = state.vessels.filter((v) => v.ownedByUser);
@@ -131,6 +133,7 @@ export function MyLabsView({
         onAwardPlayBonus={onAwardPlayBonus}
         onConnectWallet={onConnectWallet}
         onSpendCoinsForTreat={onSpendCoinsForTreat}
+        onSimulateNewNeighbor={onSimulateNewNeighbor}
         onGoMint={onGoMint}
       />
     </section>

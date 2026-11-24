@@ -1,6 +1,7 @@
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { LabWorldExperience } from "./components/LabWorldExperience";
+import { installBrowserCompatPolyfills } from "./engine/browserCompat";
 import { type LiveImpactState } from "./engine/alchemyRenderer";
 import { normalizeSeed } from "./engine/prng";
 import { loadLabSparks, saveLabSparks } from "./engine/tamagotchi";
@@ -14,6 +15,7 @@ import {
 import {
   fetchOnChainCollectionSnapshot,
   fetchTokenLiveSnapshotOnChain,
+  mergeMintedVessels,
   modeFromChainId,
   type MintedVessel
 } from "./web3/contractService";
@@ -70,7 +72,7 @@ function StandaloneAnimationViewer() {
         ]);
         if (!active) return;
         if (collection?.vessels && collection.vessels.length > 0) {
-          setChainNeighbors(collection.vessels);
+          setChainNeighbors((prev) => mergeMintedVessels(prev, collection.vessels!));
         }
         setImpact((prev) => ({
           ...prev,
@@ -83,7 +85,7 @@ function StandaloneAnimationViewer() {
           tokenImpactEth: snap.tokenImpactEth,
           causeImpactEth: snap.causeImpactEth,
           globalImpactEth: snap.globalImpactEth,
-          totalSupply: Math.max(snap.totalSupply, collection?.totalSupply ?? 0),
+          totalSupply: Math.max(prev.totalSupply, snap.totalSupply, collection?.totalSupply ?? 0),
           maxSupply: snap.maxSupply,
           reactionStage: snap.reactionStage,
           mode: modeFromChainId(chainId),
@@ -99,7 +101,7 @@ function StandaloneAnimationViewer() {
       }
     };
     poll();
-    const timer = window.setInterval(poll, 14000);
+    const timer = window.setInterval(poll, 12000);
     return () => {
       active = false;
       window.clearInterval(timer);
@@ -113,7 +115,7 @@ function StandaloneAnimationViewer() {
       const msg = event.data;
       if (!msg || msg.type !== "IMPACT_UPDATE") return;
       if (Array.isArray(msg.vessels) && msg.vessels.length > 0) {
-        setChainNeighbors(msg.vessels as MintedVessel[]);
+        setChainNeighbors((prev) => mergeMintedVessels(prev, msg.vessels as MintedVessel[]));
       }
       setImpact((prev) => ({
         ...prev,
@@ -190,6 +192,8 @@ function StandaloneAnimationViewer() {
     </div>
   );
 }
+
+installBrowserCompatPolyfills();
 
 createRoot(document.getElementById("animation-root")!).render(
   <StrictMode>

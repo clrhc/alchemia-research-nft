@@ -8,6 +8,8 @@
  * the website!
  */
 
+import { detectDevicePerfProfile } from "./browserCompat";
+
 interface BrushStroke {
   points: Array<{ x: number; y: number; r: number }>;
   hue: number;
@@ -134,7 +136,8 @@ export class AlchemicalBackgroundPainter {
   }
 
   public resize() {
-    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const maxDpr = detectDevicePerfProfile().maxPixelRatio;
+    this.dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
     this.width = window.innerWidth;
     this.height = window.innerHeight;
     this.canvas.width = Math.floor(this.width * this.dpr);

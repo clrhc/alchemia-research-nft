@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { createFastArchitecturalGlass } from "./browserCompat";
 import { LAB_STATIONS, type LabStationId } from "./labStations";
 import { LAB_SECTORS, hasSector } from "../web3/sectors";
 
@@ -60,14 +61,10 @@ export class DiegeticLabMonitors3D {
       roughness: 0.2,
       metalness: 0.88
     });
-    const backGlassMat = new THREE.MeshPhysicalMaterial({
+    const backGlassMat = createFastArchitecturalGlass({
       color: "#ffffff",
-      transmission: 0.72,
-      roughness: 0.14,
-      ior: 1.46,
-      thickness: 0.06,
-      transparent: true,
-      opacity: 0.72
+      opacity: 0.68,
+      roughness: 0.14
     });
 
     LAB_STATIONS.forEach((st, idx) => {

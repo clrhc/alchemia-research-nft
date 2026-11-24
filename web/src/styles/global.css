@@ -26,8 +26,10 @@ body {
   color: var(--ink-primary);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
   overflow-x: hidden;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 @media (pointer: fine) {
@@ -2282,11 +2284,28 @@ select:focus-visible,
   position: fixed;
   inset: 0;
   width: 100vw;
+  height: 100vh;
   height: 100dvh;
+  min-height: 100vh;
   min-height: 100dvh;
   padding: 0;
   overflow: hidden;
+  overscroll-behavior: none;
   justify-content: stretch;
+}
+
+/* Lighter backdrop blur on touch/mobile GPUs prevents Safari/Android WebGL compositing bottlenecks */
+@media (pointer: coarse) {
+  .quiet-nav,
+  .glass-panel,
+  .world-pill,
+  .world-dock-pills,
+  .world-station-drawer,
+  .sims-vibes-bar,
+  .welcome-guide-card {
+    backdrop-filter: blur(10px) saturate(140%);
+    -webkit-backdrop-filter: blur(10px) saturate(140%);
+  }
 }
 
 .open-stage.is-mylabs-world .quiet-nav {

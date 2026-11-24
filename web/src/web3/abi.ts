@@ -30,6 +30,8 @@ export const ALCHEMIA_ABI = [
   "function metadataFrozen() view returns (bool)",
   "function animationUrlOf(uint256 tokenId) view returns (string)",
   "function ownerOf(uint256 tokenId) view returns (address)",
+  "function balanceOf(address owner) view returns (uint256)",
+  "function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)",
   "function mint(uint256 quantity, uint8 causeId) payable returns (uint256)",
   "function upgradeVessel(uint256 tokenId) payable",
   "function buildLabSectorWithCoins(uint256 tokenId, uint8 sectorId)",

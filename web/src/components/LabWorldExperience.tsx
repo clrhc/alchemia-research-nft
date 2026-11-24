@@ -125,7 +125,11 @@ import {
   computeNeighborhoodPlacements,
   computeUpcomingBlueprintLots,
   deriveNeighborCharacterProfile,
+  getExpansionBandAvenueSpan,
+  getExpansionBandCount,
   getNeighborhoodGrowthStage,
+  getNeighborhoodPlotSlot,
+  getNeighborhoodWalkLimit,
   type NeighborLabSummary
 } from "../engine/neighborhoodLayout";
 import {
@@ -607,6 +611,45 @@ export function LabWorldExperience({
     () => getNeighborhoodGrowthStage(neighbors.length + 1),
     [neighbors.length]
   );
+  const activeExpansionBands = useMemo(
+    () => getExpansionBandCount(neighborPlacements.length + upcomingBlueprintLots.length),
+    [neighborPlacements.length, upcomingBlueprintLots.length]
+  );
+  const districtRadarSpan = useMemo(
+    () => getNeighborhoodWalkLimit(neighbors.length + 1),
+    [neighbors.length]
+  );
+  const districtRadarSpanRef = useRef<number>(districtRadarSpan);
+  districtRadarSpanRef.current = districtRadarSpan;
+
+  // Live reactive mint-to-plot growth watcher: celebrates whenever ANY user mints on-chain
+  // or via simulation and announces the newly formed plot & expansion roads!
+  const prevEffectiveSupplyRef = useRef<number>(effectiveTotalSupply);
+  const prevExpansionBandsRef = useRef<number>(activeExpansionBands);
+  useEffect(() => {
+    const prevSup = prevEffectiveSupplyRef.current;
+    const prevBands = prevExpansionBandsRef.current;
+    prevEffectiveSupplyRef.current = effectiveTotalSupply;
+    prevExpansionBandsRef.current = activeExpansionBands;
+    if (effectiveTotalSupply <= prevSup) return;
+
+    const delta = effectiveTotalSupply - prevSup;
+    const newestSlot = getNeighborhoodPlotSlot(Math.max(0, neighbors.length - 1));
+    soundEngine.playBuildRoom();
+    if (activeExpansionBands > prevBands) {
+      setFeedback(
+        `New Outer Expansion Road Ring #${activeExpansionBands} paved across the canal! +${delta} plot${delta === 1 ? "" : "s"} formed in ${newestSlot.districtName} (${effectiveTotalSupply} total labs)`
+      );
+    } else if (delta > 1) {
+      setFeedback(
+        `+${delta} newly minted NFTs formed new neighborhood plots across ${newestSlot.districtName}! (${effectiveTotalSupply} total labs)`
+      );
+    } else {
+      setFeedback(
+        `New Lab #${effectiveTotalSupply} just formed a plot on ${newestSlot.districtName}!`
+      );
+    }
+  }, [effectiveTotalSupply, activeExpansionBands, neighbors.length]);
 
   // Lab feature states (Protein Folding, Mining, Pet Care, Room Builder, Goals)
   const [tithePct, setTithePct] = useState(20);
@@ -1294,8 +1337,8 @@ export function LabWorldExperience({
       }
     }
 
-    // Update live Architectural Blueprint Mini-Map Radar (dual-scale: Lab Close-Up or Full Growing Town!)
-    const radarSpan = radarIsDistrictRef.current ? 29.5 : 4.75;
+    // Update live Architectural Blueprint Mini-Map Radar (dual-scale: Lab Close-Up or Dynamically Expanding Town!)
+    const radarSpan = radarIsDistrictRef.current ? districtRadarSpanRef.current : 4.75;
     const mapCoord = (v: number) => Math.max(8, Math.min(104, 56 + (v / radarSpan) * 44));
     if (radarPlayerRef.current) {
       const rx = mapCoord(telemetry.charX);
@@ -2578,6 +2621,24 @@ export function LabWorldExperience({
         break;
       case "lot-mint-wave":
         handleSpawnNeighborMint(5);
+        break;
+      case "vehicle-wave":
+        if (target.kind === "vehicle") {
+          artworkRef.current?.triggerEmote("wave");
+          artworkRef.current?.triggerVehicleHonk(target.vehicleId);
+          soundEngine.playTap(1046.5);
+          setSimsVibes((prev) => applySimsVibeDelta(prev, { social: 8, fun: 6 }));
+          setFeedback(`Waved at the passing ${target.label}! (+Social)`);
+        }
+        break;
+      case "vehicle-beep":
+        if (target.kind === "vehicle") {
+          artworkRef.current?.triggerVehicleHonk(target.vehicleId);
+          soundEngine.playTap(659.25);
+          window.setTimeout(() => soundEngine.playTap(880), 110);
+          setSimsVibes((prev) => applySimsVibeDelta(prev, { fun: 12, social: 4 }));
+          setFeedback(`Beep beep! ${target.label} honked back along the boulevard!`);
+        }
         break;
 
       case "garden-plant-lavender":
@@ -6049,12 +6110,16 @@ export function LabWorldExperience({
                   />
                 </div>
                 <div className="wing-tags" style={{ marginTop: 8 }}>
-                  <span className="wing-tag built">● 4 Canal Bridges</span>
+                  <span className="wing-tag built">
+                    ● {impact.mode === "simulation" ? "Live Growth Sim" : "Live On-Chain Sync"}
+                  </span>
                   <span className={`wing-tag ${townGrowth.transitUnlocked ? "built" : ""}`}>
                     {townGrowth.transitUnlocked ? "● " : "○ "}Hover-Shuttle (10+)
                   </span>
-                  <span className={`wing-tag ${townGrowth.skylineUnlocked ? "built" : ""}`}>
-                    {townGrowth.skylineUnlocked ? "● " : "○ "}Skyline Towers (25+)
+                  <span className={`wing-tag ${activeExpansionBands > 0 ? "built" : ""}`}>
+                    {activeExpansionBands > 0
+                      ? `● ${activeExpansionBands} Outer Road Ring${activeExpansionBands === 1 ? "" : "s"} & Canal Bridges`
+                      : "○ Outer Road Ring (22+)"}
                   </span>
                 </div>
               </div>
@@ -6069,12 +6134,15 @@ export function LabWorldExperience({
                   <strong>{ring2Placements.length}/16 walkable</strong>
                 </div>
                 <div className="science-metric">
-                  <span>Skyline District</span>
-                  <strong>{ring3Placements.length} towers</strong>
+                  <span>Outer Districts</span>
+                  <strong>
+                    {ring3Placements.length} homes · {activeExpansionBands} ring
+                    {activeExpansionBands === 1 ? "" : "s"}
+                  </strong>
                 </div>
                 <div className="science-metric">
-                  <span>Community Pool</span>
-                  <strong>{impact.globalImpactEth.toFixed(3)} ETH</strong>
+                  <span>Open Surveyed Lots</span>
+                  <strong>{upcomingBlueprintLots.length} ready</strong>
                 </div>
               </div>
 
@@ -6360,18 +6428,47 @@ export function LabWorldExperience({
               {ring3Placements.length > 0 && (
                 <div className="world-goals-block">
                   <div className="single-kicker" style={{ marginBottom: 6 }}>
-                    Outer Skyline City Towers ({ring3Placements.length} minted NFTs — tap to visit)
+                    Outer Expansion Districts ({ring3Placements.length} minted homes across{" "}
+                    {Math.max(1, activeExpansionBands)} paved ring
+                    {activeExpansionBands === 1 ? "" : "s"} — walk over canal bridges!)
                   </div>
                   <div className="wing-tags">
-                    {ring3Placements.map((pl) => (
+                    {ring3Placements.slice(0, 60).map((pl) => (
                       <button
                         key={pl.lab.tokenId}
                         type="button"
                         className="wing-tag built clickable"
                         style={{ border: "none" }}
                         onClick={() => setInspectedNeighbor(pl.lab)}
+                        title={`Inspect or visit Lab #${pl.lab.tokenId} (${pl.districtName})`}
                       >
-                        #{pl.lab.tokenId}
+                        #{pl.lab.tokenId} · {pl.districtName.split(" ")[0]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {upcomingBlueprintLots.length > 0 && (
+                <div className="world-goals-block">
+                  <div className="single-kicker" style={{ marginBottom: 6 }}>
+                    Next Surveyed Plots Forming ({upcomingBlueprintLots.length} open lots)
+                  </div>
+                  <div className="wing-tags">
+                    {upcomingBlueprintLots.map((lot) => (
+                      <button
+                        key={`lot-chip-${lot.plotIndex}`}
+                        type="button"
+                        className="wing-tag clickable"
+                        style={{ border: "1px dashed #38bdf8" }}
+                        onClick={() =>
+                          onSimulateNewNeighbor || !onGoMint
+                            ? handleSpawnNeighborMint(1)
+                            : onGoMint()
+                        }
+                        title={`Claim or preview open Lot #${lot.lotNumber} on ${lot.districtName}`}
+                      >
+                        Lot #{lot.lotNumber} · {lot.districtName}
                       </button>
                     ))}
                   </div>
@@ -6660,7 +6757,7 @@ export function LabWorldExperience({
           <svg viewBox="0 0 112 112" className="world-minimap-svg">
             {radarIsDistrict ? (
               <>
-                {/* Proper Orthogonal Neighborhood Street Grid Radar (span = 29.5) */}
+                {/* Dynamically Scaling Orthogonal Neighborhood & Expansion Road Grid Radar */}
                 <rect
                   x="10"
                   y="10"
@@ -6671,41 +6768,75 @@ export function LabWorldExperience({
                   stroke="rgba(148,163,184,0.38)"
                   strokeWidth="1"
                 />
-                {/* 4 North-South & 4 East-West Paved Neighborhood Streets */}
+                {/* Shimmering Reflecting Canal Perimeter Ring */}
+                <circle
+                  cx="56"
+                  cy="56"
+                  r={(31.1 / districtRadarSpan) * 44}
+                  fill="none"
+                  stroke="rgba(56,189,248,0.45)"
+                  strokeWidth="1.5"
+                />
+                {/* Dynamically Paved Outer Expansion Ring Roads! */}
+                {Array.from({ length: activeExpansionBands }, (_, b) => {
+                  const s = (getExpansionBandAvenueSpan(b) / districtRadarSpan) * 44;
+                  return (
+                    <rect
+                      key={`exp-road-${b}`}
+                      x={56 - s}
+                      y={56 - s}
+                      width={s * 2}
+                      height={s * 2}
+                      rx="1.5"
+                      fill="none"
+                      stroke="rgba(100,116,139,0.52)"
+                      strokeWidth="1.8"
+                    />
+                  );
+                })}
+                {/* 4 North-South & 4 East-West Inner Neighborhood Streets (extending onto canal bridges!) */}
                 {TOWN_STREETS.ns.map((sx) => {
-                  const px = 56 + (sx / 29.5) * 44;
+                  const px = 56 + (sx / districtRadarSpan) * 44;
+                  const innerExt =
+                    Math.abs(sx) < 10 && activeExpansionBands > 0
+                      ? (getExpansionBandAvenueSpan(activeExpansionBands - 1) / districtRadarSpan) * 44
+                      : (29.5 / districtRadarSpan) * 44;
                   return (
                     <line
                       key={`ns-${sx}`}
                       x1={px}
-                      y1="10"
+                      y1={Math.max(10, 56 - innerExt)}
                       x2={px}
-                      y2="102"
+                      y2={Math.min(102, 56 + innerExt)}
                       stroke="rgba(100,116,139,0.52)"
-                      strokeWidth="2.4"
+                      strokeWidth={districtRadarSpan > 35 ? "1.6" : "2.4"}
                     />
                   );
                 })}
                 {TOWN_STREETS.ew.map((sz) => {
-                  const py = 56 + (sz / 29.5) * 44;
+                  const py = 56 + (sz / districtRadarSpan) * 44;
+                  const innerExt =
+                    Math.abs(sz) < 10 && activeExpansionBands > 0
+                      ? (getExpansionBandAvenueSpan(activeExpansionBands - 1) / districtRadarSpan) * 44
+                      : (29.5 / districtRadarSpan) * 44;
                   return (
                     <line
                       key={`ew-${sz}`}
-                      x1="10"
+                      x1={Math.max(10, 56 - innerExt)}
                       y1={py}
-                      x2="102"
+                      x2={Math.min(102, 56 + innerExt)}
                       y2={py}
                       stroke="rgba(100,116,139,0.52)"
-                      strokeWidth="2.4"
+                      strokeWidth={districtRadarSpan > 35 ? "1.6" : "2.4"}
                     />
                   );
                 })}
                 {/* Active Center Home Plot #1 */}
                 <rect
-                  x={56 - 6.5}
-                  y={56 - 6.5}
-                  width="13"
-                  height="13"
+                  x={56 - (districtRadarSpan > 35 ? 4.5 : 6.5)}
+                  y={56 - (districtRadarSpan > 35 ? 4.5 : 6.5)}
+                  width={districtRadarSpan > 35 ? 9 : 13}
+                  height={districtRadarSpan > 35 ? 9 : 13}
                   rx="2.2"
                   fill="rgba(91,141,239,0.34)"
                   stroke="#5b8def"
@@ -6720,53 +6851,53 @@ export function LabWorldExperience({
                 </rect>
                 {/* Community Fountain Square Dot */}
                 <circle
-                  cx={56 + (COMMUNITY_FOUNTAIN_POS[0] / 29.5) * 44}
-                  cy={56 + (COMMUNITY_FOUNTAIN_POS[1] / 29.5) * 44}
-                  r="2.2"
+                  cx={56 + (COMMUNITY_FOUNTAIN_POS[0] / districtRadarSpan) * 44}
+                  cy={56 + (COMMUNITY_FOUNTAIN_POS[1] / districtRadarSpan) * 44}
+                  r={districtRadarSpan > 35 ? "1.7" : "2.2"}
                   fill="#0ea5e9"
                   stroke="#ffffff"
                   strokeWidth="0.8"
                 >
                   <title>Community Research Fountain</title>
                 </circle>
-                {/* Surveyed Next-Mint Open Residential Lots (dashed cyan squares) */}
-                {upcomingBlueprintLots
-                  .filter((lot) => lot.ring === 1 || lot.ring === 2)
-                  .map((lot) => {
-                    const lx = 56 + (lot.x / 29.5) * 44;
-                    const ly = 56 + (lot.z / 29.5) * 44;
-                    return (
-                      <rect
-                        key={`lot-${lot.plotIndex}`}
-                        x={lx - 3}
-                        y={ly - 3}
-                        width="6"
-                        height="6"
-                        rx="1.2"
-                        fill="rgba(224,242,254,0.45)"
-                        stroke="#0ea5e9"
-                        strokeWidth="1"
-                        strokeDasharray="1.6 1.1"
-                      >
-                        <title>Next Mint · Lot #{lot.lotNumber} ({lot.districtName})</title>
-                      </rect>
-                    );
-                  })}
+                {/* Surveyed Next-Mint Open Residential Lots across ALL Rings (dashed cyan squares) */}
+                {upcomingBlueprintLots.map((lot) => {
+                  const lx = Math.max(10, Math.min(102, 56 + (lot.x / districtRadarSpan) * 44));
+                  const ly = Math.max(10, Math.min(102, 56 + (lot.z / districtRadarSpan) * 44));
+                  const bsz = districtRadarSpan > 35 ? 4.2 : 6;
+                  return (
+                    <rect
+                      key={`lot-${lot.plotIndex}`}
+                      x={lx - bsz / 2}
+                      y={ly - bsz / 2}
+                      width={bsz}
+                      height={bsz}
+                      rx="1"
+                      fill="rgba(224,242,254,0.52)"
+                      stroke="#0ea5e9"
+                      strokeWidth="0.95"
+                      strokeDasharray="1.5 1"
+                    >
+                      <title>Next Mint · Lot #{lot.lotNumber} ({lot.districtName})</title>
+                    </rect>
+                  );
+                })}
                 {/* 4 Clickable Emerald City-Block Town Parks on District Radar */}
                 {TOWN_PARKS.map((park) => {
-                  const px = 56 + (park.x / 29.5) * 44;
-                  const py = 56 + (park.z / 29.5) * 44;
+                  const px = 56 + (park.x / districtRadarSpan) * 44;
+                  const py = 56 + (park.z / districtRadarSpan) * 44;
+                  const ps = Math.max(5.5, (8.2 / districtRadarSpan) * 44);
                   return (
                     <rect
                       key={park.id}
-                      x={px - 6.2}
-                      y={py - 6.2}
-                      width="12.4"
-                      height="12.4"
-                      rx="2.6"
+                      x={px - ps / 2}
+                      y={py - ps / 2}
+                      width={ps}
+                      height={ps}
+                      rx="2"
                       fill="rgba(52,211,153,0.72)"
                       stroke="#ffffff"
-                      strokeWidth="1.1"
+                      strokeWidth="0.95"
                       className="clickable"
                       style={{ cursor: "pointer" }}
                       onClick={() => handleWalkToPark(park.id)}
@@ -6775,12 +6906,21 @@ export function LabWorldExperience({
                     </rect>
                   );
                 })}
-                {/* Clickable Ring 1 + Ring 2 Street-Aligned Neighborhood House Plots! */}
-                {[...ring1Placements, ...ring2Placements].map((pl) => {
-                  const nx = 56 + (pl.x / 29.5) * 44;
-                  const ny = 56 + (pl.z / 29.5) * 44;
+                {/* Clickable Ring 1 + Ring 2 + Ring 3 Street-Aligned Neighborhood House Plots! */}
+                {neighborPlacements.map((pl) => {
+                  const nx = Math.max(10, Math.min(102, 56 + (pl.x / districtRadarSpan) * 44));
+                  const ny = Math.max(10, Math.min(102, 56 + (pl.z / districtRadarSpan) * 44));
                   const col = deriveTraitsFromSeed(pl.lab.seed).palette.liquidMid;
-                  const sz = pl.ring === 1 ? 6.8 : 5.8;
+                  const sz =
+                    districtRadarSpan > 48
+                      ? 3.2
+                      : districtRadarSpan > 35
+                        ? pl.ring === 1
+                          ? 4.6
+                          : 3.9
+                        : pl.ring === 1
+                          ? 6.8
+                          : 5.8;
                   return (
                     <rect
                       key={pl.lab.tokenId}
@@ -6788,10 +6928,10 @@ export function LabWorldExperience({
                       y={ny - sz / 2}
                       width={sz}
                       height={sz}
-                      rx="1.4"
+                      rx="1.1"
                       fill={col}
                       stroke="#ffffff"
-                      strokeWidth="1.1"
+                      strokeWidth={districtRadarSpan > 35 ? "0.7" : "1.1"}
                       className="clickable"
                       style={{ cursor: "pointer" }}
                       onClick={() => handleVisitNeighbor(pl.lab.tokenId)}

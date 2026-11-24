@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { createFastArchitecturalGlass } from "./browserCompat";
 import {
   createGardenPathTexture,
   createRadialGlowTexture
@@ -115,14 +116,10 @@ export class TownGardens3D {
       color: "#c8a986",
       roughness: 0.68
     });
-    const glassMat = new THREE.MeshPhysicalMaterial({
-      color: "#f0fdf4",
-      transmission: 0.84,
-      roughness: 0.06,
-      ior: 1.46,
-      thickness: 0.14,
-      transparent: true,
-      opacity: 0.88
+    const glassMat = createFastArchitecturalGlass({
+      color: "#ecfdf5",
+      opacity: 0.48,
+      roughness: 0.06
     });
     const lawnMat = new THREE.MeshStandardMaterial({
       color: "#bbf7d0",

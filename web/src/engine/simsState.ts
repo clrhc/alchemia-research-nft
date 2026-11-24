@@ -608,7 +608,8 @@ export type SimsObjectTarget =
   | { kind: "neighbor-lab"; label: string; tokenId: number; worldX: number; worldZ: number }
   | { kind: "neighbor-npc"; label: string; tokenId: number; npcName: string; worldX: number; worldZ: number }
   | { kind: "visiting-host"; label: string; tokenId: number; hostName: string; worldX: number; worldZ: number }
-  | { kind: "blueprint-lot"; label: string; lotNumber: number; worldX: number; worldZ: number };
+  | { kind: "blueprint-lot"; label: string; lotNumber: number; worldX: number; worldZ: number }
+  | { kind: "vehicle"; label: string; vehicleId: string; worldX: number; worldZ: number };
 
 export interface SimsPieAction {
   id: string;
@@ -1337,6 +1338,12 @@ export function getSimsPieActions(
       return [
         { id: "lot-preview-mint", label: "Build Next Mint", sublabel: "+1 Lab", accent: "#10b981" },
         { id: "lot-mint-wave", label: "Mint Wave (+5)", sublabel: "Grow town!", accent: "#38bdf8" },
+        { id: "open-neighborhood", label: "Town Map", accent: "#6366f1" }
+      ];
+    case "vehicle":
+      return [
+        { id: "vehicle-wave", label: "Wave at Driver", sublabel: "+Social", accent: "#38bdf8" },
+        { id: "vehicle-beep", label: "Friendly Beep", sublabel: "+Fun!", accent: "#f472b6" },
         { id: "open-neighborhood", label: "Town Map", accent: "#6366f1" }
       ];
   }

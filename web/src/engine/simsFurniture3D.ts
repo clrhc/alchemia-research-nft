@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { createFastArchitecturalGlass } from "./browserCompat";
 import { createRadialGlowTexture } from "./architectTextures";
 import {
   getGroundElevationForFloor,
@@ -196,13 +197,10 @@ export class SimsFurniture3D {
       emissiveIntensity: 0.85,
       roughness: 0.16
     });
-    const glassMat = new THREE.MeshPhysicalMaterial({
-      color: "#ffffff",
-      transmission: 0.84,
-      roughness: 0.06,
-      ior: 1.47,
-      thickness: 0.1,
-      transparent: true
+    const glassMat = createFastArchitecturalGlass({
+      color: "#f8fafc",
+      opacity: 0.48,
+      roughness: 0.06
     });
     return { stoneMat, metalMat, cushionMat, accentGlowMat, glassMat };
   }
@@ -1172,15 +1170,12 @@ export class SimsFurniture3D {
       p.add(plinth);
       const crystal = new THREE.Mesh(
         new THREE.OctahedronGeometry(0.2, 0),
-        new THREE.MeshPhysicalMaterial({
+        createFastArchitecturalGlass({
           color: this.accentHex,
           emissive: this.accentHex,
           emissiveIntensity: 0.62,
           roughness: 0.08,
-          transmission: 0.45,
-          clearcoat: 1.0,
-          transparent: true,
-          opacity: 0.9
+          opacity: 0.88
         })
       );
       crystal.scale.set(0.75, 1.45, 0.75);

@@ -14,7 +14,8 @@ import {
   usdToEth,
   type ResearchCauseInfo
 } from "./config";
-import { randomSeedHex } from "../engine/prng";
+import { randomSeedHex, SeededRNG } from "../engine/prng";
+import { deterministicNeighborSeed } from "../engine/neighborhoodLayout";
 import { stageFromEth } from "../engine/traits";
 
 export interface MintedVessel {
@@ -98,13 +99,90 @@ export function saveChainCache(state: CollectionState) {
         totalCoinsDonatedToResearch: state.totalCoinsDonatedToResearch,
         reactionStage: state.reactionStage,
         causes: state.causes,
-        vessels: state.vessels.slice(0, 24),
+        vessels: state.vessels.slice(0, 72),
         recentDiscoveries: state.recentDiscoveries.slice(0, 8)
       })
     );
   } catch {
     // ignore storage errors
   }
+}
+
+/**
+ * Merges incoming minted vessels with previously known vessels by `tokenId`, ensuring newer
+ * on-chain updates (wings, tier, workUnits, ownership) overwrite stale snapshots while never
+ * dropping older known minted neighbor labs as totalSupply grows!
+ */
+export function mergeMintedVessels(
+  existing: readonly MintedVessel[],
+  incoming: readonly MintedVessel[],
+  maxStored = 240
+): MintedVessel[] {
+  const byId = new Map<number, MintedVessel>();
+  for (const v of existing) {
+    if (v && Number.isFinite(v.tokenId) && v.tokenId > 0) {
+      byId.set(v.tokenId, v);
+    }
+  }
+  for (const v of incoming) {
+    if (v && Number.isFinite(v.tokenId) && v.tokenId > 0) {
+      const prev = byId.get(v.tokenId);
+      byId.set(v.tokenId, prev ? { ...prev, ...v } : v);
+    }
+  }
+  return Array.from(byId.values())
+    .sort((a, b) => b.tokenId - a.tokenId)
+    .slice(0, maxStored);
+}
+
+/**
+ * Creates deterministic newly minted neighbor MintedVessels for simulation / live town growth preview.
+ */
+export function createSimulatedNeighborVessels(
+  startTokenId: number,
+  count: number
+): { vessels: MintedVessel[]; addedImpactEth: number } {
+  const safeCount = Math.max(1, Math.min(25, Math.floor(count)));
+  const nowSec = Math.floor(Date.now() / 1000);
+  const nowMs = Date.now();
+  const usdStops = [1, 5, 10, 25, 50, 100, 250];
+  const created: MintedVessel[] = [];
+  let addedImpactEth = 0;
+
+  for (let i = 0; i < safeCount; i++) {
+    const tokenId = startTokenId + i;
+    const seed = deterministicNeighborSeed(tokenId);
+    const rng = new SeededRNG(seed, 777 + tokenId);
+    const causeId = tokenId % DEFAULT_CAUSES.length;
+    const valueUsd = usdStops[Math.min(usdStops.length - 1, Math.floor(rng.next() * usdStops.length))];
+    const tier = complexityTierFromUsd(valueUsd);
+    let sectorsMask = 0;
+    for (let bit = 0; bit < 6; bit++) {
+      if (rng.next() < 0.28 + tier * 0.08) sectorsMask |= 1 << bit;
+    }
+    const impactEth = Number((usdToEth(valueUsd) * 0.6).toFixed(6));
+    addedImpactEth += impactEth;
+    created.push({
+      tokenId,
+      seed,
+      causeId,
+      causeName: DEFAULT_CAUSES[causeId].name,
+      minter: `0x${seed.slice(2, 6)}…${seed.slice(-4)}`,
+      ownedByUser: false,
+      onChain: false,
+      valueUsd,
+      impactEth,
+      sectorsMask,
+      workUnits: Math.floor(rng.range(1, 20)),
+      lastClaimMs: nowMs - 1000 * 60 * 45,
+      mintedAt: nowSec - i * 12
+    });
+  }
+
+  return {
+    vessels: created,
+    addedImpactEth: Number(addedImpactEth.toFixed(6))
+  };
 }
 
 function createInitialDemoVessels(): MintedVessel[] {
@@ -195,7 +273,7 @@ export function loadInitialCollectionState(): CollectionState {
     contractAddress: CONTRACT_ADDRESS,
     coinAddress: COIN_ADDRESS,
     walletAddress: null,
-    totalSupply: isLiveChain ? 0 : 159,
+    totalSupply: isLiveChain ? 0 : 6,
     maxSupply: 0,
     supplyLocked: false,
     mintPriceEth: BASE_MINT_PRICE_ETH,
@@ -228,7 +306,19 @@ export function loadInitialCollectionState(): CollectionState {
         if (saved) {
           const parsed = JSON.parse(saved);
           if (parsed && Array.isArray(parsed.vessels)) {
-            return { ...base, ...parsed, chainSynced: true, walletAddress: null };
+            // Migrate legacy maxed-out demo default (totalSupply === 159 with 6 curated vessels)
+            // so simulation players start in an actively growing village with open blueprint lots!
+            const migratedSupply =
+              parsed.totalSupply === 159 && parsed.vessels.length <= 6
+                ? Math.max(6, parsed.vessels.length)
+                : Math.max(Number(parsed.totalSupply || 0), parsed.vessels.length, 1);
+            return {
+              ...base,
+              ...parsed,
+              totalSupply: migratedSupply,
+              chainSynced: true,
+              walletAddress: null
+            };
           }
         }
       }
@@ -255,7 +345,7 @@ export function saveDemoState(state: CollectionState) {
         totalCoinsDonatedToResearch: state.totalCoinsDonatedToResearch,
         reactionStage: state.reactionStage,
         causes: state.causes,
-        vessels: state.vessels.slice(0, 40)
+        vessels: state.vessels.slice(0, 80)
       })
     );
   } catch {
@@ -575,20 +665,68 @@ async function fetchCollectionWithProvider(
     };
   });
 
-  // Fetch up to 24 most recently minted live NFTs + $ALCH supply/balance in ONE single Multicall3 eth_call!
+  // Collect up to 72 real on-chain NFTs so the living neighborhood displays real minted plots
+  // across Ring 1, Ring 2, and Ring 3 Expansion Districts:
+  //  1) Connected wallet's own tokens (via ERC721Enumerable balanceOf / tokenOfOwnerByIndex)
+  //  2) Newest 64 minted tokens (supNum down to supNum - 63)
+  //  3) Pioneer founder tokens #1..#8 so Inner Boulevard always shows real founders!
   const supNum = Number(totalSupply);
-  const fetchCount = Math.min(supNum, 24);
-  const ids: number[] = [];
-  for (let id = supNum; id >= Math.max(1, supNum - fetchCount + 1); id--) {
-    ids.push(id);
+  const idSet = new Set<number>();
+  const hasCoin = ethers.isAddress(String(coinAddr));
+  const hasWallet = Boolean(walletAddress && ethers.isAddress(walletAddress));
+
+  if (hasWallet && walletAddress && supNum > 0) {
+    try {
+      const rawBal = (await contract.balanceOf(walletAddress)) as bigint;
+      const ownedCount = Math.min(Number(rawBal), 16);
+      if (ownedCount > 0) {
+        if (useMulticall) {
+          const ownCalls: Array<{ target: string; callData: string }> = [];
+          for (let idx = 0; idx < ownedCount; idx++) {
+            ownCalls.push({
+              target: contractAddress,
+              callData: nftIface.encodeFunctionData("tokenOfOwnerByIndex", [walletAddress, idx])
+            });
+          }
+          const ownRes = await runMulticall3(provider, ownCalls);
+          for (const r of ownRes) {
+            if (!r.success) continue;
+            const tid = Number(nftIface.decodeFunctionResult("tokenOfOwnerByIndex", r.returnData)[0]);
+            if (tid >= 1 && tid <= supNum) idSet.add(tid);
+          }
+        } else {
+          const ownedIds = await Promise.all(
+            Array.from({ length: ownedCount }, (_, idx) =>
+              contract.tokenOfOwnerByIndex(walletAddress, idx)
+            )
+          );
+          for (const rawTid of ownedIds) {
+            const tid = Number(rawTid);
+            if (tid >= 1 && tid <= supNum) idSet.add(tid);
+          }
+        }
+      }
+    } catch {
+      // non-fatal if RPC rejects enumeration call
+    }
   }
+
+  const recentCount = Math.min(supNum, 64);
+  for (let id = supNum; id >= Math.max(1, supNum - recentCount + 1); id--) {
+    idSet.add(id);
+  }
+  const pioneerCount = Math.min(supNum, 8);
+  for (let id = 1; id <= pioneerCount; id++) {
+    idSet.add(id);
+  }
+  const ids = Array.from(idSet)
+    .sort((a, b) => b - a)
+    .slice(0, 72);
 
   let vessels: MintedVessel[] = [];
   let userCoinBalance = 0;
   let coinTotalSupply = 0;
   let directCoinDonations = 0;
-  const hasCoin = ethers.isAddress(String(coinAddr));
-  const hasWallet = Boolean(walletAddress && ethers.isAddress(walletAddress));
 
   const formatVessel = (
     id: number,
@@ -635,58 +773,71 @@ async function fetchCollectionWithProvider(
   };
 
   if (useMulticall && (ids.length > 0 || hasCoin)) {
-    const batchCalls: Array<{ target: string; callData: string }> = [];
-    for (const id of ids) {
-      batchCalls.push({
-        target: contractAddress,
-        callData: nftIface.encodeFunctionData("getLiveImpactSnapshot", [id])
-      });
-      batchCalls.push({
-        target: contractAddress,
-        callData: nftIface.encodeFunctionData("ownerOf", [id])
-      });
+    // Chunk Multicall3 batches safely (<= 36 tokens = 72 calls per aggregate3) for fast, reliable public RPC hydration
+    const CHUNK_TOKENS = 36;
+    const chunks: number[][] = [];
+    for (let start = 0; start < ids.length; start += CHUNK_TOKENS) {
+      chunks.push(ids.slice(start, start + CHUNK_TOKENS));
     }
-    const coinStartIdx = batchCalls.length;
-    if (hasCoin) {
-      batchCalls.push({ target: coinAddr, callData: coinIface.encodeFunctionData("totalSupply") });
-      batchCalls.push({
-        target: coinAddr,
-        callData: coinIface.encodeFunctionData("totalDonatedToResearch")
-      });
-      if (hasWallet && walletAddress) {
+    if (chunks.length === 0) chunks.push([]);
+
+    for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
+      const chunkIds = chunks[cIdx];
+      const includeCoin = cIdx === 0 && hasCoin;
+      const batchCalls: Array<{ target: string; callData: string }> = [];
+      for (const id of chunkIds) {
         batchCalls.push({
-          target: coinAddr,
-          callData: coinIface.encodeFunctionData("balanceOf", [walletAddress])
+          target: contractAddress,
+          callData: nftIface.encodeFunctionData("getLiveImpactSnapshot", [id])
+        });
+        batchCalls.push({
+          target: contractAddress,
+          callData: nftIface.encodeFunctionData("ownerOf", [id])
         });
       }
-    }
+      const coinStartIdx = batchCalls.length;
+      if (includeCoin) {
+        batchCalls.push({ target: coinAddr, callData: coinIface.encodeFunctionData("totalSupply") });
+        batchCalls.push({
+          target: coinAddr,
+          callData: coinIface.encodeFunctionData("totalDonatedToResearch")
+        });
+        if (hasWallet && walletAddress) {
+          batchCalls.push({
+            target: coinAddr,
+            callData: coinIface.encodeFunctionData("balanceOf", [walletAddress])
+          });
+        }
+      }
+      if (batchCalls.length === 0) continue;
 
-    const res = await runMulticall3(provider, batchCalls);
-    for (let i = 0; i < ids.length; i++) {
-      const snapRes = res[i * 2];
-      const ownRes = res[i * 2 + 1];
-      if (!snapRes?.success || !ownRes?.success) continue;
-      const snap = nftIface.decodeFunctionResult("getLiveImpactSnapshot", snapRes.returnData)[0];
-      const owner = String(nftIface.decodeFunctionResult("ownerOf", ownRes.returnData)[0]);
-      vessels.push(formatVessel(ids[i], snap, owner));
-    }
-    if (hasCoin) {
-      if (res[coinStartIdx]?.success) {
-        coinTotalSupply = Number(
-          ethers.formatEther(coinIface.decodeFunctionResult("totalSupply", res[coinStartIdx].returnData)[0])
-        );
+      const res = await runMulticall3(provider, batchCalls);
+      for (let i = 0; i < chunkIds.length; i++) {
+        const snapRes = res[i * 2];
+        const ownRes = res[i * 2 + 1];
+        if (!snapRes?.success || !ownRes?.success) continue;
+        const snap = nftIface.decodeFunctionResult("getLiveImpactSnapshot", snapRes.returnData)[0];
+        const owner = String(nftIface.decodeFunctionResult("ownerOf", ownRes.returnData)[0]);
+        vessels.push(formatVessel(chunkIds[i], snap, owner));
       }
-      if (res[coinStartIdx + 1]?.success) {
-        directCoinDonations = Number(
-          ethers.formatEther(
-            coinIface.decodeFunctionResult("totalDonatedToResearch", res[coinStartIdx + 1].returnData)[0]
-          )
-        );
-      }
-      if (hasWallet && res[coinStartIdx + 2]?.success) {
-        userCoinBalance = Number(
-          ethers.formatEther(coinIface.decodeFunctionResult("balanceOf", res[coinStartIdx + 2].returnData)[0])
-        );
+      if (includeCoin) {
+        if (res[coinStartIdx]?.success) {
+          coinTotalSupply = Number(
+            ethers.formatEther(coinIface.decodeFunctionResult("totalSupply", res[coinStartIdx].returnData)[0])
+          );
+        }
+        if (res[coinStartIdx + 1]?.success) {
+          directCoinDonations = Number(
+            ethers.formatEther(
+              coinIface.decodeFunctionResult("totalDonatedToResearch", res[coinStartIdx + 1].returnData)[0]
+            )
+          );
+        }
+        if (hasWallet && res[coinStartIdx + 2]?.success) {
+          userCoinBalance = Number(
+            ethers.formatEther(coinIface.decodeFunctionResult("balanceOf", res[coinStartIdx + 2].returnData)[0])
+          );
+        }
       }
     }
   } else {
