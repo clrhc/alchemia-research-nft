@@ -67,14 +67,18 @@ import {
   stationForSector
 } from "../labStations";
 import {
+  BASEMENT_Y,
   DEFAULT_SPACIOUS_LAYOUT,
   EXTRA_ROOM_DEFS,
   HOUSE_FLOOR_DEFS,
   HOUSE_SIZE_DEFS,
   MOVABLE_ITEMS,
+  STAIR_FLIGHTS,
   WALL_STYLES,
   clampPlacementPoint,
+  evaluateStairWalk,
   findNearestStationWithLayout,
+  formatFloorLabel,
   getGroundElevationForFloor,
   getHouseBoundsRadius,
   getUpperFloorY,
@@ -596,7 +600,9 @@ describe("Living Minted NFT Neighborhood & Sims Interactivity", () => {
     const migrated = sanitizeLabDecor({ floorStyle: "oak", patioDecor: "cherry-tree" });
     expect(migrated.floorStyle).toBe("oak");
     expect(migrated.patioDecor).toBe("cherry-tree");
-    expect(migrated.seatingStyle).toBe("bench");
+    expect(migrated.seatingStyle).toBe("plush-sofa");
+    expect(migrated.hasBasement).toBe(true);
+    expect(migrated.houseFloors).toBe(2);
     expect(migrated.stationUpgrades).toEqual({ research: 1, mining: 1, pet: 1, builder: 1, lounge: 1 });
 
     // Full save/load & progressive station upgrades (Lv. 1 -> 2 -> 3)
@@ -742,26 +748,74 @@ describe("Living Minted NFT Neighborhood & Sims Interactivity", () => {
     expect(getHouseBoundsRadius(2)).toBe(4.2);
     expect(getHouseBoundsRadius(3)).toBe(4.6);
 
+    expect(getUpperFloorY(0)).toBe(BASEMENT_Y);
     expect(getUpperFloorY(1)).toBe(0.12);
     expect(getUpperFloorY(2)).toBe(2.68);
     expect(getUpperFloorY(3)).toBe(4.68);
+    expect(formatFloorLabel(0)).toBe("B1");
+    expect(formatFloorLabel(1)).toBe("1F");
+    expect(formatFloorLabel(2)).toBe("2F");
+    expect(formatFloorLabel(3)).toBe("3F");
+    expect(getGroundElevationForFloor(0, 0, 0, 1)).toBe(BASEMENT_Y);
     expect(getGroundElevationForFloor(2, -2.5, -2.5, 2)).toBe(2.68);
     expect(getGroundElevationForFloor(3, 2.5, -2.5, 3)).toBe(4.68);
-    expect(getGroundElevationForFloor(1, 0, 0, 1)).toBe(0.39);
+    expect(getGroundElevationForFloor(1, 0, 0, 1)).toBe(0.12);
     expect(getGroundElevationForFloor(1, 4.1, 4.1, 3)).toBe(0.12);
 
-    // Placement clamping respects reactor keep-out, house bounds, 2F cutaway & optional 0.25m snap grid
+    // Default home immediately ships as multi-story architect housing (B1 Basement + 1F + 2F!)
+    const defDecor = defaultLabDecor();
+    expect(defDecor.hasBasement).toBe(true);
+    expect(defDecor.houseFloors).toBe(2);
+
+    // Real physically walkable architectural staircases (B1 <-> 1F <-> 2F <-> 3F)
+    expect(STAIR_FLIGHTS).toHaveLength(3);
+    // Mid-flight on East Basement Stairs (x = 2.7, z = -1.45 -> halfway between 1F 0.12 and B1 -2.20)
+    const midB1 = evaluateStairWalk(2.7, -1.45, 1, 2, true);
+    expect(midB1.onStairs).toBe(true);
+    expect(midB1.flightId).toBe("b1-1f");
+    expect(midB1.y).toBeCloseTo(-1.04, 1);
+    expect(midB1.nextFloor).toBeUndefined();
+    // Reaching bottom of Basement Stairs smoothly transitions from 1F -> B1 (0)
+    const botB1 = evaluateStairWalk(2.7, -2.55, 1, 2, true);
+    expect(botB1.onStairs).toBe(true);
+    expect(botB1.nextFloor).toBe(0);
+    // Walking back up from B1 to top landing smoothly transitions B1 -> 1F (1)
+    const topFromB1 = evaluateStairWalk(2.7, -0.35, 0, 2, true);
+    expect(topFromB1.onStairs).toBe(true);
+    expect(topFromB1.nextFloor).toBe(1);
+    // Climbing West 1F -> 2F floating stairs interpolates elevation and transitions at top landing
+    const mid2F = evaluateStairWalk(-2.7, -1.45, 1, 2, true);
+    expect(mid2F.onStairs).toBe(true);
+    expect(mid2F.flightId).toBe("1f-2f");
+    expect(mid2F.y).toBeCloseTo(1.4, 1);
+    const top2F = evaluateStairWalk(-2.7, -2.55, 1, 2, true);
+    expect(top2F.nextFloor).toBe(2);
+    // Switchback 2F -> 3F stairs activate only when 3F Penthouse is built
+    expect(evaluateStairWalk(-1.7, -1.55, 2, 2, true).onStairs).toBe(false);
+    const top3F = evaluateStairWalk(-1.7, -0.55, 2, 3, true);
+    expect(top3F.onStairs).toBe(true);
+    expect(top3F.nextFloor).toBe(3);
+
+    // Placement clamping respects tabletop NFT island, stairwells, B1 basement bounds & optional 0.25m snap grid
     const pushedOut = clampPlacementPoint(0.1, 0.1, 1, 1, false);
     expect(Math.hypot(pushedOut.x, pushedOut.z)).toBeGreaterThanOrEqual(1.23);
 
-    const snapped = clampPlacementPoint(2.38, -1.61, 2, 1, true);
-    expect(snapped.x).toBe(2.5);
-    expect(snapped.z).toBe(-1.5);
+    const basementClamped = clampPlacementPoint(2.8, -1.5, 1, 0, false);
+    expect(basementClamped.x).toBeLessThanOrEqual(1.95);
+
+    const snapped = clampPlacementPoint(1.62, -2.38, 2, 1, true);
+    expect(snapped.x).toBe(1.5);
+    expect(snapped.z).toBe(-2.5);
 
     const upperCutaway = clampPlacementPoint(0.2, 2.9, 2, 2, false);
     expect(upperCutaway.z).toBeLessThanOrEqual(1.65);
 
-    // Moving a station onto Floor 2F updates proximity triggers on 2F & clears 1F!
+    // Moving a station onto B1 Basement or Floor 2F updates proximity triggers on that floor & clears 1F!
+    const basementMoved = moveItemInDecor(defaultLabDecor(), "mining", -1.25, -1.25, 0, 0);
+    expect(resolveItemPlacement("mining", basementMoved.customLayout).floor).toBe(0);
+    expect(findNearestStationWithLayout(-1.25, -1.25, 0, basementMoved.customLayout)).toBe("mining");
+    expect(findNearestStationWithLayout(-1.25, -1.25, 1, basementMoved.customLayout)).toBeNull();
+
     const movedDecor = moveItemInDecor(defaultLabDecor(), "research", -2.5, -2.5, 1.0, 2);
     expect(resolveItemPlacement("research", movedDecor.customLayout)).toEqual({
       x: -2.5,
@@ -780,31 +834,33 @@ describe("Living Minted NFT Neighborhood & Sims Interactivity", () => {
       )
     ).toBe("mining");
 
-    // Sanitizer rejects invalid coordinates and preserves valid custom placements
+    // Sanitizer rejects invalid coordinates and preserves valid B1 / 2F / 3F custom placements
     const cleanLayout = sanitizeCustomLayout({
       mining: { x: 99, z: -2.25, yaw: 0.5, floor: 3 },
+      research: { x: -1.5, z: 1.0, yaw: 0, floor: 0 },
       badKey: { x: 1, z: 1, yaw: 0, floor: 1 }
     });
     expect(cleanLayout.mining?.x).toBe(4.5);
     expect(cleanLayout.mining?.floor).toBe(3);
+    expect(cleanLayout.research?.floor).toBe(0);
     expect((cleanLayout as Record<string, unknown>).badKey).toBeUndefined();
 
-    // New Sims Pie Menus for 6 Homely Rooms & Spiral Staircase
+    // New Sims Pie Menus for 6 Homely Rooms & Walkable Staircases (including B1 Basement!)
     const roomActions = getSimsPieActions({
       kind: "home-room",
       label: "Cozy Bedroom Nook",
       roomId: "bedroom",
-      worldX: -3.25,
-      worldZ: -2.65
+      worldX: -3.85,
+      worldZ: 1.65
     });
     expect(roomActions[0].id).toBe("room-nap");
 
     const stairActions = getSimsPieActions(
-      { kind: "stairs", label: "Spiral Staircase", worldX: -2.6, worldZ: -2.6 },
-      { currentFloor: 2, maxFloors: 3 }
+      { kind: "stairs", label: "Basement Stairs", worldX: 2.7, worldZ: -0.15 },
+      { currentFloor: 1, maxFloors: 2, hasBasement: true }
     );
-    expect(stairActions.some((a) => a.id === "floor-up")).toBe(true);
-    expect(stairActions.some((a) => a.id === "floor-down")).toBe(true);
+    expect(stairActions.some((a) => a.id === "floor-up" && a.label.includes("2F"))).toBe(true);
+    expect(stairActions.some((a) => a.id === "floor-down" && a.label.includes("B1"))).toBe(true);
   });
 
   it("powers walkable town parks, botanical conservatory, 8 plant species & interactive home/park gardening", () => {

@@ -3,6 +3,7 @@ import { createRadialGlowTexture } from "./architectTextures";
 import {
   getGroundElevationForFloor,
   resolveItemPlacement,
+  type FloorNumber,
   type MovableItemId
 } from "./homeLayout";
 import {
@@ -42,7 +43,9 @@ export class SimsFurniture3D {
   private ceilingGroup = new THREE.Group();
   private petUpgradeGroup = new THREE.Group();
   private builderUpgradeGroup = new THREE.Group();
+  private consoleStationGroup = new THREE.Group();
   private loungeUpgradeGroup = new THREE.Group();
+  private viewedFloor: FloorNumber = 1;
 
   private interactiveRoots: THREE.Object3D[] = [];
   private terrazzoTex: THREE.Texture;
@@ -89,7 +92,7 @@ export class SimsFurniture3D {
     y: number;
     z: number;
     yaw: number;
-    floor: 1 | 2 | 3;
+    floor: FloorNumber;
   } {
     const p = resolveItemPlacement(itemId, this.decor.customLayout);
     const y = getGroundElevationForFloor(p.floor, p.x, p.z, this.decor.houseSize);
@@ -100,7 +103,7 @@ export class SimsFurniture3D {
     x: number;
     z: number;
     yaw: number;
-    floor: 1 | 2 | 3;
+    floor: FloorNumber;
   } {
     const id: MovableItemId =
       kind === "bench"
@@ -150,6 +153,7 @@ export class SimsFurniture3D {
       this.ceilingGroup,
       this.petUpgradeGroup,
       this.builderUpgradeGroup,
+      this.consoleStationGroup,
       this.loungeUpgradeGroup
     );
 
@@ -222,7 +226,38 @@ export class SimsFurniture3D {
   }
 
   public getRaycastTargets(): THREE.Object3D[] {
-    return this.interactiveRoots;
+    return this.interactiveRoots.filter((r) => r.visible);
+  }
+
+  /**
+   * Dollhouse floor visibility filter: when viewing B1 Basement, hide 1F+ furniture cleanly
+   * so only B1-placed stations & furniture appear; when viewing 1F+, show 1F..viewedFloor items!
+   */
+  public setViewedFloor(floor: FloorNumber) {
+    this.viewedFloor = floor;
+    this.applyFloorVisibility();
+  }
+
+  private applyFloorVisibility() {
+    const f = this.viewedFloor;
+    const isItemVisible = (itemId: MovableItemId): boolean => {
+      const itemFloor = resolveItemPlacement(itemId, this.decor.customLayout).floor;
+      if (f === 0) return itemFloor === 0;
+      return itemFloor >= 1 && itemFloor <= f;
+    };
+    this.seatingGroup.visible = isItemVisible("seating");
+    this.rugGroup.visible = isItemVisible("seating");
+    this.loungeUpgradeGroup.visible = isItemVisible("seating");
+    this.barGroup.visible = isItemVisible("bar");
+    this.researchGroup.visible = isItemVisible("research");
+    this.harvesterGroup.visible = isItemVisible("mining");
+    this.petUpgradeGroup.visible = isItemVisible("pet");
+    this.builderUpgradeGroup.visible = isItemVisible("builder");
+    this.consoleStationGroup.visible = isItemVisible("console");
+    this.hobbyGroup.visible = isItemVisible("hobby");
+    this.decorGroup.visible = isItemVisible("patio");
+    this.plantsGroup.visible = f >= 1;
+    this.ceilingGroup.visible = f >= 1;
   }
 
   public getStationUpgradeWorldPos(stationId: UpgradeableStationId): THREE.Vector3 {
@@ -283,11 +318,15 @@ export class SimsFurniture3D {
     if (accentChanged || layoutChanged || prev.stationUpgrades.builder !== next.stationUpgrades.builder) {
       this.buildBuilderUpgrade(next.stationUpgrades.builder);
     }
+    if (accentChanged || layoutChanged) {
+      this.buildConsoleStation();
+    }
     if (accentChanged || layoutChanged || prev.stationUpgrades.lounge !== next.stationUpgrades.lounge) {
       this.buildLoungeUpgrade(next.stationUpgrades.lounge);
     }
 
     this.refreshInteractiveRoots();
+    this.applyFloorVisibility();
   }
 
   private rebuildAll() {
@@ -302,8 +341,10 @@ export class SimsFurniture3D {
     this.buildHarvesterStation(this.decor.stationUpgrades.mining);
     this.buildPetUpgrade(this.decor.stationUpgrades.pet);
     this.buildBuilderUpgrade(this.decor.stationUpgrades.builder);
+    this.buildConsoleStation();
     this.buildLoungeUpgrade(this.decor.stationUpgrades.lounge);
     this.refreshInteractiveRoots();
+    this.applyFloorVisibility();
   }
 
   // ============================================================================
@@ -1325,14 +1366,14 @@ export class SimsFurniture3D {
 
     const { stoneMat, metalMat, glassMat } = this.makeBaseMaterials();
     const spots: Array<[number, number]> = [
-      [1.18, -1.26],
-      [-0.34, -1.58],
-      [1.54, 0.68]
+      [-1.92, -3.15],
+      [1.92, -3.15],
+      [3.12, 0.32]
     ];
 
     for (const [px, pz] of spots) {
       const g = new THREE.Group();
-      g.position.set(px, 0.39, pz);
+      g.position.set(px, 0.12, pz);
 
       if (pack === "monstera") {
         const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.095, 0.18, 16), stoneMat);
@@ -1542,58 +1583,76 @@ export class SimsFurniture3D {
     micro.position.set(pos.x, pos.y, pos.z);
     micro.rotation.y = pos.yaw;
 
-    const ped = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.2, 0.56, 16), stoneMat);
-    ped.position.y = 0.28;
-    ped.castShadow = true;
-    micro.add(ped);
+    // Sleek 4-leg modern oak-and-silver architectural laboratory table (compact & navigable!)
+    const tblW = level >= 2 ? 0.78 : 0.68;
+    const tblD = 0.44;
+    const tblH = 0.54;
+    const oakMat = new THREE.MeshStandardMaterial({ color: "#e8dfd1", roughness: 0.48 });
+    const tabletop = new THREE.Mesh(new THREE.BoxGeometry(tblW, 0.036, tblD), oakMat);
+    tabletop.position.y = tblH;
+    tabletop.castShadow = true;
+    tabletop.receiveShadow = true;
+    micro.add(tabletop);
 
-    const desk = new THREE.Mesh(new THREE.BoxGeometry(level >= 2 ? 0.68 : 0.56, 0.04, 0.38), metalMat);
-    desk.position.y = 0.57;
-    desk.castShadow = true;
-    micro.add(desk);
+    for (const [lx, lz] of [
+      [-tblW * 0.44, -tblD * 0.4],
+      [tblW * 0.44, -tblD * 0.4],
+      [-tblW * 0.44, tblD * 0.4],
+      [tblW * 0.44, tblD * 0.4]
+    ] as const) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.013, tblH, 10), metalMat);
+      leg.position.set(lx, tblH / 2, lz);
+      leg.castShadow = true;
+      micro.add(leg);
+    }
 
-    const scopeArm = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.028, 0.26, 10), metalMat);
-    scopeArm.position.set(level >= 2 ? -0.09 : 0, 0.72, -0.06);
+    // Compact tabletop specimen slide plate & miniature reagent vials
+    const slideBase = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.022, 0.14), stoneMat);
+    slideBase.position.set(-0.08, tblH + 0.028, 0.02);
+    micro.add(slideBase);
+
+    const scopeArm = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.024, 0.22, 10), metalMat);
+    scopeArm.position.set(level >= 2 ? -0.1 : -0.08, tblH + 0.14, -0.05);
     scopeArm.rotation.x = 0.35;
     micro.add(scopeArm);
 
-    const scopeLens = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.036, 0.08, 12), accentGlowMat);
-    scopeLens.position.set(level >= 2 ? -0.09 : 0, 0.76, 0.02);
+    const scopeLens = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.03, 0.072, 12), accentGlowMat);
+    scopeLens.position.set(level >= 2 ? -0.1 : -0.08, tblH + 0.18, 0.02);
     scopeLens.rotation.x = 0.35;
     micro.add(scopeLens);
 
     const holoPlate = new THREE.Mesh(
-      new THREE.BoxGeometry(level >= 2 ? 0.46 : 0.32, level >= 2 ? 0.22 : 0.18, 0.014),
+      new THREE.BoxGeometry(level >= 2 ? 0.38 : 0.26, level >= 2 ? 0.2 : 0.16, 0.012),
       glassMat
     );
-    holoPlate.position.set(0, 0.76, -0.14);
-    holoPlate.rotation.x = -0.25;
+    holoPlate.position.set(0.14, tblH + 0.16, -0.12);
+    holoPlate.rotation.x = -0.22;
     micro.add(holoPlate);
 
     if (level >= 2) {
-      // Lv. 2 Cryo-EM Dual Array: second cryo-cyan microscope barrel + glowing desk edge trim
-      const arm2 = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.028, 0.26, 10), metalMat);
-      arm2.position.set(0.09, 0.72, -0.06);
+      // Lv. 2 Cryo-EM Dual Array: second cryo-cyan tabletop microscope barrel + glowing desk edge trim
+      const arm2 = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.024, 0.22, 10), metalMat);
+      arm2.position.set(0.04, tblH + 0.14, -0.05);
       arm2.rotation.x = 0.35;
       micro.add(arm2);
 
       const cryoLens = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.045, 0.036, 0.08, 12),
+        new THREE.CylinderGeometry(0.038, 0.03, 0.072, 12),
         new THREE.MeshStandardMaterial({
           color: "#38bdf8",
           emissive: "#0ea5e9",
           emissiveIntensity: 1.05
         })
       );
-      cryoLens.position.set(0.09, 0.76, 0.02);
+      cryoLens.position.set(0.04, tblH + 0.18, 0.02);
       cryoLens.rotation.x = 0.35;
       micro.add(cryoLens);
 
       const rim = new THREE.Mesh(
-        new THREE.BoxGeometry(0.68, 0.014, 0.016),
+        new THREE.BoxGeometry(tblW, 0.012, 0.014),
         new THREE.MeshStandardMaterial({ color: "#38bdf8", emissive: "#38bdf8", emissiveIntensity: 0.95 })
       );
-      rim.position.set(0, 0.59, 0.185);
+      rim.position.set(0, tblH + 0.018, tblD / 2);
       micro.add(rim);
     }
 
@@ -1661,18 +1720,39 @@ export class SimsFurniture3D {
     harv.position.set(pos.x, pos.y, pos.z);
     harv.rotation.y = pos.yaw;
 
-    const col = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, 0.62, 8), stoneMat);
-    col.position.y = 0.31;
-    col.castShadow = true;
-    harv.add(col);
+    // Sleek 4-leg architectural compute workbench holding the miniature tabletop ALCH crystal core!
+    const tblW = 0.74;
+    const tblD = 0.44;
+    const tblH = 0.54;
+    const topSlab = new THREE.Mesh(new THREE.BoxGeometry(tblW, 0.036, tblD), stoneMat);
+    topSlab.position.y = tblH;
+    topSlab.castShadow = true;
+    topSlab.receiveShadow = true;
+    harv.add(topSlab);
+    for (const [lx, lz] of [
+      [-tblW * 0.44, -tblD * 0.4],
+      [tblW * 0.44, -tblD * 0.4],
+      [-tblW * 0.44, tblD * 0.4],
+      [tblW * 0.44, tblD * 0.4]
+    ] as const) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.014, tblH, 10), metalMat);
+      leg.position.set(lx, tblH / 2, lz);
+      leg.castShadow = true;
+      harv.add(leg);
+    }
 
-    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.016, 8, 24), metalMat);
+    // Compact tabletop induction cradle + hovering crystal harvester
+    const cradle = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.17, 0.06, 16), metalMat);
+    cradle.position.y = tblH + 0.048;
+    harv.add(cradle);
+
+    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.012, 8, 24), metalMat);
     collar.rotation.x = Math.PI / 2;
-    collar.position.y = 0.63;
+    collar.position.y = tblH + 0.085;
     harv.add(collar);
 
     const crystal = new THREE.Mesh(
-      new THREE.OctahedronGeometry(level >= 3 ? 0.13 : 0.11, 0),
+      new THREE.OctahedronGeometry(level >= 3 ? 0.11 : 0.095, 0),
       new THREE.MeshStandardMaterial({
         color: level >= 3 ? "#a5b4fc" : "#818cf8",
         emissive: "#6366f1",
@@ -1681,7 +1761,7 @@ export class SimsFurniture3D {
         metalness: 0.45
       })
     );
-    crystal.position.y = 0.86;
+    crystal.position.y = 0.84;
     harv.add(crystal);
     this.harvesterRotor = crystal;
 
@@ -1752,13 +1832,29 @@ export class SimsFurniture3D {
   private buildPetUpgrade(level: StationUpgradeLevel) {
     this.disposeObjectChildren(this.petUpgradeGroup);
     this.petStarToy = null;
-    if (level < 2) return;
 
     const { stoneMat, metalMat, glassMat } = this.makeBaseMaterials();
     const pos = this.getPlacedCoords("pet");
     const g = new THREE.Group();
     g.position.set(pos.x, pos.y, pos.z);
     g.rotation.y = pos.yaw;
+
+    // Lv. 1+ Cozy Woven Pet Rug & Porcelain Treat Bowl so Pet Sanctuary feels homely right away!
+    const matDisc = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.42, 0.44, 0.018, 24),
+      new THREE.MeshStandardMaterial({ color: "#fdf2f8", roughness: 0.88 })
+    );
+    matDisc.position.y = 0.009;
+    matDisc.receiveShadow = true;
+    g.add(matDisc);
+
+    if (level < 2) {
+      const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.068, 0.045, 14), stoneMat);
+      bowl.position.set(0.24, 0.025, 0.1);
+      g.add(bowl);
+      this.petUpgradeGroup.add(g);
+      return;
+    }
 
     // Lv. 2 Plush Cloud Pet Bed + Twin Ceramic Bowls
     const bedRim = new THREE.Mesh(
@@ -1832,7 +1928,6 @@ export class SimsFurniture3D {
   private buildBuilderUpgrade(level: StationUpgradeLevel) {
     this.disposeObjectChildren(this.builderUpgradeGroup);
     this.builderHoloTown = null;
-    if (level < 2) return;
 
     const { stoneMat, metalMat, glassMat } = this.makeBaseMaterials();
     const pos = this.getPlacedCoords("builder");
@@ -1840,29 +1935,49 @@ export class SimsFurniture3D {
     g.position.set(pos.x, pos.y, pos.z);
     g.rotation.y = pos.yaw;
 
-    // Lv. 2 Frosted-Glass Architect Drafting Table + Glowing Blueprint Tablet
-    for (const lx of [-0.26, 0.26]) {
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.54, 0.28), metalMat);
-      leg.position.set(lx, 0.27, 0);
+    // Lv. 1+ Sleek 4-Leg Architect Drafting Table + Blueprint Sheet + Miniature Tabletop Model!
+    const tblW = 0.74;
+    const tblD = 0.42;
+    const tblH = 0.54;
+    for (const [lx, lz] of [
+      [-tblW * 0.44, -tblD * 0.4],
+      [tblW * 0.44, -tblD * 0.4],
+      [-tblW * 0.44, tblD * 0.4],
+      [tblW * 0.44, tblD * 0.4]
+    ] as const) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.013, tblH, 10), metalMat);
+      leg.position.set(lx, tblH / 2, lz);
       leg.castShadow = true;
       g.add(leg);
     }
-    const tabletop = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.032, 0.36), glassMat);
-    tabletop.position.y = 0.55;
+    const tabletop = new THREE.Mesh(
+      new THREE.BoxGeometry(tblW, 0.032, tblD),
+      level >= 2 ? glassMat : stoneMat
+    );
+    tabletop.position.y = tblH;
+    tabletop.castShadow = true;
     g.add(tabletop);
+
     const bp = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.5, 0.26),
+      new THREE.PlaneGeometry(0.5, 0.28),
       new THREE.MeshStandardMaterial({
-        color: "#bae6fd",
+        color: level >= 2 ? "#bae6fd" : "#e0f2fe",
         emissive: "#38bdf8",
-        emissiveIntensity: 0.72,
+        emissiveIntensity: level >= 2 ? 0.72 : 0.24,
         transparent: true,
-        opacity: 0.85
+        opacity: 0.88
       })
     );
     bp.rotation.x = -Math.PI / 2;
-    bp.position.y = 0.57;
+    bp.position.y = tblH + 0.02;
     g.add(bp);
+
+    if (level === 1) {
+      // Tiny tabletop architectural scale house model on the drafting board!
+      const miniModel = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.075, 0.09), stoneMat);
+      miniModel.position.set(0.16, tblH + 0.056, -0.04);
+      g.add(miniModel);
+    }
 
     if (level >= 3) {
       // Lv. 3 Floating Spinning 3D Miniature Holographic Alchemia Town!
@@ -1895,6 +2010,67 @@ export class SimsFurniture3D {
     }
 
     this.builderUpgradeGroup.add(g);
+  }
+
+  private buildConsoleStation() {
+    this.disposeObjectChildren(this.consoleStationGroup);
+    const { metalMat, glassMat } = this.makeBaseMaterials();
+    const pos = this.getPlacedCoords("console");
+    const g = new THREE.Group();
+    g.position.set(pos.x, pos.y, pos.z);
+    g.rotation.y = pos.yaw;
+
+    // Sleek Minimalist Architect Profile Study Desk with curved glass screen & warm desk lamp!
+    const tblW = 0.72;
+    const tblD = 0.42;
+    const tblH = 0.54;
+    const woodTop = new THREE.Mesh(
+      new THREE.BoxGeometry(tblW, 0.034, tblD),
+      new THREE.MeshStandardMaterial({ color: "#e8dfd1", roughness: 0.46 })
+    );
+    woodTop.position.y = tblH;
+    woodTop.castShadow = true;
+    woodTop.receiveShadow = true;
+    g.add(woodTop);
+
+    for (const [lx, lz] of [
+      [-tblW * 0.44, -tblD * 0.4],
+      [tblW * 0.44, -tblD * 0.4],
+      [-tblW * 0.44, tblD * 0.4],
+      [tblW * 0.44, tblD * 0.4]
+    ] as const) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.013, tblH, 10), metalMat);
+      leg.position.set(lx, tblH / 2, lz);
+      leg.castShadow = true;
+      g.add(leg);
+    }
+
+    // Minimalist brushed-silver monitor stand + glowing screen
+    const stand = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.14, 0.04), metalMat);
+    stand.position.set(-0.04, tblH + 0.08, -0.09);
+    const screen = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.2, 0.016), glassMat);
+    screen.position.set(-0.04, tblH + 0.19, -0.08);
+    const screenGlow = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.28, 0.16),
+      new THREE.MeshStandardMaterial({
+        color: "#ddd6fe",
+        emissive: "#8b5cf6",
+        emissiveIntensity: 0.52
+      })
+    );
+    screenGlow.position.set(-0.04, tblH + 0.19, -0.07);
+    const keyboard = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.012, 0.085), metalMat);
+    keyboard.position.set(-0.04, tblH + 0.024, 0.06);
+    const lampStem = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.012, 0.22, 8), metalMat);
+    lampStem.position.set(0.24, tblH + 0.12, -0.06);
+    const lampBulb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.045, 10, 10),
+      new THREE.MeshStandardMaterial({ color: "#fffbeb", emissive: "#fde68a", emissiveIntensity: 0.9 })
+    );
+    lampBulb.position.set(0.24, tblH + 0.24, -0.06);
+    g.add(stand, screen, screenGlow, keyboard, lampStem, lampBulb);
+
+    this.consoleStationGroup.add(g);
   }
 
   private buildLoungeUpgrade(level: StationUpgradeLevel) {

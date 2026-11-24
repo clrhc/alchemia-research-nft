@@ -335,9 +335,30 @@ export class NeighborhoodWorld3D {
       metalness: 0.35
     });
 
-    // Wide Sunlit Botanical Meadow Valley Parkland Terrain
+    // Wide Sunlit Botanical Meadow Valley Parkland Terrain with clean rectangular
+    // architectural foundation cutout under Plot #1 so the sunken B1 Basement opens cleanly!
+    const meadowShape = new THREE.Shape();
+    meadowShape.absarc(0, 0, 86, 0, Math.PI * 2, false);
+    const basementCut = 3.5;
+    const holePath = new THREE.Path();
+    holePath.moveTo(-basementCut, -basementCut);
+    holePath.lineTo(basementCut, -basementCut);
+    holePath.lineTo(basementCut, basementCut);
+    holePath.lineTo(-basementCut, basementCut);
+    holePath.closePath();
+    meadowShape.holes.push(holePath);
+
+    const groundGeo = new THREE.ShapeGeometry(meadowShape, 48);
+    // Normalize ShapeGeometry UVs from world [-86..86] to [0..1] so groundTex matches CircleGeometry seamlessly!
+    const uvAttr = groundGeo.attributes.uv as THREE.BufferAttribute;
+    const posAttr = groundGeo.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < posAttr.count; i++) {
+      uvAttr.setXY(i, posAttr.getX(i) / 172 + 0.5, posAttr.getY(i) / 172 + 0.5);
+    }
+    uvAttr.needsUpdate = true;
+
     const ground = new THREE.Mesh(
-      new THREE.CircleGeometry(86, 72),
+      groundGeo,
       new THREE.MeshStandardMaterial({
         map: this.groundTex,
         roughness: 0.9,

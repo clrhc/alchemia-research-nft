@@ -7,9 +7,11 @@ import { PERSONALITY_TRAITS, type PersonalityTraitId } from "./characterConfig";
 import {
   EXTRA_ROOM_DEFS,
   WALL_STYLES,
+  formatFloorLabel,
   sanitizeCustomLayout,
   type CustomLayoutMap,
   type ExtraRoomId,
+  type FloorNumber,
   type HouseFloorCount,
   type HouseSizeLevel,
   type MovableItemId,
@@ -42,6 +44,7 @@ export interface LabDecorConfig {
   stationUpgrades: StationUpgradesMap;
   houseSize: HouseSizeLevel;
   houseFloors: HouseFloorCount;
+  hasBasement: boolean;
   wallStyle: WallStyleId;
   extraRooms: ExtraRoomId[];
   customLayout: CustomLayoutMap;
@@ -628,17 +631,18 @@ const memoryDecorMap = new Map<number, LabDecorConfig>();
 
 export function defaultLabDecor(): LabDecorConfig {
   return {
-    floorStyle: "terrazzo",
+    floorStyle: "oak",
     patioDecor: "bonsai",
-    seatingStyle: "bench",
+    seatingStyle: "plush-sofa",
     barStyle: "espresso",
     rugStyle: "cloud-rug",
     hobbyProp: "bookshelf",
-    plantPack: "minimal",
-    lightingFixture: "none",
+    plantPack: "monstera",
+    lightingFixture: "halo-ring",
     stationUpgrades: defaultStationUpgrades(),
     houseSize: 1,
-    houseFloors: 1,
+    houseFloors: 2,
+    hasBasement: true,
     wallStyle: "alabaster-glass",
     extraRooms: [],
     customLayout: {}
@@ -695,7 +699,8 @@ export function sanitizeLabDecor(raw?: Partial<LabDecorConfig> | null): LabDecor
       lounge: clampUpgradeLevel(up?.lounge)
     },
     houseSize: raw.houseSize === 3 || raw.houseSize === 2 ? raw.houseSize : 1,
-    houseFloors: raw.houseFloors === 3 || raw.houseFloors === 2 ? raw.houseFloors : 1,
+    houseFloors: raw.houseFloors === 3 ? 3 : raw.houseFloors === 1 ? 2 : 2,
+    hasBasement: typeof raw.hasBasement === "boolean" ? raw.hasBasement : true,
     wallStyle: WALL_STYLES.some((w) => w.id === raw.wallStyle)
       ? (raw.wallStyle as WallStyleId)
       : def.wallStyle,
@@ -734,7 +739,8 @@ export function deriveNeighborLabDecor(seed: string): LabDecorConfig {
       lounge: pickLevel()
     },
     houseSize: sizeRoll > 0.65 ? 3 : sizeRoll > 0.28 ? 2 : 1,
-    houseFloors: floorRoll > 0.72 ? 3 : floorRoll > 0.35 ? 2 : 1,
+    houseFloors: floorRoll > 0.62 ? 3 : 2,
+    hasBasement: true,
     wallStyle: pick(WALL_STYLES).id,
     extraRooms,
     customLayout: {}
@@ -745,7 +751,7 @@ export function randomizeLabDecor(
   keepUpgrades?: StationUpgradesMap,
   keepArchitecture?: Pick<
     LabDecorConfig,
-    "houseSize" | "houseFloors" | "extraRooms" | "customLayout"
+    "houseSize" | "houseFloors" | "hasBasement" | "extraRooms" | "customLayout"
   >
 ): LabDecorConfig {
   const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)];
@@ -764,7 +770,8 @@ export function randomizeLabDecor(
     lightingFixture: pick(activeLights).id,
     stationUpgrades: keepUpgrades ? { ...keepUpgrades } : defaultStationUpgrades(),
     houseSize: keepArchitecture?.houseSize ?? 1,
-    houseFloors: keepArchitecture?.houseFloors ?? 1,
+    houseFloors: keepArchitecture?.houseFloors ?? 2,
+    hasBasement: keepArchitecture?.hasBasement ?? true,
     wallStyle: pick(WALL_STYLES).id,
     extraRooms: keepArchitecture ? [...keepArchitecture.extraRooms] : [],
     customLayout: keepArchitecture ? { ...keepArchitecture.customLayout } : {}
@@ -777,7 +784,7 @@ export function moveItemInDecor(
   x: number,
   z: number,
   yaw: number,
-  floor: 1 | 2 | 3
+  floor: FloorNumber
 ): LabDecorConfig {
   return {
     ...decor,
@@ -1135,8 +1142,9 @@ export function getSimsPieActions(
   options?: {
     petSleeping?: boolean;
     standalone?: boolean;
-    currentFloor?: number;
+    currentFloor?: FloorNumber;
     maxFloors?: number;
+    hasBasement?: boolean;
     gardenPlotStatus?: "empty" | "growing" | "ready";
   }
 ): SimsPieAction[] {
@@ -1227,24 +1235,25 @@ export function getSimsPieActions(
       ];
     }
     case "stairs": {
-      const cur = options?.currentFloor ?? 1;
-      const max = options?.maxFloors ?? 2;
-      const nextUp = Math.min(max, cur + 1);
-      const nextDown = Math.max(1, cur - 1);
+      const cur = (options?.currentFloor ?? 1) as FloorNumber;
+      const max = (options?.maxFloors ?? 2) as FloorNumber;
+      const min: FloorNumber = options?.hasBasement === false ? 1 : 0;
+      const nextUp = Math.min(max, cur + 1) as FloorNumber;
+      const nextDown = Math.max(min, cur - 1) as FloorNumber;
       return [
         {
           id: "floor-up",
-          label: cur < max ? `Go to ${nextUp}F` : `Top Floor (${max}F)`,
+          label: cur < max ? `Walk Up to ${formatFloorLabel(nextUp)}` : `Top Floor (${formatFloorLabel(max)})`,
           sublabel: cur < max ? "Upstairs" : "Highest floor",
           accent: "#38bdf8"
         },
         {
           id: "floor-down",
-          label: cur > 1 ? `Go to ${nextDown}F` : "Ground Floor (1F)",
-          sublabel: cur > 1 ? "Downstairs" : "Main atrium",
+          label: cur > min ? `Walk Down to ${formatFloorLabel(nextDown)}` : `Basement (${formatFloorLabel(min)})`,
+          sublabel: cur > min ? (nextDown === 0 ? "Basement" : "Downstairs") : "Lowest floor",
           accent: "#64748b"
         },
-        { id: "open-expand", label: "Add Floors", sublabel: "1F / 2F / 3F", accent: "#10b981" }
+        { id: "open-expand", label: "Expand Floors", sublabel: "B1 / 1F / 2F / 3F", accent: "#10b981" }
       ];
     }
     case "garden-plot": {

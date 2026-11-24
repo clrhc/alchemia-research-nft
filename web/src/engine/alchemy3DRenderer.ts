@@ -18,6 +18,7 @@ import { createInitialGardenState, type GardenWorldState } from "./gardenState";
 import { HomeArchitecture3D } from "./homeArchitecture3D";
 import {
   clampPlacementPoint,
+  evaluateStairWalk,
   findNearestStationWithLayout,
   getGroundElevationForFloor,
   getUpperFloorY,
@@ -224,9 +225,16 @@ export class Alchemy3DRenderer {
 
   private rootGroup = new THREE.Group();
   private dynamicGroup = new THREE.Group();
+  /** Diorama architectural plinth, water pool & colonnade fins (visible in Mint/Gallery, hidden in walkable architect house) */
+  private pavilionGroup = new THREE.Group();
+  /** Seed-generated borosilicate NFT apparatus & miniature wings (full 1.0x in Mint/Gallery; compact 0.38x on Center Display Table in Walk Mode!) */
+  private nftTabletopGroup = new THREE.Group();
   private previewGhostGroup = new THREE.Group();
   private atmosphereGroup = new THREE.Group();
   private walkCampusGroup = new THREE.Group();
+  private shadowFloorMesh: THREE.Mesh | null = null;
+  private blueprintPlaneMesh: THREE.Mesh | null = null;
+  private aoDiscMesh: THREE.Mesh | null = null;
   private walkFloorPlane: THREE.Mesh | null = null;
   private diegeticMonitors: DiegeticLabMonitors3D | null = null;
   private simsFurniture: SimsFurniture3D | null = null;
@@ -294,6 +302,7 @@ export class Alchemy3DRenderer {
   private onNearStationChange?: (stationId: LabStationId | null) => void;
   private onStationArrived?: (stationId: LabStationId) => void;
   private onSimsObjectClick?: (target: SimsObjectTarget, screenX: number, screenY: number) => void;
+  private onActiveFloorChange?: (floor: FloorNumber) => void;
   private followCameraInitialized = false;
   private tmpProj = new THREE.Vector3();
   private tmpCamFwd = new THREE.Vector3();
@@ -525,6 +534,7 @@ export class Alchemy3DRenderer {
     shadowFloor.rotation.x = -Math.PI / 2;
     shadowFloor.position.y = -0.012;
     shadowFloor.receiveShadow = true;
+    this.shadowFloorMesh = shadowFloor;
     this.scene.add(shadowFloor);
 
     // Architectural CAD Blueprint Drafting Sheet directly under the scale model
@@ -539,6 +549,7 @@ export class Alchemy3DRenderer {
     );
     blueprintPlane.rotation.x = -Math.PI / 2;
     blueprintPlane.position.y = -0.006;
+    this.blueprintPlaneMesh = blueprintPlane;
     this.scene.add(blueprintPlane);
 
     // Baked soft ambient occlusion shadow grounding the entire plinth
@@ -553,6 +564,7 @@ export class Alchemy3DRenderer {
     );
     aoDisc.rotation.x = -Math.PI / 2;
     aoDisc.position.y = -0.002;
+    this.aoDiscMesh = aoDisc;
     this.scene.add(aoDisc);
   }
 
@@ -582,12 +594,14 @@ export class Alchemy3DRenderer {
     onStationArrived?: (stationId: LabStationId) => void;
     onSimsObjectClick?: (target: SimsObjectTarget, screenX: number, screenY: number) => void;
     onPlaceMovedItem?: (itemId: MovableItemId, x: number, z: number, floor: FloorNumber) => void;
+    onActiveFloorChange?: (floor: FloorNumber) => void;
   }) {
     this.onWalkTelemetry = callbacks.onTelemetry;
     this.onNearStationChange = callbacks.onNearStationChange;
     this.onStationArrived = callbacks.onStationArrived;
     this.onSimsObjectClick = callbacks.onSimsObjectClick;
     this.onPlaceMovedItem = callbacks.onPlaceMovedItem;
+    this.onActiveFloorChange = callbacks.onActiveFloorChange;
   }
 
   public setControlsEnabled(enabled: boolean) {
@@ -611,7 +625,8 @@ export class Alchemy3DRenderer {
   }
 
   public setActiveFloor(floor: FloorNumber) {
-    const targetFloor = Math.max(1, Math.min(this.labDecor.houseFloors, floor)) as FloorNumber;
+    const minFloor: FloorNumber = this.labDecor.hasBasement ? 0 : 1;
+    const targetFloor = Math.max(minFloor, Math.min(this.labDecor.houseFloors, floor)) as FloorNumber;
     if (this.activeFloor === targetFloor) return;
     this.activeFloor = targetFloor;
     this.walkTarget = null;
@@ -619,16 +634,27 @@ export class Alchemy3DRenderer {
     this.charVz = 0;
     this.characterAvatar?.setPosture("stand");
 
-    if (targetFloor === 1) {
+    if (targetFloor === 0) {
+      // Step cleanly into the sunlit-lightwell B1 Architect Basement!
+      this.charX = 0.45;
+      this.charZ = -0.65;
+      this.charYaw = -0.55;
+    } else if (targetFloor === 1) {
       this.charX = 0;
       this.charZ = 1.48;
       this.charYaw = 0.24;
+    } else if (targetFloor === 2) {
+      // Step cleanly onto the 2F North Mezzanine Loft landing beside the top of the stairs!
+      this.charX = -1.65;
+      this.charZ = -2.75;
+      this.charYaw = 0.55;
     } else {
-      // Step cleanly onto the sunlit 2F/3F loft landing beside the spiral staircase!
-      this.charX = -2.35;
-      this.charZ = -2.18;
+      // Step cleanly onto the 3F Starlight Sky Penthouse deck!
+      this.charX = -2.25;
+      this.charZ = -2.35;
       this.charYaw = 0.72;
     }
+    this.applyFloorCutawayVisibility();
     this.charY = this.getWalkGroundY(this.charX, this.charZ);
     if (this.characterAvatar) {
       this.characterAvatar.root.position.set(this.charX, this.charY, this.charZ);
@@ -643,6 +669,86 @@ export class Alchemy3DRenderer {
     this.followCameraInitialized = false;
     if (!this.creatorCameraMode && this.cameraMode === "follow") {
       this.frameWalkCamera();
+    }
+  }
+
+  /**
+   * Coordinates Sims-style dollhouse cutaway visibility across B1 Basement, 1F, 2F & 3F,
+   * and scales the NFT apparatus cleanly onto the 1F Center Architect Display Table in Walk Mode!
+   */
+  private applyWalkModeScaleLayout() {
+    if (!this.walkMode) {
+      this.pavilionGroup.visible = true;
+      this.nftTabletopGroup.visible = true;
+      this.nftTabletopGroup.scale.setScalar(1);
+      this.nftTabletopGroup.position.set(0, 0, 0);
+      if (this.blueprintPlaneMesh) this.blueprintPlaneMesh.visible = true;
+      if (this.aoDiscMesh) this.aoDiscMesh.visible = true;
+      if (this.shadowFloorMesh) this.shadowFloorMesh.visible = true;
+      for (const w of this.builtWingGroups) {
+        if (w.sectorId !== 5) w.group.position.y = 0.23;
+      }
+      for (const c of this.companions) {
+        c.group.visible = true;
+      }
+      return;
+    }
+
+    // Walkable Modern Architect House Mode:
+    // Hide the giant Mint/Gallery plinth/water moat/colonnade so the interior house floor is wide open & navigable!
+    this.pavilionGroup.visible = false;
+    if (this.blueprintPlaneMesh) this.blueprintPlaneMesh.visible = false;
+    if (this.aoDiscMesh) this.aoDiscMesh.visible = false;
+
+    // Scale the seed-generated NFT vessel, liquid, protein helix & built wings cleanly onto the
+    // Center Architect Display Table (centered at (0, -0.35), tabletop height y = 0.68m)!
+    const tabletopScale = 0.38;
+    this.nftTabletopGroup.scale.setScalar(tabletopScale);
+    this.nftTabletopGroup.position.set(0, 0.68 - 0.52 * tabletopScale, -0.35);
+    for (const w of this.builtWingGroups) {
+      if (w.sectorId !== 5) w.group.position.y = 0.52;
+    }
+
+    // Position the 3D Pet Companions naturally on the real 1F interior house floor near Pet Sanctuary!
+    const petSpot = resolveItemPlacement("pet", this.labDecor.customLayout);
+    const petFloorY = getGroundElevationForFloor(petSpot.floor, petSpot.x, petSpot.z, this.labDecor.houseSize);
+    this.companions.forEach((c, idx) => {
+      const ox = idx === 0 ? -0.22 : 0.28;
+      const oz = idx === 0 ? -0.18 : 0.14;
+      c.baseY = petFloorY + 0.015;
+      c.homePos.set(petSpot.x + ox, c.baseY, petSpot.z + oz);
+      c.group.position.set(c.homePos.x, c.baseY, c.homePos.z);
+    });
+
+    this.applyFloorCutawayVisibility();
+  }
+
+  private applyFloorCutawayVisibility() {
+    if (!this.walkMode) return;
+    const f = this.activeFloor;
+    this.homeArchitecture?.setViewedFloor(f);
+    this.simsFurniture?.setViewedFloor(f);
+    this.nftTabletopGroup.visible = f >= 1;
+    if (this.shadowFloorMesh) this.shadowFloorMesh.visible = f !== 0;
+
+    const petFloor = resolveItemPlacement("pet", this.labDecor.customLayout).floor;
+    for (const c of this.companions) {
+      c.group.visible = f === 0 ? petFloor === 0 : petFloor >= 1 && petFloor <= f;
+    }
+    if (this.visitingHostAvatar) {
+      this.visitingHostAvatar.root.visible = f >= 1;
+    }
+
+    for (const st of LAB_STATIONS) {
+      const p = resolveItemPlacement(st.id, this.labDecor.customLayout);
+      const show = f === 0 ? p.floor === 0 : p.floor >= 1 && p.floor <= f;
+      this.diegeticMonitors?.setStationVisibility(st.id, show);
+      const b = this.stationBeacons.get(st.id);
+      if (b) {
+        b.ring.visible = show && !this.creatorCameraMode;
+        b.disc.visible = show && !this.creatorCameraMode;
+        b.pillar.visible = show && !this.creatorCameraMode;
+      }
     }
   }
 
@@ -700,9 +806,14 @@ export class Alchemy3DRenderer {
     }
     if (this.activeFloor > this.labDecor.houseFloors) {
       this.setActiveFloor(this.labDecor.houseFloors);
+    } else if (this.activeFloor === 0 && !this.labDecor.hasBasement) {
+      this.setActiveFloor(1);
     }
     this.townGardens?.syncGardenState(this.gardenState, this.labDecor.houseSize);
     this.syncCustomLayoutPositions();
+    if (this.walkMode) {
+      this.applyWalkModeScaleLayout();
+    }
 
     if (this.simsFurniture) {
       this.simsFurniture.updateFurnishings(this.labDecor, this.traits.palette.liquidMid);
@@ -785,7 +896,13 @@ export class Alchemy3DRenderer {
 
   public performSimsAction(req: SimsActionRequest) {
     if (!this.walkMode || this.creatorCameraMode) return;
-    if (req.floor && req.floor !== this.activeFloor && req.floor <= this.labDecor.houseFloors) {
+    const minF: FloorNumber = this.labDecor.hasBasement ? 0 : 1;
+    if (
+      req.floor !== undefined &&
+      req.floor !== this.activeFloor &&
+      req.floor >= minF &&
+      req.floor <= this.labDecor.houseFloors
+    ) {
       this.setActiveFloor(req.floor);
     }
     this.characterAvatar?.setPosture("stand");
@@ -897,6 +1014,11 @@ export class Alchemy3DRenderer {
       this.controls.maxDistance = 62.0;
       this.controls.maxPolarAngle = Math.PI * 0.486;
       this.buildWalkCampus3D();
+      this.applyWalkModeScaleLayout();
+      this.charY = this.getWalkGroundY(this.charX, this.charZ);
+      if (this.characterAvatar) {
+        this.characterAvatar.root.position.set(this.charX, this.charY, this.charZ);
+      }
       this.applyLightingMood();
       this.followCameraInitialized = false;
       if (!this.creatorCameraMode) {
@@ -908,6 +1030,7 @@ export class Alchemy3DRenderer {
       this.controls.autoRotate = this.autoRotateDesired;
       this.disposeWalkCampus3D();
       this.disposeCharacterAvatar();
+      this.applyWalkModeScaleLayout();
       this.applyLightingMood();
       this.walkTarget = null;
       this.lastNearStation = null;
@@ -1240,7 +1363,8 @@ export class Alchemy3DRenderer {
     const st = LAB_STATION_BY_ID[stationId];
     if (!st) return;
     const p = resolveItemPlacement(stationId, this.labDecor.customLayout);
-    if (p.floor !== this.activeFloor && p.floor <= this.labDecor.houseFloors) {
+    const minF: FloorNumber = this.labDecor.hasBasement ? 0 : 1;
+    if (p.floor !== this.activeFloor && p.floor >= minF && p.floor <= this.labDecor.houseFloors) {
       this.setActiveFloor(p.floor);
     }
     this.walkToPoint(p.x, p.z, stationId);
@@ -1251,49 +1375,93 @@ export class Alchemy3DRenderer {
   }
 
   private getWalkGroundY(x: number, z: number): number {
-    if (this.activeFloor >= 2) {
-      return getUpperFloorY(this.activeFloor);
-    }
-    return getGroundElevationForFloor(1, x, z, this.labDecor.houseSize);
+    const st = evaluateStairWalk(
+      x,
+      z,
+      this.activeFloor,
+      this.labDecor.houseFloors,
+      this.labDecor.hasBasement
+    );
+    if (st.onStairs) return st.y;
+    return getGroundElevationForFloor(this.activeFloor, x, z, this.labDecor.houseSize);
   }
 
   private resolveWalkObstacles(x: number, z: number): { x: number; z: number } {
-    // On 2F/3F C-shaped cutaway loft balconies, keep smoothly on the elevated deck & clear of the central atrium opening!
-    if (this.activeFloor >= 2) {
-      let nx = Math.max(-3.32, Math.min(3.32, x));
-      let nz = Math.max(-3.32, Math.min(1.58, z));
-      if (Math.abs(nx) < 1.96 && nz > -1.96) {
-        const distBack = Math.abs(nz - -1.96);
-        const distSide = 1.96 - Math.abs(nx);
-        if (distBack <= distSide) {
-          nz = -1.96;
-        } else {
-          nx = nx < 0 ? -1.96 : 1.96;
-        }
+    // B1 Underground Architect Basement: open navigable concrete floor + East stairs leading up to 1F!
+    if (this.activeFloor === 0) {
+      const nx = Math.max(-3.16, Math.min(3.16, x));
+      const nz = Math.max(-3.16, Math.min(3.16, z));
+      return { x: nx, z: nz };
+    }
+
+    // 2F L-shaped Architect Mezzanine Loft (North Gallery + West Wing + optional 2F->3F switchback stairs!)
+    if (this.activeFloor === 2) {
+      let nx = Math.max(-3.3, Math.min(3.3, x));
+      let nz = Math.max(-3.3, Math.min(1.42, z));
+      const onSwitchback =
+        this.labDecor.houseFloors >= 3 &&
+        nx >= -2.18 &&
+        nx <= -1.22 &&
+        nz >= -2.85 &&
+        nz <= -0.25;
+      if (!onSwitchback && nx > -1.78 && nz > -1.82) {
+        const distBack = Math.abs(nz - -1.82);
+        const distWest = Math.abs(nx - -1.78);
+        if (distBack <= distWest) nz = -1.82;
+        else nx = -1.78;
       }
       return { x: nx, z: nz };
     }
 
+    // 3F Starlight Sky Penthouse C-shaped rooftop deck
+    if (this.activeFloor === 3) {
+      let nx = Math.max(-3.3, Math.min(3.3, x));
+      let nz = Math.max(-3.3, Math.min(1.42, z));
+      const onSwitchback = nx >= -2.18 && nx <= -1.22 && nz >= -2.85 && nz <= -0.25;
+      if (!onSwitchback && Math.abs(nx) < 1.68 && nz > -1.72) {
+        const distBack = Math.abs(nz - -1.72);
+        const distSide = 1.68 - Math.abs(nx);
+        if (distBack <= distSide) nz = -1.72;
+        else nx = nx < 0 ? -1.68 : 1.68;
+      }
+      return { x: nx, z: nz };
+    }
+
+    // 1F Main Architect Living & Lab Atrium + Surrounding Alchemia Town Neighborhood!
     const limit = this.neighborhoodWorld ? NEIGHBORHOOD_WALK_LIMIT : 4.2;
     let nx = Math.max(-limit, Math.min(limit, x));
     let nz = Math.max(-limit, Math.min(limit, z));
 
-    // Keep smoothly outside the central borosilicate glass reactor pedestal
-    const centerR = Math.hypot(nx, nz);
-    const minCenterR = 0.88;
-    if (centerR < minCenterR) {
-      const ang = centerR > 0.001 ? Math.atan2(nz, nx) : Math.PI * 0.5;
-      nx = Math.cos(ang) * minCenterR;
-      nz = Math.sin(ang) * minCenterR;
+    // Smooth rectangular keep-out around the Center Architect NFT Display Island (centered at (0, -0.35), 1.84m × 1.32m)
+    const tblHalfX = 1.06;
+    const tblMinZ = -1.16;
+    const tblMaxZ = 0.46;
+    if (nx > -tblHalfX && nx < tblHalfX && nz > tblMinZ && nz < tblMaxZ) {
+      const dLeft = nx - -tblHalfX;
+      const dRight = tblHalfX - nx;
+      const dNorth = nz - tblMinZ;
+      const dSouth = tblMaxZ - nz;
+      const minD = Math.min(dLeft, dRight, dNorth, dSouth);
+      if (minD === dSouth) nz = tblMaxZ;
+      else if (minD === dNorth) nz = tblMinZ;
+      else if (minD === dLeft) nx = -tblHalfX;
+      else nx = tblHalfX;
     }
 
-    // Soft circular colliders around solid centers of built wings & neighbor pavilions
-    const mask = this.impact.sectorsMask ?? 0;
+    // Protect stair side glass balustrades so characters enter steps cleanly from the open landing (z = -0.15)
+    // rather than clipping sideways through a glass stairwell railing!
+    if (this.labDecor.hasBasement && nz > -2.92 && nz < -0.35) {
+      if (this.charX < 2.15 && nx >= 2.12 && nx < 2.55) {
+        nx = 2.12;
+      }
+    }
+    if (this.labDecor.houseFloors >= 2 && nz > -2.92 && nz < -0.35) {
+      if (this.charX > -2.15 && nx <= -2.12 && nx > -2.55) {
+        nx = -2.12;
+      }
+    }
+
     const obstacles: Array<[number, number, number]> = [];
-    if (hasSector(mask, 0)) obstacles.push([-2.35, -1.45, 0.7]);
-    if (hasSector(mask, 1)) obstacles.push([2.42, 0.2, 0.72]);
-    if (hasSector(mask, 2)) obstacles.push([-2.22, 1.62, 0.78]);
-    if (hasSector(mask, 4)) obstacles.push([2.12, -1.62, 0.58]);
     if (this.neighborhoodWorld) {
       obstacles.push(...this.neighborhoodWorld.getNeighborObstacles());
     }
@@ -1321,30 +1489,8 @@ export class Alchemy3DRenderer {
   private buildWalkCampus3D() {
     this.disposeWalkCampus3D();
 
-    const alabasterMat = new THREE.MeshStandardMaterial({
-      map: this.terrazzoTex,
-      color: "#f6f8fc",
-      roughness: 0.48,
-      metalness: 0.04
-    });
-
-    // Three minimalist alabaster footbridges (East, West, North) over the reflecting pool to match South steps
-    const bridgeDefs: Array<[number, number, number]> = [
-      [1.96, 0.14, 0],
-      [-1.96, 0.0, 0],
-      [0, -1.96, Math.PI / 2]
-    ];
-    for (const [bx, bz, rotY] of bridgeDefs) {
-      const bGeo = new THREE.BoxGeometry(0.58, 0.08, 0.72);
-      const bMesh = new THREE.Mesh(bGeo, alabasterMat);
-      bMesh.position.set(bx, 0.3, bz);
-      bMesh.rotation.y = rotY;
-      bMesh.castShadow = true;
-      bMesh.receiveShadow = true;
-      this.walkCampusGroup.add(bMesh);
-    }
-
-    // Expandable Multi-Story Homely Estate Architecture (Lv.1-3 House Size, 1F/2F/3F Floors & 6 Cozy Rooms!)
+    // Expandable Multi-Story Architect House (B1 Basement, 1F Living Atrium + Center Display Table,
+    // 2F Mezzanine Loft, 3F Sky Penthouse, Real Walkable Floating Stairs & 6 Cozy Rooms!)
     this.homeArchitecture = new HomeArchitecture3D(this.terrazzoTex, this.titaniumTex);
     this.homeArchitecture.updateArchitecture(this.labDecor, this.traits.palette.liquidMid);
     this.walkCampusGroup.add(this.homeArchitecture.group);
@@ -1895,8 +2041,13 @@ export class Alchemy3DRenderer {
       this.desiredCamPos = target.clone().add(new THREE.Vector3(1.6, 1.15, 2.35));
       this.desiredCamTarget = target;
     } else if (preset === "molecule") {
-      this.desiredCamPos = new THREE.Vector3(2.4, 3.65, 2.7);
-      this.desiredCamTarget = new THREE.Vector3(0, 3.05, 0);
+      if (this.walkMode) {
+        this.desiredCamPos = new THREE.Vector3(1.15, 2.05, 0.95);
+        this.desiredCamTarget = new THREE.Vector3(0, 1.48, -0.35);
+      } else {
+        this.desiredCamPos = new THREE.Vector3(2.4, 3.65, 2.7);
+        this.desiredCamTarget = new THREE.Vector3(0, 3.05, 0);
+      }
     } else {
       this.desiredCamPos = new THREE.Vector3(5.45, 4.3, 6.25);
       this.desiredCamTarget = new THREE.Vector3(0, 1.55, 0);
@@ -1941,8 +2092,9 @@ export class Alchemy3DRenderer {
       }
     }
 
-    const atomTargets = this.floatingAtoms.map((a) => a.group);
-    const hits = this.raycaster.intersectObjects(atomTargets, true);
+    const tabletopVisible = !this.walkMode || this.activeFloor >= 1;
+    const atomTargets = tabletopVisible ? this.floatingAtoms.map((a) => a.group) : [];
+    const hits = atomTargets.length > 0 ? this.raycaster.intersectObjects(atomTargets, true) : [];
     if (hits.length > 0) {
       let cur: THREE.Object3D | null = hits[0].object;
       while (cur && !atomTargets.includes(cur as THREE.Group)) cur = cur.parent;
@@ -1951,13 +2103,13 @@ export class Alchemy3DRenderer {
       return;
     }
     this.hoveredAtom = null;
-    const petTargets = this.companions.map((c) => c.group);
+    const petTargets = this.companions.filter((c) => c.group.visible).map((c) => c.group);
     const petHits = petTargets.length > 0 ? this.raycaster.intersectObjects(petTargets, true) : [];
     if (petHits.length > 0) {
       this.renderer.domElement.style.cursor = "pointer";
       return;
     }
-    const wingTargets = this.builtWingGroups.map((w) => w.group);
+    const wingTargets = tabletopVisible ? this.builtWingGroups.map((w) => w.group) : [];
     const wingHits = wingTargets.length > 0 ? this.raycaster.intersectObjects(wingTargets, true) : [];
     if (wingHits.length > 0) {
       if (this.walkHoverRing) this.walkHoverRing.visible = false;
@@ -1977,23 +2129,27 @@ export class Alchemy3DRenderer {
     if (this.walkMode && !this.creatorCameraMode) {
       const extraTargets: THREE.Object3D[] = [];
       if (this.characterAvatar) extraTargets.push(this.characterAvatar.root);
-      if (this.visitingHostAvatar) extraTargets.push(this.visitingHostAvatar.root);
+      if (this.visitingHostAvatar && this.visitingHostAvatar.root.visible) {
+        extraTargets.push(this.visitingHostAvatar.root);
+      }
       if (this.simsFurniture) extraTargets.push(...this.simsFurniture.getRaycastTargets());
       if (this.homeArchitecture) extraTargets.push(...this.homeArchitecture.getRaycastTargets());
-      if (this.townGardens) extraTargets.push(...this.townGardens.getRaycastTargets());
-      if (this.neighborhoodWorld) extraTargets.push(...this.neighborhoodWorld.getRaycastTargets());
-      if (this.heroVesselGroup) extraTargets.push(this.heroVesselGroup);
+      if (this.townGardens && this.activeFloor >= 1) extraTargets.push(...this.townGardens.getRaycastTargets());
+      if (this.neighborhoodWorld && this.activeFloor >= 1) {
+        extraTargets.push(...this.neighborhoodWorld.getRaycastTargets());
+      }
+      if (this.heroVesselGroup && tabletopVisible) extraTargets.push(this.heroVesselGroup);
       if (extraTargets.length > 0 && this.raycaster.intersectObjects(extraTargets, true).length > 0) {
         if (this.walkHoverRing) this.walkHoverRing.visible = false;
         this.renderer.domElement.style.cursor = "pointer";
         return;
       }
     }
-    // Show subtle architectural floor walk-target cursor ring on hover (supports 1F, 2F & 3F!)
+    // Show subtle architectural floor walk-target cursor ring on hover (supports B1, 1F, 2F & 3F!)
     if (this.walkMode && !this.creatorCameraMode && this.walkHoverRing) {
       let hitX: number | null = null;
       let hitZ: number | null = null;
-      if (this.activeFloor >= 2) {
+      if (this.activeFloor === 0 || this.activeFloor >= 2) {
         this.movePlane.constant = -getUpperFloorY(this.activeFloor);
         if (this.raycaster.ray.intersectPlane(this.movePlane, this.tmpMoveHit)) {
           hitX = this.tmpMoveHit.x;
@@ -2054,7 +2210,8 @@ export class Alchemy3DRenderer {
     }
 
     // 1. Did the user click directly on the 3D Cat or Dog?
-    const petTargets = this.companions.map((c) => c.group);
+    const tabletopVisible = !this.walkMode || this.activeFloor >= 1;
+    const petTargets = this.companions.filter((c) => c.group.visible).map((c) => c.group);
     if (petTargets.length > 0 && this.raycaster.intersectObjects(petTargets, true).length > 0) {
       if (this.walkMode && !this.creatorCameraMode && this.onSimsObjectClick) {
         const cPos = this.companions[0].group.position;
@@ -2145,7 +2302,7 @@ export class Alchemy3DRenderer {
       }
 
       // Interactive Home & Town Botanical Garden Beds, Glass Conservatory & Park Benches!
-      if (this.townGardens) {
+      if (this.townGardens && this.activeFloor >= 1) {
         const gHits = this.raycaster.intersectObjects(this.townGardens.getRaycastTargets(), true);
         if (gHits.length > 0) {
           let cur: THREE.Object3D | null = gHits[0].object;
@@ -2163,7 +2320,7 @@ export class Alchemy3DRenderer {
       }
 
       // Neighborhood Fountain, Neighbor NFT Labs & Neighbor NPC Researchers!
-      if (this.neighborhoodWorld) {
+      if (this.neighborhoodWorld && this.activeFloor >= 1) {
         const nHits = this.raycaster.intersectObjects(
           this.neighborhoodWorld.getRaycastTargets(),
           true
@@ -2186,8 +2343,8 @@ export class Alchemy3DRenderer {
 
     // 2. Did the user tap a floating 3D Proton / Atom? -> Pop it with combo chime!
     // (Checked before central glass vessel so Proton Catch clicks never get intercepted behind!)
-    const atomTargets = this.floatingAtoms.map((a) => a.group);
-    const hits = this.raycaster.intersectObjects(atomTargets, true);
+    const atomTargets = tabletopVisible ? this.floatingAtoms.map((a) => a.group) : [];
+    const hits = atomTargets.length > 0 ? this.raycaster.intersectObjects(atomTargets, true) : [];
     if (hits.length > 0) {
       const nowMs = performance.now();
       this.protonCombo = nowMs - this.lastProtonPopMs < 3500 ? Math.min(6, this.protonCombo + 1) : 1;
@@ -2208,16 +2365,17 @@ export class Alchemy3DRenderer {
       return;
     }
 
-    // 2b. Central Hero Borosilicate Glass Vessel -> Protein Folding Pie Menu!
+    // 2b. Central Hero Tabletop Borosilicate Glass Vessel -> Protein Folding Pie Menu!
     if (
       this.walkMode &&
+      tabletopVisible &&
       !this.creatorCameraMode &&
       this.onSimsObjectClick &&
       this.heroVesselGroup &&
       this.raycaster.intersectObject(this.heroVesselGroup, true).length > 0
     ) {
       this.onSimsObjectClick(
-        { kind: "flask", label: "Central Glass Reactor", worldX: 0, worldZ: 1.15 },
+        { kind: "flask", label: "Tabletop Alchemy Vessel", worldX: 0, worldZ: 0.78 },
         e.clientX - rect.left,
         e.clientY - rect.top
       );
@@ -2226,7 +2384,7 @@ export class Alchemy3DRenderer {
     }
 
     // 3. Did the user tap a built Sims-style 3D architectural room? -> Tactile room micro-reaction!
-    const wingTargets = this.builtWingGroups.map((w) => w.group);
+    const wingTargets = tabletopVisible ? this.builtWingGroups.map((w) => w.group) : [];
     const wingHits = wingTargets.length > 0 ? this.raycaster.intersectObjects(wingTargets, true) : [];
     if (wingHits.length > 0) {
       let cur: THREE.Object3D | null = wingHits[0].object;
@@ -2296,11 +2454,11 @@ export class Alchemy3DRenderer {
       }
     }
 
-    // 4. In Walk Mode: clicking any floor/terrace point (on 1F, 2F, or 3F!) walks your character smoothly there!
+    // 4. In Walk Mode: clicking any floor/terrace point (on B1, 1F, 2F, or 3F!) walks your character smoothly there!
     if (this.walkMode && !this.creatorCameraMode) {
       let hitX: number | null = null;
       let hitZ: number | null = null;
-      if (this.activeFloor >= 2) {
+      if (this.activeFloor === 0 || this.activeFloor >= 2) {
         this.movePlane.constant = -getUpperFloorY(this.activeFloor);
         if (this.raycaster.ray.intersectPlane(this.movePlane, this.tmpMoveHit)) {
           hitX = this.tmpMoveHit.x;
@@ -2946,13 +3104,14 @@ export class Alchemy3DRenderer {
   }
 
   private dropTreatCluster(nearPet: THREE.Vector3) {
-    // Drop 3 glowing crystalline elixir treats on the rotunda terrace for the pet to trot over and nibble!
+    // Drop 3 glowing crystalline elixir treats near the pet to trot over and nibble!
     const geo = new THREE.OctahedronGeometry(0.06, 0);
+    const treatY = this.walkMode ? 0.2 : 0.48;
     for (let i = 0; i < 3; i++) {
       const ang = Math.atan2(nearPet.z, nearPet.x) + (i - 1) * 0.42;
-      const rad = 0.96 + (i % 2) * 0.26;
-      const tx = Math.cos(ang) * rad;
-      const tz = Math.sin(ang) * rad;
+      const rad = this.walkMode ? 0.36 + (i % 2) * 0.16 : 0.96 + (i % 2) * 0.26;
+      const tx = this.walkMode ? nearPet.x + Math.cos(ang) * rad : Math.cos(ang) * rad;
+      const tz = this.walkMode ? nearPet.z + Math.sin(ang) * rad : Math.sin(ang) * rad;
       const mesh = new THREE.Mesh(
         geo,
         new THREE.MeshStandardMaterial({
@@ -2962,9 +3121,9 @@ export class Alchemy3DRenderer {
           roughness: 0.14
         })
       );
-      mesh.position.set(tx, 0.48, tz);
+      mesh.position.set(tx, treatY, tz);
       this.dynamicGroup.add(mesh);
-      this.treats.push({ mesh, pos: new THREE.Vector3(tx, 0.48, tz), eaten: false });
+      this.treats.push({ mesh, pos: new THREE.Vector3(tx, treatY, tz), eaten: false });
     }
   }
 
@@ -3197,6 +3356,8 @@ export class Alchemy3DRenderer {
 
   private clearDynamicGroup() {
     this.disposeObjectChildren(this.dynamicGroup);
+    this.pavilionGroup = new THREE.Group();
+    this.nftTabletopGroup = new THREE.Group();
     this.glowTextures.forEach((t) => t.dispose());
     this.glowTextures = [];
     this.bubbles = [];
@@ -3269,6 +3430,9 @@ export class Alchemy3DRenderer {
     this.scene.background = new THREE.Color(pal.bgBottom);
     this.scene.fog = new THREE.FogExp2(pal.bgBottom, 0.032);
 
+    this.dynamicGroup.add(this.pavilionGroup);
+    this.dynamicGroup.add(this.nftTabletopGroup);
+
     this.buildArchitecturalPavilion(tier);
     this.buildHeroGlassVesselAndLiquid();
     this.buildAtomicNucleusAndOrbitals(tier, rng);
@@ -3312,7 +3476,7 @@ export class Alchemy3DRenderer {
     this.shockwaveRing = new THREE.Mesh(new THREE.TorusGeometry(0.65, 0.018, 12, 64), swMat);
     this.shockwaveRing.rotation.x = Math.PI / 2;
     this.shockwaveRing.position.y = 0.52;
-    this.dynamicGroup.add(this.shockwaveRing);
+    this.nftTabletopGroup.add(this.shockwaveRing);
 
     // Zero-GC recycled reflecting-pool porcelain water ripple rings
     for (let w = 0; w < 3; w++) {
@@ -3325,9 +3489,11 @@ export class Alchemy3DRenderer {
       const rMesh = new THREE.Mesh(new THREE.RingGeometry(1.68, 1.72, 64), rMat);
       rMesh.rotation.x = -Math.PI / 2;
       rMesh.position.y = 0.258;
-      this.dynamicGroup.add(rMesh);
+      this.pavilionGroup.add(rMesh);
       this.waterRipples.push({ mesh: rMesh, life: 0 });
     }
+
+    this.applyWalkModeScaleLayout();
   }
 
   private addWingConduitPulse(startPos: THREE.Vector3, colorHex: string) {
@@ -3339,7 +3505,7 @@ export class Alchemy3DRenderer {
       new THREE.TubeGeometry(curve, 22, 0.012, 8, false),
       new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 0.34 })
     );
-    this.dynamicGroup.add(tube);
+    this.nftTabletopGroup.add(tube);
 
     const pulseGeo = new THREE.SphereGeometry(0.036, 10, 10);
     const pulseMat = new THREE.MeshStandardMaterial({
@@ -3350,7 +3516,7 @@ export class Alchemy3DRenderer {
     for (let k = 0; k < 2; k++) {
       const m = new THREE.Mesh(pulseGeo, pulseMat);
       m.add(this.makeGlowSprite(colorHex, 0.24, 0.68));
-      this.dynamicGroup.add(m);
+      this.nftTabletopGroup.add(m);
       this.wingConduits.push({ mesh: m, curve, t: k * 0.5, speed: 0.38 });
     }
   }
@@ -3392,11 +3558,11 @@ export class Alchemy3DRenderer {
     subBase.position.y = 0.06;
     subBase.castShadow = true;
     subBase.receiveShadow = true;
-    this.dynamicGroup.add(subBase);
+    this.pavilionGroup.add(subBase);
 
     const subEdges = new THREE.LineSegments(new THREE.EdgesGeometry(subBaseGeo), edgeLineMat);
     subEdges.position.copy(subBase.position);
-    this.dynamicGroup.add(subEdges);
+    this.pavilionGroup.add(subEdges);
 
     // Upper architectural terrace slab with recessed perimeter shadow groove
     const mainSlabGeo = new THREE.BoxGeometry(4.45, 0.11, 4.45);
@@ -3404,11 +3570,11 @@ export class Alchemy3DRenderer {
     mainSlab.position.y = 0.175;
     mainSlab.castShadow = true;
     mainSlab.receiveShadow = true;
-    this.dynamicGroup.add(mainSlab);
+    this.pavilionGroup.add(mainSlab);
 
     const mainEdges = new THREE.LineSegments(new THREE.EdgesGeometry(mainSlabGeo), edgeLineMat);
     mainEdges.position.copy(mainSlab.position);
-    this.dynamicGroup.add(mainEdges);
+    this.pavilionGroup.add(mainEdges);
 
     // Subtle warm-opal architectural cove light tucked into perimeter shadow reveal
     const coveMat = new THREE.MeshBasicMaterial({
@@ -3418,14 +3584,14 @@ export class Alchemy3DRenderer {
     });
     const coveBox = new THREE.Mesh(new THREE.BoxGeometry(4.52, 0.024, 4.52), coveMat);
     coveBox.position.y = 0.125;
-    this.dynamicGroup.add(coveBox);
+    this.pavilionGroup.add(coveBox);
 
     // Architectural corner stainless survey pins
     for (const sx of [-2.28, 2.28]) {
       for (const sz of [-2.28, 2.28]) {
         const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.036, 0.24, 14), titaniumMat);
         pin.position.set(sx, 0.12, sz);
-        this.dynamicGroup.add(pin);
+        this.pavilionGroup.add(pin);
       }
     }
 
@@ -3447,20 +3613,20 @@ export class Alchemy3DRenderer {
     poolBasin.rotation.x = -Math.PI / 2;
     poolBasin.position.y = 0.236;
     this.waterPoolMesh = poolBasin;
-    this.dynamicGroup.add(poolBasin);
+    this.pavilionGroup.add(poolBasin);
 
     // Stepped circular porcelain rotunda platform
     const rotunda = new THREE.Mesh(new THREE.CylinderGeometry(1.86, 1.94, 0.16, 64), alabasterMat);
     rotunda.position.y = 0.31;
     rotunda.castShadow = true;
     rotunda.receiveShadow = true;
-    this.dynamicGroup.add(rotunda);
+    this.pavilionGroup.add(rotunda);
 
     // Architectural titanium rim coping around the rotunda edge
     const rotundaRim = new THREE.Mesh(new THREE.TorusGeometry(1.86, 0.018, 10, 72), titaniumMat);
     rotundaRim.rotation.x = Math.PI / 2;
     rotundaRim.position.y = 0.39;
-    this.dynamicGroup.add(rotundaRim);
+    this.pavilionGroup.add(rotundaRim);
 
     // Recessed glowing laboratory ring inlaid into rotunda floor
     const glowRing = new THREE.Mesh(
@@ -3474,7 +3640,7 @@ export class Alchemy3DRenderer {
     );
     glowRing.rotation.x = Math.PI / 2;
     glowRing.position.y = 0.392;
-    this.dynamicGroup.add(glowRing);
+    this.pavilionGroup.add(glowRing);
 
     // Rotating engraved titanium astrolabe compass dial inlaid on floor
     const astroGroup = new THREE.Group();
@@ -3497,7 +3663,7 @@ export class Alchemy3DRenderer {
       astroGroup.add(tick);
     }
     this.astrolabeRing = astroGroup;
-    this.dynamicGroup.add(astroGroup);
+    this.pavilionGroup.add(astroGroup);
 
     // Architectural Entrance Steps bridging over the reflecting pool into the rotunda!
     for (let s = 0; s < 3; s++) {
@@ -3507,10 +3673,10 @@ export class Alchemy3DRenderer {
       stepMesh.position.set(0, 0.255 + s * 0.055, 2.08 - s * 0.15);
       stepMesh.castShadow = true;
       stepMesh.receiveShadow = true;
-      this.dynamicGroup.add(stepMesh);
+      this.pavilionGroup.add(stepMesh);
       const sEdge = new THREE.LineSegments(new THREE.EdgesGeometry(stepGeo), edgeLineMat);
       sEdge.position.copy(stepMesh.position);
-      this.dynamicGroup.add(sEdge);
+      this.pavilionGroup.add(sEdge);
     }
 
     // Modernist Architectural Cutaway Colonnade + Brise-Soleil Frosted Glass Louver Fins
@@ -3534,11 +3700,11 @@ export class Alchemy3DRenderer {
       const col = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.044, colH, 16), titaniumMat);
       col.position.set(cx, 0.39 + colH / 2, cz);
       col.castShadow = true;
-      this.dynamicGroup.add(col);
+      this.pavilionGroup.add(col);
 
       const baseFoot = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.06, 0.14), alabasterMat);
       baseFoot.position.set(cx, 0.42, cz);
-      this.dynamicGroup.add(baseFoot);
+      this.pavilionGroup.add(baseFoot);
     }
 
     // 11 Sculptural Vertical Frosted-Glass Brise-Soleil Architectural Fins along the rear curve
@@ -3550,7 +3716,7 @@ export class Alchemy3DRenderer {
       fin.position.set(fx, 0.39 + (colH * 0.88) / 2 + 0.05, fz);
       fin.rotation.y = -ang + Math.PI * 0.14;
       fin.castShadow = true;
-      this.dynamicGroup.add(fin);
+      this.pavilionGroup.add(fin);
     }
 
     // Cantilevered Double-Ring Modernist Skylight Roof Canopy + Radial Skylight Ribs
@@ -3563,7 +3729,7 @@ export class Alchemy3DRenderer {
     roofMesh.position.y = roofY;
     roofMesh.castShadow = true;
     roofMesh.receiveShadow = true;
-    this.dynamicGroup.add(roofMesh);
+    this.pavilionGroup.add(roofMesh);
 
     // Subtle roof edge thickness fascia
     const fascia = new THREE.Mesh(
@@ -3571,7 +3737,7 @@ export class Alchemy3DRenderer {
       alabasterMat
     );
     fascia.position.y = roofY - 0.035;
-    this.dynamicGroup.add(fascia);
+    this.pavilionGroup.add(fascia);
 
     for (const rRad of [0.96, 2.02]) {
       const rTrim = new THREE.Mesh(
@@ -3581,7 +3747,7 @@ export class Alchemy3DRenderer {
       rTrim.rotation.x = Math.PI / 2;
       rTrim.rotation.z = Math.PI * 1.1;
       rTrim.position.y = roofY;
-      this.dynamicGroup.add(rTrim);
+      this.pavilionGroup.add(rTrim);
     }
 
     // Curved Glass Mezzanine Balustrade wrapping the back-left arc
@@ -3592,7 +3758,7 @@ export class Alchemy3DRenderer {
     rail.rotation.x = Math.PI / 2;
     rail.rotation.z = Math.PI * 1.05;
     rail.position.y = 0.72;
-    this.dynamicGroup.add(rail);
+    this.pavilionGroup.add(rail);
 
     // Signature Architect-Model Detail: Miniature Sculptural Botanical Planter on Rear Terrace Corner!
     const planter = new THREE.Group();
@@ -3633,13 +3799,13 @@ export class Alchemy3DRenderer {
       canopy.castShadow = true;
       planter.add(canopy);
     }
-    this.dynamicGroup.add(planter);
+    this.pavilionGroup.add(planter);
 
     // Colored glass caustic light washing gently over the white architectural walls!
     const causticLight = new THREE.PointLight(pal.liquidMid, 1.85 + tier * 0.25, 6.8);
     causticLight.position.set(0, 1.35, 0.15);
     this.causticLight = causticLight;
-    this.dynamicGroup.add(causticLight);
+    this.nftTabletopGroup.add(causticLight);
 
     // Real GLSL Procedural Borosilicate Caustic Shimmer projected softly onto the white terrazzo rotunda!
     const causticMat = new THREE.ShaderMaterial({
@@ -3682,7 +3848,7 @@ export class Alchemy3DRenderer {
     causticDisc.rotation.x = -Math.PI / 2;
     causticDisc.position.y = 0.394;
     this.causticShaderMat = causticMat;
-    this.dynamicGroup.add(causticDisc);
+    this.pavilionGroup.add(causticDisc);
     this.applyLightingMood();
 
     // Central raised titanium induction reactor plinth under the hero flask
@@ -3690,7 +3856,7 @@ export class Alchemy3DRenderer {
     pad.position.y = 0.45;
     pad.castShadow = true;
     pad.receiveShadow = true;
-    this.dynamicGroup.add(pad);
+    this.nftTabletopGroup.add(pad);
 
     const coilRing = new THREE.Mesh(
       new THREE.TorusGeometry(0.54, 0.02, 12, 48),
@@ -3702,7 +3868,7 @@ export class Alchemy3DRenderer {
     );
     coilRing.rotation.x = Math.PI / 2;
     coilRing.position.y = 0.515;
-    this.dynamicGroup.add(coilRing);
+    this.nftTabletopGroup.add(coilRing);
   }
 
   // ---------------------------------------------------------------------------
@@ -3918,7 +4084,7 @@ export class Alchemy3DRenderer {
       this.vaporRings.push({ mesh: ring, age: v * 0.75, maxAge: 3.0 });
     }
 
-    this.dynamicGroup.add(vesselGroup);
+    this.nftTabletopGroup.add(vesselGroup);
   }
 
   // ---------------------------------------------------------------------------
@@ -3964,7 +4130,7 @@ export class Alchemy3DRenderer {
       this.nucleusBalls.push({ mesh: m, base, phase: rng.range(0, Math.PI * 2) });
     }
     this.nucleusGroup = nucGroup;
-    this.dynamicGroup.add(nucGroup);
+    this.nftTabletopGroup.add(nucGroup);
 
     const orbitalCount = Math.min(6, this.traits.sub.orbitalCount + (tier >= 3 ? tier - 2 : 0));
     const eGeo = new THREE.SphereGeometry(0.05, 16, 16);
@@ -3990,7 +4156,7 @@ export class Alchemy3DRenderer {
         (i * Math.PI) / orbitalCount,
         this.traits.sub.astrolabeTilt + i * 0.38
       );
-      this.dynamicGroup.add(ring);
+      this.nftTabletopGroup.add(ring);
 
       const electron = new THREE.Mesh(
         eGeo,
@@ -4067,19 +4233,19 @@ export class Alchemy3DRenderer {
         new THREE.Vector3(side * 1.16, 0.68, 0.06)
       ]);
       const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 44, 0.044, 14, false), tubeGlassMat);
-      this.dynamicGroup.add(tube);
+      this.nftTabletopGroup.add(tube);
 
       // Precision titanium stopcock valve cuff halfway along condenser
       const midPt = curve.getPointAt(0.48);
       const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.062, 0.07, 16), silverMat);
       cuff.position.copy(midPt);
-      this.dynamicGroup.add(cuff);
+      this.nftTabletopGroup.add(cuff);
 
       // Glass receiving catch-bulb at condenser outlet
       const endPt = curve.getPointAt(1);
       const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.11, 18, 18), tubeGlassMat);
       bulb.position.set(endPt.x, endPt.y - 0.12, endPt.z);
-      this.dynamicGroup.add(bulb);
+      this.nftTabletopGroup.add(bulb);
 
       for (let d = 0; d < 2; d++) {
         const drop = new THREE.Mesh(
@@ -4090,7 +4256,7 @@ export class Alchemy3DRenderer {
             emissiveIntensity: 0.95
           })
         );
-        this.dynamicGroup.add(drop);
+        this.nftTabletopGroup.add(drop);
         this.condenserDroplets.push({ mesh: drop, curve, offset: d * 0.5 + (side === 1 ? 0.25 : 0) });
       }
     }
@@ -4130,7 +4296,7 @@ export class Alchemy3DRenderer {
     needlePivot.add(cap);
     mastGroup.add(needlePivot);
     this.manometerNeedle = needlePivot;
-    this.dynamicGroup.add(mastGroup);
+    this.nftTabletopGroup.add(mastGroup);
 
     // Floating 3D Live Energy Minimization Ribbon
     const eGeo = new THREE.BufferGeometry();
@@ -4141,7 +4307,7 @@ export class Alchemy3DRenderer {
     );
     eLine.position.set(-1.35, 2.46, -0.82);
     this.energyCurveLine = eLine;
-    this.dynamicGroup.add(eLine);
+    this.nftTabletopGroup.add(eLine);
 
     // 3D Miniature Reagent Test-Tube Rack on the Rotunda
     const isDuo = this.traits.familiar.species === "Duo" || tier >= 4;
@@ -4194,7 +4360,7 @@ export class Alchemy3DRenderer {
       rack.add(vb);
       this.vialBubbles.push({ mesh: vb, baseY: 0.07, maxH: vh * 0.54, speed: 0.18 + i * 0.06 });
     }
-    this.dynamicGroup.add(rack);
+    this.nftTabletopGroup.add(rack);
   }
 
   // ---------------------------------------------------------------------------
@@ -4256,7 +4422,7 @@ export class Alchemy3DRenderer {
     this.contactLines = cLines;
     pGroup.add(cLines);
 
-    this.dynamicGroup.add(pGroup);
+    this.nftTabletopGroup.add(pGroup);
 
     // Helical Proton Compute Stream rising from nucleus to folding chamber
     const pktGeo = new THREE.SphereGeometry(0.032, 10, 10);
@@ -4267,7 +4433,7 @@ export class Alchemy3DRenderer {
         new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.2 })
       );
       m.add(this.makeGlowSprite(col, 0.24, 0.65));
-      this.dynamicGroup.add(m);
+      this.nftTabletopGroup.add(m);
       this.protonPackets.push({ mesh: m, t: i / 8, speed: 0.34 + (i % 3) * 0.06 });
     }
   }
@@ -4446,7 +4612,7 @@ export class Alchemy3DRenderer {
         }
       }
 
-      this.dynamicGroup.add(g);
+      this.nftTabletopGroup.add(g);
       this.floatingAtoms.push({ group: g, base, phase: rng.range(0, Math.PI * 2), speed: rng.range(0.7, 1.3) });
     }
 
@@ -4457,7 +4623,7 @@ export class Alchemy3DRenderer {
         geo,
         new THREE.LineBasicMaterial({ color: pal.electron, transparent: true, opacity: 0.36 })
       );
-      this.dynamicGroup.add(this.constellationLines);
+      this.nftTabletopGroup.add(this.constellationLines);
     }
   }
 
@@ -4493,7 +4659,7 @@ export class Alchemy3DRenderer {
     pad.position.set(x, y + 0.022, z);
     pad.receiveShadow = true;
     pad.castShadow = true;
-    this.dynamicGroup.add(pad);
+    this.pavilionGroup.add(pad);
   }
 
   private createStylizedCat3D(x: number, y: number, z: number, rotY: number, variant: string) {
@@ -4847,7 +5013,7 @@ export class Alchemy3DRenderer {
     bridge.rotation.y = -0.45;
     group.add(bridge);
 
-    this.dynamicGroup.add(group);
+    this.nftTabletopGroup.add(group);
     this.builtWingGroups.push({ sectorId: 0, name: "Cold Room", group });
   }
 
@@ -4916,7 +5082,7 @@ export class Alchemy3DRenderer {
     );
     group.add(conduit);
 
-    this.dynamicGroup.add(group);
+    this.nftTabletopGroup.add(group);
     this.builtWingGroups.push({ sectorId: 1, name: "Mining Room", group });
   }
 
@@ -4994,7 +5160,7 @@ export class Alchemy3DRenderer {
       this.greenhousePollen.push({ mesh: mote, base, phase: i * 1.1 });
     }
 
-    this.dynamicGroup.add(group);
+    this.nftTabletopGroup.add(group);
     this.builtWingGroups.push({ sectorId: 2, name: "Greenhouse", group });
   }
 
@@ -5066,7 +5232,7 @@ export class Alchemy3DRenderer {
     group.add(orb);
     this.cryoBeacons.push(orb);
 
-    this.dynamicGroup.add(group);
+    this.nftTabletopGroup.add(group);
     this.builtWingGroups.push({ sectorId: 3, name: "Pet Lounge", group });
   }
 
@@ -5137,7 +5303,7 @@ export class Alchemy3DRenderer {
       );
       orb.add(this.makeGlowSprite("#8b5cf6", 0.36, 0.72));
       g.add(orb);
-      this.dynamicGroup.add(g);
+      this.nftTabletopGroup.add(g);
       this.floatingAtoms.push({ group: g, base: basePos, phase: p * 2.1, speed: 1.25 });
     }
 
@@ -5146,7 +5312,7 @@ export class Alchemy3DRenderer {
     finial.add(this.makeGlowSprite("#8b5cf6", 0.65, 0.72));
     group.add(finial);
 
-    this.dynamicGroup.add(group);
+    this.nftTabletopGroup.add(group);
     this.builtWingGroups.push({ sectorId: 4, name: "Particle Tower", group });
   }
 
@@ -5201,7 +5367,7 @@ export class Alchemy3DRenderer {
       group.add(rib);
     }
     this.acceleratorRings.push(group);
-    this.dynamicGroup.add(group);
+    this.nftTabletopGroup.add(group);
     this.builtWingGroups.push({ sectorId: 5, name: "Glass Dome", group });
   }
 
@@ -5249,7 +5415,7 @@ export class Alchemy3DRenderer {
     track.add(moon);
 
     this.orreryGroup = oGroup;
-    this.dynamicGroup.add(oGroup);
+    this.nftTabletopGroup.add(oGroup);
   }
 
   private buildTwinMicroAlembics3D() {
@@ -5304,7 +5470,7 @@ export class Alchemy3DRenderer {
         )
       );
 
-      this.dynamicGroup.add(g);
+      this.nftTabletopGroup.add(g);
       this.microAlembics.push({ group: g, baseY, phase: side === -1 ? 0 : Math.PI });
     }
   }
@@ -5319,7 +5485,7 @@ export class Alchemy3DRenderer {
     );
     lines.position.set(0, 2.02, 0);
     this.hypercubeLines = lines;
-    this.dynamicGroup.add(lines);
+    this.nftTabletopGroup.add(lines);
   }
 
   // ---------------------------------------------------------------------------
@@ -5417,8 +5583,9 @@ export class Alchemy3DRenderer {
       this.toyBall.bounceCooldown = Math.max(0, this.toyBall.bounceCooldown - dt);
       this.toyBall.vel.y -= 5.8 * dt;
       this.toyBall.mesh.position.addScaledVector(this.toyBall.vel, dt);
-      if (this.toyBall.mesh.position.y < 0.5) {
-        this.toyBall.mesh.position.y = 0.5;
+      const ballFloor = this.walkMode ? 0.23 : 0.5;
+      if (this.toyBall.mesh.position.y < ballFloor) {
+        this.toyBall.mesh.position.y = ballFloor;
         if (Math.abs(this.toyBall.vel.y) > 0.65 && this.toyBall.bounceCooldown <= 0) {
           soundEngine.playBounce();
           this.toyBall.bounceCooldown = 0.22;
@@ -6187,8 +6354,32 @@ export class Alchemy3DRenderer {
     const speedNorm = Math.min(1, curSpeed / 3.0);
     this.charMoving = !this.creatorCameraMode && curSpeed > 0.14;
 
-    // Frame-rate-independent elevation smoothing across steps, bridges & rotunda
-    const targetGroundY = this.getWalkGroundY(this.charX, this.charZ);
+    // Real Physical Step-by-Step Staircase Transitions (B1 <-> 1F <-> 2F <-> 3F!)
+    const stairState = evaluateStairWalk(
+      this.charX,
+      this.charZ,
+      this.activeFloor,
+      this.labDecor.houseFloors,
+      this.labDecor.hasBasement
+    );
+    if (
+      !this.creatorCameraMode &&
+      stairState.onStairs &&
+      stairState.nextFloor !== undefined &&
+      stairState.nextFloor !== this.activeFloor
+    ) {
+      this.activeFloor = stairState.nextFloor;
+      this.applyFloorCutawayVisibility();
+      this.onActiveFloorChange?.(this.activeFloor);
+      soundEngine.playTap(
+        this.activeFloor === 0 ? 660 : this.activeFloor === 3 ? 1318.5 : this.activeFloor === 2 ? 1046.5 : 880
+      );
+    }
+
+    // Frame-rate-independent elevation smoothing across floating steps & multi-story floors
+    const targetGroundY = stairState.onStairs
+      ? stairState.y
+      : getGroundElevationForFloor(this.activeFloor, this.charX, this.charZ, this.labDecor.houseSize);
     this.charY += (targetGroundY - this.charY) * (1 - Math.exp(-15 * dt));
 
     if (this.characterAvatar) {
@@ -6308,19 +6499,22 @@ export class Alchemy3DRenderer {
       }
     }
 
-    // Animate glowing architectural station floor beacons
+    // Animate glowing architectural station floor beacons (respects dollhouse floor cutaway!)
     for (const st of LAB_STATIONS) {
       const b = this.stationBeacons.get(st.id);
       if (!b) continue;
+      const p = resolveItemPlacement(st.id, this.labDecor.customLayout);
+      const showFloor =
+        this.activeFloor === 0 ? p.floor === 0 : p.floor >= 1 && p.floor <= this.activeFloor;
       const isNear = nearStation === st.id;
       const isHighlighted = this.activeStationHighlight === st.id;
       const pulse = 1 + Math.sin(t * (isNear || isHighlighted ? 5.2 : 2.4)) * (isNear || isHighlighted ? 0.09 : 0.035);
       b.ring.scale.setScalar(isNear || isHighlighted ? 1.16 * pulse : pulse);
       (b.disc.material as THREE.MeshBasicMaterial).opacity = isNear || isHighlighted ? 0.3 : 0.12;
       (b.pillar.material as THREE.MeshBasicMaterial).opacity = isNear || isHighlighted ? 0.44 : 0.14;
-      b.ring.visible = !this.creatorCameraMode;
-      b.disc.visible = !this.creatorCameraMode;
-      b.pillar.visible = !this.creatorCameraMode;
+      b.ring.visible = showFloor && !this.creatorCameraMode;
+      b.disc.visible = showFloor && !this.creatorCameraMode;
+      b.pillar.visible = showFloor && !this.creatorCameraMode;
     }
 
     // Animate subtle pearl breadcrumb trail while click-to-walking
@@ -6375,11 +6569,14 @@ export class Alchemy3DRenderer {
     for (const st of LAB_STATIONS) {
       // Project just above the top rail of each physical 3D holographic monitor (follows moved stations across floors!)
       const p = resolveItemPlacement(st.id, this.labDecor.customLayout);
+      const showOnFloor =
+        this.activeFloor === 0 ? p.floor === 0 : p.floor >= 1 && p.floor <= this.activeFloor;
       const gy = getGroundElevationForFloor(p.floor, p.x, p.z, this.labDecor.houseSize);
       this.tmpProj.set(p.x, gy + 1.44, p.z);
       const distToCam = this.camera.position.distanceTo(this.tmpProj);
       this.tmpProj.project(this.camera);
       const visible =
+        showOnFloor &&
         !this.creatorCameraMode &&
         this.tmpProj.z > -1 &&
         this.tmpProj.z < 1 &&

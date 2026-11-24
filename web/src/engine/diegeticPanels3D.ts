@@ -148,9 +148,15 @@ export class DiegeticLabMonitors3D {
   public getRaycastTargets(): THREE.Object3D[] {
     const out: THREE.Object3D[] = [];
     for (const s of this.screens.values()) {
-      out.push(s.group);
+      if (s.group.visible) out.push(s.group);
     }
     return out;
+  }
+
+  public setStationVisibility(stationId: LabStationId, visible: boolean) {
+    const rig = this.screens.get(stationId);
+    if (!rig) return;
+    rig.group.visible = visible;
   }
 
   public setStationPosition(stationId: LabStationId, x: number, y: number, z: number) {

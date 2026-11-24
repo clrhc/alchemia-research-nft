@@ -103,10 +103,12 @@ import {
 import { LAB_STATIONS, LAB_STATION_BY_ID, type LabStationId } from "../engine/labStations";
 import {
   EXTRA_ROOM_DEFS,
+  HOUSE_BASEMENT_DEF,
   HOUSE_FLOOR_DEFS,
   HOUSE_SIZE_DEFS,
   MOVABLE_ITEMS,
   WALL_STYLES,
+  formatFloorLabel,
   getHouseBoundsRadius,
   resolveItemPlacement,
   type ExtraRoomId,
@@ -1497,13 +1499,16 @@ export function LabWorldExperience({
   // ============================================================================
   const handleSwitchFloor = useCallback(
     (floor: FloorNumber) => {
-      const clamped = Math.max(1, Math.min(labDecor.houseFloors, floor)) as FloorNumber;
+      const minFloor: FloorNumber = labDecor.hasBasement ? 0 : 1;
+      const clamped = Math.max(minFloor, Math.min(labDecor.houseFloors, floor)) as FloorNumber;
       setActiveFloor(clamped);
       artworkRef.current?.setActiveFloor(clamped);
-      soundEngine.playTap(clamped === 3 ? 1318.5 : clamped === 2 ? 1046.5 : 880);
-      setCurrentActivity(`Exploring Floor ${clamped}F`);
+      soundEngine.playTap(
+        clamped === 0 ? 660 : clamped === 3 ? 1318.5 : clamped === 2 ? 1046.5 : 880
+      );
+      setCurrentActivity(`Exploring ${formatFloorLabel(clamped)}`);
     },
-    [labDecor.houseFloors]
+    [labDecor.hasBasement, labDecor.houseFloors]
   );
 
   const handleExpandHouseSize = useCallback(
@@ -1593,7 +1598,8 @@ export function LabWorldExperience({
       }
       const meta = MOVABLE_ITEMS.find((m) => m.id === itemId);
       const cur = resolveItemPlacement(itemId, labDecor.customLayout);
-      const targetFloor = Math.min(labDecor.houseFloors, cur.floor) as FloorNumber;
+      const minFloor: FloorNumber = labDecor.hasBasement ? 0 : 1;
+      const targetFloor = Math.max(minFloor, Math.min(labDecor.houseFloors, cur.floor)) as FloorNumber;
       setPieMenu(null);
       setOpenStation(null);
       setNeighborhoodDrawerOpen(false);
@@ -1602,10 +1608,10 @@ export function LabWorldExperience({
       setCameraMode("orbit");
       soundEngine.playTap(1046.5);
       setFeedback(
-        `Move Mode: click anywhere on ${targetFloor}F to place ${meta?.label || itemId}. Switch floors or rotate anytime!`
+        `Move Mode: click anywhere on ${formatFloorLabel(targetFloor)} to place ${meta?.label || itemId}. Switch floors (B1–${labDecor.houseFloors}F) or rotate anytime!`
       );
     },
-    [isVisiting, labDecor.customLayout, labDecor.houseFloors]
+    [isVisiting, labDecor.customLayout, labDecor.hasBasement, labDecor.houseFloors]
   );
 
   const handlePlaceMovedItem = useCallback(
@@ -1614,7 +1620,9 @@ export function LabWorldExperience({
       const next = moveItemInDecor(labDecor, itemId, x, z, cur.yaw, floor);
       updateLabDecor(next);
       const meta = MOVABLE_ITEMS.find((m) => m.id === itemId);
-      setFeedback(`Moved ${meta?.label || itemId} to ${floor}F (${x.toFixed(1)}, ${z.toFixed(1)})!`);
+      setFeedback(
+        `Moved ${meta?.label || itemId} to ${formatFloorLabel(floor)} (${x.toFixed(1)}, ${z.toFixed(1)})!`
+      );
     },
     [labDecor, updateLabDecor]
   );
@@ -2090,9 +2098,11 @@ export function LabWorldExperience({
       case "floor-up":
         handleSwitchFloor(Math.min(labDecor.houseFloors, activeFloor + 1) as FloorNumber);
         break;
-      case "floor-down":
-        handleSwitchFloor(Math.max(1, activeFloor - 1) as FloorNumber);
+      case "floor-down": {
+        const minF: FloorNumber = labDecor.hasBasement ? 0 : 1;
+        handleSwitchFloor(Math.max(minF, activeFloor - 1) as FloorNumber);
         break;
+      }
       case "room-nap":
       case "room-cook":
       case "room-soak":
@@ -2908,6 +2918,10 @@ export function LabWorldExperience({
         onNearStationChange={handleNearStationChange}
         onStationArrived={handleStationArrived}
         onPlaceMovedItem={handlePlaceMovedItem}
+        onActiveFloorChange={(fl) => {
+          setActiveFloor(fl);
+          setCurrentActivity(`Walked to ${formatFloorLabel(fl)}`);
+        }}
         onSimsObjectClick={(target, sx, sy) => {
           if (!savedProfile && !creatorOpen && creatorTriggerMode === "on-first-interaction") {
             openCharacterCreator();
@@ -2977,6 +2991,7 @@ export function LabWorldExperience({
             standalone: standaloneMode,
             currentFloor: activeFloor,
             maxFloors: labDecor.houseFloors,
+            hasBasement: labDecor.hasBasement,
             gardenPlotStatus:
               pieMenu.target.kind === "garden-plot"
                 ? (() => {
@@ -3272,23 +3287,27 @@ export function LabWorldExperience({
         </header>
       )}
 
-      {/* Clickable Cutesy Silver-Glass 1F / 2F / 3F Multi-Story Floor Switcher */}
-      {!creatorOpen && Boolean(savedProfile) && labDecor.houseFloors >= 2 && (
+      {/* Clickable Cutesy Silver-Glass B1 / 1F / 2F / 3F Multi-Story Floor Switcher */}
+      {!creatorOpen && Boolean(savedProfile) && (labDecor.hasBasement || labDecor.houseFloors >= 2) && (
         <div className="floor-switcher-hud" role="group" aria-label="Switch house floor">
           <span className="floor-switcher-label">
             <Layers size={11} /> Floor
           </span>
-          {([1, 2, 3] as FloorNumber[])
-            .filter((f) => f <= labDecor.houseFloors)
+          {([0, 1, 2, 3] as FloorNumber[])
+            .filter((f) => (f === 0 ? labDecor.hasBasement : f <= labDecor.houseFloors))
             .map((f) => (
               <button
                 key={f}
                 type="button"
                 className={`floor-pill-btn clickable ${activeFloor === f ? "active" : ""}`}
                 onClick={() => handleSwitchFloor(f)}
-                title={`Go to Floor ${f}F`}
+                title={
+                  f === 0
+                    ? "Go down to B1 Sunken Basement (or walk down the East steps!)"
+                    : `Go to Floor ${formatFloorLabel(f)} (or walk up/down the steps!)`
+                }
               >
-                {f}F
+                {formatFloorLabel(f)}
               </button>
             ))}
         </div>
@@ -3308,13 +3327,13 @@ export function LabWorldExperience({
               </span>
               <div>
                 <strong>Placing {meta?.label || movingItem}</strong>
-                <small>Click anywhere on {activeFloor}F deck to move it live in 3D</small>
+                <small>Click anywhere on {formatFloorLabel(activeFloor)} floor to move it live in 3D</small>
               </div>
             </div>
             <div className="move-mode-actions">
-              {labDecor.houseFloors >= 2 &&
-                ([1, 2, 3] as FloorNumber[])
-                  .filter((f) => f <= labDecor.houseFloors)
+              {(labDecor.hasBasement || labDecor.houseFloors >= 2) &&
+                ([0, 1, 2, 3] as FloorNumber[])
+                  .filter((f) => (f === 0 ? labDecor.hasBasement : f <= labDecor.houseFloors))
                   .map((f) => (
                     <button
                       key={f}
@@ -3323,7 +3342,7 @@ export function LabWorldExperience({
                       style={{ padding: "4px 8px", fontSize: "0.7rem" }}
                       onClick={() => handleSwitchFloor(f)}
                     >
-                      {f}F
+                      {formatFloorLabel(f)}
                     </button>
                   ))}
               <button
@@ -4830,10 +4849,32 @@ export function LabWorldExperience({
                       </div>
                     </div>
 
-                    {/* 2. Multi-Story Walkable Floors (1F -> 2F Loft -> 3F Sky Penthouse) */}
+                    {/* 2. Multi-Story Walkable Floors (B1 Basement -> 1F -> 2F Loft -> 3F Sky Penthouse) */}
                     <div className="expand-section-card">
-                      <div className="single-kicker">Multi-Story Floors · Walkable Lofts &amp; Spiral Stairs</div>
+                      <div className="single-kicker">
+                        Multi-Story Architect Levels · Walkable Steps &amp; Basement
+                      </div>
                       <div className="world-sector-list" style={{ marginTop: 6 }}>
+                        {labDecor.hasBasement && (
+                          <div className="expand-room-card is-owned">
+                            <div className="expand-room-top">
+                              <div>
+                                <strong>{HOUSE_BASEMENT_DEF.title}</strong>
+                                <div className="tama-sub">{HOUSE_BASEMENT_DEF.desc}</div>
+                              </div>
+                              <button
+                                type="button"
+                                className={`subtle-pill-btn clickable ${
+                                  activeFloor === 0 ? "active" : ""
+                                }`}
+                                style={{ padding: "4px 10px", fontSize: "0.7rem" }}
+                                onClick={() => handleSwitchFloor(0)}
+                              >
+                                {activeFloor === 0 ? "Here" : "Go B1"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
                         {HOUSE_FLOOR_DEFS.map((fl) => {
                           const owned = labDecor.houseFloors >= fl.floors;
                           const isNext = fl.floors === labDecor.houseFloors + 1;
@@ -4962,7 +5003,7 @@ export function LabWorldExperience({
                   <div className="world-drawer-stack">
                     <div className="furnish-header-row">
                       <span className="single-kicker">
-                        Move Any Station or Furniture (1F–{labDecor.houseFloors}F)
+                        Move Any Station or Furniture (B1–{labDecor.houseFloors}F)
                       </span>
                       <div style={{ display: "flex", gap: 6 }}>
                         <button
@@ -4988,8 +5029,8 @@ export function LabWorldExperience({
                     </div>
 
                     <p className="science-summary" style={{ margin: 0 }}>
-                      Click <strong>Move</strong> on any station or furniture set, then click anywhere on
-                      your 1F deck, 2F loft, or 3F sky penthouse to place it live in 3D!
+                      Click <strong>Move</strong> on any tabletop station or furniture set, then click
+                      anywhere in your B1 basement, 1F living hall, 2F loft, or 3F sky penthouse!
                     </p>
 
                     <div className="world-sector-list">
@@ -5005,7 +5046,7 @@ export function LabWorldExperience({
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div className="neighbor-card-title">
                                 <strong>{item.label}</strong>
-                                <span className="move-floor-badge">{pos.floor}F</span>
+                                <span className="move-floor-badge">{formatFloorLabel(pos.floor)}</span>
                               </div>
                               <div className="tama-sub">
                                 {item.category === "station" ? "Station" : "Furniture"} · (

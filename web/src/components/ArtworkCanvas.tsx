@@ -107,6 +107,7 @@ interface ArtworkCanvasProps {
   onStationArrived?: (stationId: LabStationId) => void;
   onSimsObjectClick?: (target: SimsObjectTarget, screenX: number, screenY: number) => void;
   onPlaceMovedItem?: (itemId: MovableItemId, x: number, z: number, floor: FloorNumber) => void;
+  onActiveFloorChange?: (floor: FloorNumber) => void;
   onPulseClick?: () => void;
 }
 
@@ -151,6 +152,7 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
     onStationArrived,
     onSimsObjectClick,
     onPlaceMovedItem,
+    onActiveFloorChange,
     onPulseClick
   },
   ref
@@ -171,6 +173,8 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
   onSimsObjectClickRef.current = onSimsObjectClick;
   const onPlaceMovedItemRef = useRef(onPlaceMovedItem);
   onPlaceMovedItemRef.current = onPlaceMovedItem;
+  const onActiveFloorChangeRef = useRef(onActiveFloorChange);
+  onActiveFloorChangeRef.current = onActiveFloorChange;
 
   useImperativeHandle(ref, () => ({
     capturePhoto: () => rendererRef.current?.captureSnapshotDataUrl() ?? null,
@@ -238,7 +242,8 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
       onNearStationChange: (stationId) => onNearStationRef.current?.(stationId),
       onStationArrived: (stationId) => onStationArrivedRef.current?.(stationId),
       onSimsObjectClick: (target, sx, sy) => onSimsObjectClickRef.current?.(target, sx, sy),
-      onPlaceMovedItem: (itemId, x, z, floor) => onPlaceMovedItemRef.current?.(itemId, x, z, floor)
+      onPlaceMovedItem: (itemId, x, z, floor) => onPlaceMovedItemRef.current?.(itemId, x, z, floor),
+      onActiveFloorChange: (floor) => onActiveFloorChangeRef.current?.(floor)
     });
     if (walkMode) {
       if (labDecor) renderer.setLabDecor(labDecor);

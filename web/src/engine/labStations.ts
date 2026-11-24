@@ -39,11 +39,11 @@ export const LAB_STATIONS: readonly LabStationDef[] = [
     shortLabel: "Research",
     subtitle: "Live 3D protein folding & PDB exports",
     accent: "#38bdf8",
-    padX: -2.42,
-    padZ: -1.18,
+    padX: -1.35,
+    padZ: -2.55,
     triggerRadius: 0.86,
-    panelPos: [-2.42, 2.04, -1.18],
-    facingYaw: 1.45
+    panelPos: [-1.35, 1.88, -2.55],
+    facingYaw: 0.2
   },
   {
     id: "mining",
@@ -51,11 +51,11 @@ export const LAB_STATIONS: readonly LabStationDef[] = [
     shortLabel: "Mining",
     subtitle: "Claim mined ALCH & share with science",
     accent: "#6366f1",
-    padX: 2.58,
-    padZ: -0.36,
+    padX: 1.35,
+    padZ: -2.55,
     triggerRadius: 0.86,
-    panelPos: [2.58, 1.98, -0.36],
-    facingYaw: -1.5
+    panelPos: [1.35, 1.88, -2.55],
+    facingYaw: -0.2
   },
   {
     id: "pet",
@@ -63,11 +63,11 @@ export const LAB_STATIONS: readonly LabStationDef[] = [
     shortLabel: "Pet",
     subtitle: "Feed, play, dress up & Proton Catch",
     accent: "#f472b6",
-    padX: 1.88,
-    padZ: 1.86,
+    padX: 1.85,
+    padZ: 2.15,
     triggerRadius: 0.86,
-    panelPos: [1.88, 1.72, 1.86],
-    facingYaw: -0.55
+    panelPos: [1.85, 1.66, 2.15],
+    facingYaw: -0.6
   },
   {
     id: "builder",
@@ -75,11 +75,11 @@ export const LAB_STATIONS: readonly LabStationDef[] = [
     shortLabel: "Home",
     subtitle: "Furnish, expand floors, move stations & rooms",
     accent: "#10b981",
-    padX: -1.62,
-    padZ: 2.52,
+    padX: -1.45,
+    padZ: 2.55,
     triggerRadius: 0.86,
-    panelPos: [-1.62, 1.76, 2.52],
-    facingYaw: 0.25
+    panelPos: [-1.45, 1.68, 2.55],
+    facingYaw: 0.35
   },
   {
     id: "console",
@@ -87,11 +87,11 @@ export const LAB_STATIONS: readonly LabStationDef[] = [
     shortLabel: "Profile",
     subtitle: "Moods, friends, guestbook & wardrobe",
     accent: "#8b5cf6",
-    padX: 1.96,
-    padZ: -1.88,
+    padX: 2.55,
+    padZ: 0.95,
     triggerRadius: 0.86,
-    panelPos: [1.96, 1.98, -1.88],
-    facingYaw: -2.35
+    panelPos: [2.55, 1.82, 0.95],
+    facingYaw: -1.35
   }
 ];
 
