@@ -5,7 +5,32 @@
  * both in demo mode and while connected to Base Sepolia / Ethereum Mainnet.
  */
 
-export type PetAccessory = "auto" | "bowtie" | "beret" | "goggles" | "halo" | "crown" | "none";
+export type PetAccessory =
+  | "auto"
+  | "bowtie"
+  | "beret"
+  | "goggles"
+  | "halo"
+  | "crown"
+  | "scarf"
+  | "beanie"
+  | "flower"
+  | "wizard"
+  | "shades"
+  | "bandana"
+  | "none";
+
+export type PetOutfitId =
+  | "none"
+  | "sweater"
+  | "labcoat"
+  | "hoodie"
+  | "raincoat"
+  | "cape"
+  | "tutu"
+  | "puffer";
+
+export type PetBackGearId = "none" | "wings" | "backpack" | "ribbon";
 
 export const PET_ACCESSORY_ORDER: readonly PetAccessory[] = [
   "auto",
@@ -14,6 +39,12 @@ export const PET_ACCESSORY_ORDER: readonly PetAccessory[] = [
   "goggles",
   "halo",
   "crown",
+  "scarf",
+  "beanie",
+  "flower",
+  "wizard",
+  "shades",
+  "bandana",
   "none"
 ];
 
@@ -24,8 +55,43 @@ export const PET_ACCESSORY_LABELS: Record<PetAccessory, string> = {
   goggles: "Goggles",
   halo: "Halo",
   crown: "Crown",
-  none: "Plain"
+  scarf: "Knit Scarf",
+  beanie: "Pom Beanie",
+  flower: "Blossom",
+  wizard: "Wizard Hat",
+  shades: "Tiny Shades",
+  bandana: "Bandana",
+  none: "None"
 };
+
+export const PET_OUTFIT_OPTIONS: ReadonlyArray<{ id: PetOutfitId; label: string }> = [
+  { id: "none", label: "Natural Fur" },
+  { id: "sweater", label: "Knit Sweater" },
+  { id: "labcoat", label: "Mini Lab Coat" },
+  { id: "hoodie", label: "Cozy Hoodie" },
+  { id: "raincoat", label: "Raincoat" },
+  { id: "cape", label: "Star Cape" },
+  { id: "tutu", label: "Cloud Tutu" },
+  { id: "puffer", label: "Puffer Vest" }
+];
+
+export const PET_BACK_GEAR_OPTIONS: ReadonlyArray<{ id: PetBackGearId; label: string }> = [
+  { id: "none", label: "None" },
+  { id: "wings", label: "Fairy Wings" },
+  { id: "backpack", label: "Treat Pack" },
+  { id: "ribbon", label: "Silk Bow" }
+];
+
+export const PET_COLOR_SWATCHES: ReadonlyArray<{ id: string; label: string; hex: string }> = [
+  { id: "rose", label: "Rose Pink", hex: "#f472b6" },
+  { id: "sky", label: "Sky Blue", hex: "#38bdf8" },
+  { id: "mint", label: "Mint Sage", hex: "#10b981" },
+  { id: "lilac", label: "Lilac Mist", hex: "#a78bfa" },
+  { id: "pearl", label: "Pearl White", hex: "#f8fafd" },
+  { id: "slate", label: "Silver Slate", hex: "#64748b" },
+  { id: "butter", label: "Buttercup", hex: "#fbbf24" },
+  { id: "sakura", label: "Sakura Blush", hex: "#f9a8d4" }
+];
 
 export interface CompanionVitals {
   energy: number; // 0..100 (Food)
@@ -37,6 +103,9 @@ export interface CompanionVitals {
   lastCareDay: string; // YYYY-MM-DD
   petName: string;
   accessory: PetAccessory;
+  outfit?: PetOutfitId;
+  backGear?: PetBackGearId;
+  outfitColor?: string;
   sleeping: boolean;
   lastUpdatedMs: number;
 }
@@ -90,6 +159,9 @@ export function loadCompanionVitals(tokenId: number, nowMs = Date.now()): Compan
     lastCareDay: todayKey(nowMs),
     petName: "",
     accessory: "auto",
+    outfit: "none",
+    backGear: "none",
+    outfitColor: "#f472b6",
     sleeping: false,
     lastUpdatedMs: nowMs
   };
@@ -194,6 +266,48 @@ export function cycleCompanionAccessory(current: CompanionVitals): CompanionVita
   const idx = PET_ACCESSORY_ORDER.indexOf(current.accessory || "auto");
   const next = PET_ACCESSORY_ORDER[(idx + 1) % PET_ACCESSORY_ORDER.length];
   return { ...current, accessory: next };
+}
+
+export function setCompanionAccessory(
+  current: CompanionVitals,
+  accessory: PetAccessory
+): CompanionVitals {
+  return { ...current, accessory };
+}
+
+export function setCompanionOutfit(
+  current: CompanionVitals,
+  outfit: PetOutfitId
+): CompanionVitals {
+  return { ...current, outfit };
+}
+
+export function setCompanionBackGear(
+  current: CompanionVitals,
+  backGear: PetBackGearId
+): CompanionVitals {
+  return { ...current, backGear };
+}
+
+export function setCompanionOutfitColor(
+  current: CompanionVitals,
+  outfitColor: string
+): CompanionVitals {
+  const clean = /^#[0-9a-fA-F]{6}$/.test(outfitColor) ? outfitColor : "#f472b6";
+  return { ...current, outfitColor: clean };
+}
+
+export function randomizeCompanionWardrobe(current: CompanionVitals): CompanionVitals {
+  const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)];
+  const outfits = PET_OUTFIT_OPTIONS.filter((o) => o.id !== "none");
+  const hats = PET_ACCESSORY_ORDER.filter((a) => a !== "none" && a !== "auto");
+  return {
+    ...current,
+    outfit: pick(outfits).id,
+    accessory: pick(hats),
+    backGear: pick(PET_BACK_GEAR_OPTIONS).id,
+    outfitColor: pick(PET_COLOR_SWATCHES).hex
+  };
 }
 
 export function companionAverageScore(v: CompanionVitals): number {

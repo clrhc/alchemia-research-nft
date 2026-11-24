@@ -83,6 +83,7 @@ interface CompanionRig {
   head: THREE.Group;
   tail: THREE.Object3D;
   paw?: THREE.Object3D;
+  wings?: [THREE.Object3D, THREE.Object3D];
   eyes: THREE.Mesh[];
   homePos: THREE.Vector3;
   homeRotY: number;
@@ -347,7 +348,7 @@ export class Alchemy3DRenderer {
   private builtSeed = "";
   private builtTier = -1;
   private builtSectorsMask = -1;
-  private builtAccessoryRank = -1;
+  private builtAccessoryRank = "";
   private userDragging = false;
   private autoRotateDesired = true;
 
@@ -2056,20 +2057,14 @@ export class Alchemy3DRenderer {
     }
   };
 
-  private getAccessoryRank(): number {
+  private getAccessoryRank(): string {
     const petLvl = this.impact.petLevel ?? 1;
     const wus = this.impact.workUnits ?? 0;
-    const accMap: Record<string, number> = {
-      auto: 0,
-      bowtie: 1,
-      beret: 2,
-      goggles: 3,
-      halo: 4,
-      crown: 5,
-      none: 6
-    };
-    const accCode = accMap[this.impact.petAccessory || "auto"] ?? 0;
-    return accCode * 8 + (petLvl >= 2 ? 1 : 0) + (wus >= 10 ? 2 : 0);
+    const acc = this.impact.petAccessory || "auto";
+    const outfit = this.impact.petOutfit || "none";
+    const back = this.impact.petBackGear || "none";
+    const color = this.impact.petOutfitColor || "#f472b6";
+    return `${acc}|${outfit}|${back}|${color}|${petLvl >= 2 ? 1 : 0}|${wus >= 10 ? 1 : 0}`;
   }
 
   private addPetWardrobe3D(
@@ -2078,10 +2073,250 @@ export class Alchemy3DRenderer {
     collarY: number,
     isDog: boolean,
     variant: string
-  ) {
+  ): [THREE.Object3D, THREE.Object3D] | undefined {
     const pal = this.traits.palette;
     const acc = this.impact.petAccessory || "auto";
-    if (acc === "none") return;
+    const outfit = this.impact.petOutfit || "none";
+    const backGear = this.impact.petBackGear || "none";
+    const clothHex = this.impact.petOutfitColor || "#f472b6";
+
+    const clothMat = new THREE.MeshStandardMaterial({
+      color: clothHex,
+      roughness: 0.56,
+      metalness: 0.08
+    });
+    const clothGlowMat = new THREE.MeshStandardMaterial({
+      color: clothHex,
+      emissive: clothHex,
+      emissiveIntensity: 0.28,
+      roughness: 0.32,
+      metalness: 0.18
+    });
+    const whiteClothMat = new THREE.MeshStandardMaterial({
+      color: "#f8fafd",
+      roughness: 0.42,
+      metalness: 0.05
+    });
+    const titaniumMat = new THREE.MeshStandardMaterial({
+      color: "#cbd5e1",
+      metalness: 0.88,
+      roughness: 0.18
+    });
+
+    const torsoY = collarY - 0.19;
+
+    // ------------------------------------------------------------------
+    // 1. ANIMAL CLOTHING OUTFITS (7 Adorable 3D Outfits + Natural Fur!)
+    // ------------------------------------------------------------------
+    if (outfit === "sweater") {
+      // Cozy Ribbed Knit Sweater with contrasting collar & stripe
+      const knit = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.228, 0.236, 0.25, 22),
+        clothMat
+      );
+      knit.position.set(0, torsoY, 0);
+      knit.castShadow = true;
+      bodyGroup.add(knit);
+
+      const stripe = new THREE.Mesh(
+        new THREE.TorusGeometry(0.234, 0.018, 8, 28),
+        whiteClothMat
+      );
+      stripe.rotation.x = Math.PI / 2;
+      stripe.position.set(0, torsoY, 0);
+      bodyGroup.add(stripe);
+
+      const neckRib = new THREE.Mesh(new THREE.TorusGeometry(0.195, 0.028, 10, 24), clothMat);
+      neckRib.rotation.x = Math.PI / 2;
+      neckRib.position.set(0, collarY - 0.02, 0);
+      bodyGroup.add(neckRib);
+    } else if (outfit === "labcoat") {
+      // Adorable Miniature Scientist Lab Coat with lapels & glowing badge!
+      const coat = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.23, 0.258, 0.3, 22, 1, false, -Math.PI * 0.82, Math.PI * 1.64),
+        whiteClothMat
+      );
+      coat.position.set(0, torsoY - 0.01, 0);
+      coat.rotation.y = Math.PI;
+      coat.castShadow = true;
+      bodyGroup.add(coat);
+
+      for (const side of [-1, 1]) {
+        const lapel = new THREE.Mesh(new THREE.BoxGeometry(0.058, 0.12, 0.022), whiteClothMat);
+        lapel.position.set(side * 0.078, torsoY + 0.07, 0.205);
+        lapel.rotation.z = -side * 0.26;
+        bodyGroup.add(lapel);
+      }
+
+      const badge = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.06, 0.016), clothGlowMat);
+      badge.position.set(-0.1, torsoY + 0.03, 0.222);
+      bodyGroup.add(badge);
+    } else if (outfit === "hoodie") {
+      // Cozy Pup/Kitty Hoodie with rolled back hood & pearl drawstrings!
+      const shell = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.228, 0.24, 0.26, 22),
+        clothMat
+      );
+      shell.position.set(0, torsoY, 0);
+      shell.castShadow = true;
+      bodyGroup.add(shell);
+
+      const hoodRoll = new THREE.Mesh(new THREE.TorusGeometry(0.185, 0.048, 10, 24), clothMat);
+      hoodRoll.rotation.x = Math.PI / 2 + 0.22;
+      hoodRoll.position.set(0, collarY - 0.01, -0.05);
+      bodyGroup.add(hoodRoll);
+
+      for (const side of [-1, 1]) {
+        const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.1, 6), whiteClothMat);
+        cord.position.set(side * 0.045, collarY - 0.08, 0.228);
+        bodyGroup.add(cord);
+      }
+    } else if (outfit === "raincoat") {
+      // Glossy Translucent Pastel Raincoat Cape with silver buttons!
+      const slickerMat = new THREE.MeshPhysicalMaterial({
+        color: clothHex,
+        roughness: 0.14,
+        clearcoat: 1.0,
+        transmission: 0.35,
+        transparent: true,
+        opacity: 0.92
+      });
+      const cape = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.225, 0.285, 0.3, 22, 1, false, -Math.PI * 0.78, Math.PI * 1.56),
+        slickerMat
+      );
+      cape.position.set(0, torsoY - 0.01, -0.01);
+      cape.rotation.y = Math.PI;
+      cape.castShadow = true;
+      bodyGroup.add(cape);
+
+      const flap = new THREE.Mesh(new THREE.TorusGeometry(0.195, 0.024, 10, 24), slickerMat);
+      flap.rotation.x = Math.PI / 2;
+      flap.position.set(0, collarY - 0.01, 0);
+      bodyGroup.add(flap);
+
+      const snap = new THREE.Mesh(new THREE.SphereGeometry(0.022, 10, 10), titaniumMat);
+      snap.position.set(0, collarY - 0.03, 0.22);
+      bodyGroup.add(snap);
+    } else if (outfit === "cape") {
+      // Royal Starlight Velvet Cape with glowing crystal clasp!
+      const royalCape = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.195, 0.31, 0.33, 24, 1, false, Math.PI * 0.56, Math.PI * 0.88),
+        clothMat
+      );
+      royalCape.position.set(0, torsoY - 0.02, -0.02);
+      royalCape.castShadow = true;
+      bodyGroup.add(royalCape);
+
+      const trim = new THREE.Mesh(
+        new THREE.TorusGeometry(0.308, 0.012, 8, 28, Math.PI * 0.88),
+        titaniumMat
+      );
+      trim.rotation.x = Math.PI / 2;
+      trim.rotation.z = -Math.PI * 0.06;
+      trim.position.set(0, torsoY - 0.185, -0.02);
+      bodyGroup.add(trim);
+
+      const clasp = new THREE.Mesh(new THREE.OctahedronGeometry(0.038, 0), clothGlowMat);
+      clasp.position.set(0, collarY - 0.02, 0.225);
+      bodyGroup.add(clasp);
+    } else if (outfit === "tutu") {
+      // Fluffy Layered Cloud Tutu Skirt & Waist Satin Ribbon!
+      const ribbon = new THREE.Mesh(new THREE.TorusGeometry(0.228, 0.02, 8, 28), clothMat);
+      ribbon.rotation.x = Math.PI / 2;
+      ribbon.position.set(0, torsoY - 0.04, 0);
+      bodyGroup.add(ribbon);
+
+      const tulleMat = new THREE.MeshPhysicalMaterial({
+        color: clothHex,
+        roughness: 0.48,
+        transparent: true,
+        opacity: 0.86
+      });
+      for (let i = 0; i < 10; i++) {
+        const ang = (i / 10) * Math.PI * 2;
+        const puff = new THREE.Mesh(new THREE.SphereGeometry(0.088, 12, 10), tulleMat);
+        puff.scale.set(1.25, 0.42, 1.0);
+        puff.position.set(Math.cos(ang) * 0.245, torsoY - 0.08, Math.sin(ang) * 0.245);
+        bodyGroup.add(puff);
+      }
+    } else if (outfit === "puffer") {
+      // Adorable Quilted Mini Puffer Vest!
+      for (const [dy, r] of [[0.06, 0.224], [-0.01, 0.238], [-0.08, 0.232]] as const) {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 0.038, 10, 26), clothMat);
+        ring.rotation.x = Math.PI / 2;
+        ring.position.set(0, torsoY + dy, 0);
+        ring.castShadow = true;
+        bodyGroup.add(ring);
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // 2. PET BACK GEAR (Mini Fairy Wings, Treat Backpack, Giant Silk Bow!)
+    // ------------------------------------------------------------------
+    let petWings: [THREE.Object3D, THREE.Object3D] | undefined;
+    if (backGear === "wings") {
+      const wingMat = new THREE.MeshPhysicalMaterial({
+        color: clothHex,
+        emissive: clothHex,
+        emissiveIntensity: 0.42,
+        transmission: 0.62,
+        roughness: 0.08,
+        transparent: true,
+        opacity: 0.84,
+        side: THREE.DoubleSide
+      });
+      const pivots: THREE.Object3D[] = [];
+      for (const side of [-1, 1]) {
+        const wPivot = new THREE.Group();
+        wPivot.position.set(side * 0.075, torsoY + 0.06, -0.2);
+
+        const upper = new THREE.Mesh(new THREE.CircleGeometry(0.145, 16), wingMat);
+        upper.scale.set(1.28, 0.68, 1);
+        upper.position.set(side * 0.14, 0.06, -0.02);
+        upper.rotation.z = side * 0.34;
+        wPivot.add(upper);
+
+        const lower = new THREE.Mesh(new THREE.CircleGeometry(0.1, 14), wingMat);
+        lower.scale.set(1.12, 0.66, 1);
+        lower.position.set(side * 0.1, -0.06, -0.02);
+        lower.rotation.z = -side * 0.24;
+        wPivot.add(lower);
+
+        bodyGroup.add(wPivot);
+        pivots.push(wPivot);
+      }
+      petWings = [pivots[0], pivots[1]];
+    } else if (backGear === "backpack") {
+      // Cute Miniature Treat Saddle Backpack!
+      const pack = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.17, 0.1), clothMat);
+      pack.position.set(0, torsoY + 0.02, -0.24);
+      pack.castShadow = true;
+      bodyGroup.add(pack);
+      const flap = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.055, 0.11), whiteClothMat);
+      flap.position.set(0, torsoY + 0.09, -0.24);
+      bodyGroup.add(flap);
+      const clasp = new THREE.Mesh(new THREE.SphereGeometry(0.022, 10, 10), titaniumMat);
+      clasp.position.set(0, torsoY + 0.055, -0.295);
+      bodyGroup.add(clasp);
+    } else if (backGear === "ribbon") {
+      // Oversized Fluffy Satin Back Bow!
+      const knot = new THREE.Mesh(new THREE.SphereGeometry(0.042, 12, 12), clothMat);
+      knot.position.set(0, torsoY + 0.04, -0.23);
+      bodyGroup.add(knot);
+      for (const side of [-1, 1]) {
+        const loop = new THREE.Mesh(new THREE.SphereGeometry(0.088, 12, 10), clothMat);
+        loop.scale.set(1.25, 0.68, 0.45);
+        loop.position.set(side * 0.095, torsoY + 0.05, -0.24);
+        loop.rotation.z = side * 0.2;
+        bodyGroup.add(loop);
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // 3. PET HATS, GLASSES & COLLAR ACCESSORIES (12 Styles!)
+    // ------------------------------------------------------------------
+    if (acc === "none") return petWings;
 
     const showHalo =
       acc === "halo" ||
@@ -2105,9 +2340,6 @@ export class Alchemy3DRenderer {
       acc === "crown" ||
       (acc === "auto" &&
         ((this.impact.sectorsMask ?? 0) === 0b111111 || (this.impact.complexityTier || 1) >= 5));
-
-    const showBowtie = acc === "bowtie";
-    const showBeret = acc === "beret";
 
     if (showHalo) {
       const halo = new THREE.Mesh(
@@ -2134,11 +2366,6 @@ export class Alchemy3DRenderer {
         strap.position.set(0, 0.11, 0.02);
         head.add(strap);
       }
-      const rimMat = new THREE.MeshStandardMaterial({
-        color: "#cbd5e1",
-        metalness: 0.88,
-        roughness: 0.18
-      });
       const lensMat = new THREE.MeshPhysicalMaterial({
         color: pal.liquidTop,
         emissive: pal.electron,
@@ -2150,7 +2377,7 @@ export class Alchemy3DRenderer {
       for (const side of [-1, 1]) {
         const gRim = new THREE.Mesh(
           new THREE.TorusGeometry(isDog ? 0.062 : 0.056, 0.011, 10, 24),
-          rimMat
+          titaniumMat
         );
         gRim.position.set(side * (isDog ? 0.075 : 0.072), isDog ? 0.15 : 0.145, 0.174);
         gRim.rotation.x = -0.34;
@@ -2178,19 +2405,12 @@ export class Alchemy3DRenderer {
       head.add(crown);
     }
 
-    if (showBowtie) {
-      const silkMat = new THREE.MeshStandardMaterial({
-        color: "#f472b6",
-        emissive: "#ec4899",
-        emissiveIntensity: 0.18,
-        roughness: 0.32,
-        metalness: 0.15
-      });
-      const knot = new THREE.Mesh(new THREE.SphereGeometry(0.032, 12, 12), silkMat);
+    if (acc === "bowtie") {
+      const knot = new THREE.Mesh(new THREE.SphereGeometry(0.032, 12, 12), clothGlowMat);
       knot.position.set(0, collarY - 0.01, 0.21);
       bodyGroup.add(knot);
       for (const side of [-1, 1]) {
-        const wing = new THREE.Mesh(new THREE.ConeGeometry(0.052, 0.11, 10), silkMat);
+        const wing = new THREE.Mesh(new THREE.ConeGeometry(0.052, 0.11, 10), clothGlowMat);
         wing.position.set(side * 0.064, collarY - 0.01, 0.205);
         wing.rotation.z = side * (Math.PI / 2);
         wing.scale.set(1, 1, 0.45);
@@ -2198,23 +2418,121 @@ export class Alchemy3DRenderer {
       }
     }
 
-    if (showBeret) {
-      const feltMat = new THREE.MeshStandardMaterial({
-        color: "#334155",
-        roughness: 0.65,
-        metalness: 0.08
-      });
-      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.18, 22, 14), feltMat);
+    if (acc === "beret") {
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.18, 22, 14), clothMat);
       cap.scale.set(1.18, 0.38, 1.12);
       cap.position.set(0.03, 0.23, -0.01);
       cap.rotation.z = -0.22;
       cap.castShadow = true;
       head.add(cap);
-      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.014, 0.055, 8), feltMat);
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.014, 0.055, 8), clothMat);
       stem.position.set(0.045, 0.305, -0.01);
       stem.rotation.z = -0.22;
       head.add(stem);
     }
+
+    if (acc === "scarf") {
+      const wrap = new THREE.Mesh(new THREE.TorusGeometry(0.195, 0.042, 10, 26), clothMat);
+      wrap.rotation.x = Math.PI / 2 + 0.08;
+      wrap.position.set(0, collarY, 0.01);
+      wrap.castShadow = true;
+      bodyGroup.add(wrap);
+      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.18, 0.032), clothMat);
+      tail.position.set(0.08, collarY - 0.1, 0.21);
+      tail.rotation.z = -0.18;
+      bodyGroup.add(tail);
+    }
+
+    if (acc === "beanie") {
+      const dome = new THREE.Mesh(
+        new THREE.SphereGeometry(0.215, 22, 14, 0, Math.PI * 2, 0, Math.PI * 0.46),
+        clothMat
+      );
+      dome.position.set(0, 0.06, -0.01);
+      dome.castShadow = true;
+      head.add(dome);
+      const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.205, 0.028, 10, 26), clothMat);
+      cuff.rotation.x = Math.PI / 2;
+      cuff.position.set(0, 0.09, -0.01);
+      head.add(cuff);
+      const pom = new THREE.Mesh(new THREE.SphereGeometry(0.058, 14, 12), whiteClothMat);
+      pom.position.set(0, 0.305, -0.01);
+      head.add(pom);
+    }
+
+    if (acc === "flower") {
+      // Cute 5-Blossom Flower Crown resting around the ears!
+      const stem = new THREE.Mesh(
+        new THREE.TorusGeometry(0.165, 0.01, 8, 28),
+        new THREE.MeshStandardMaterial({ color: "#34d399", roughness: 0.45 })
+      );
+      stem.rotation.x = Math.PI / 2;
+      stem.position.set(0, 0.18, 0.01);
+      head.add(stem);
+      const petalCols = [clothHex, "#fbcfe8", "#fde68a", "#bae6fd", "#e9d5ff"];
+      for (let i = 0; i < 5; i++) {
+        const ang = (i / 5) * Math.PI * 2 + 0.3;
+        const fl = new THREE.Mesh(
+          new THREE.SphereGeometry(0.042, 10, 10),
+          new THREE.MeshStandardMaterial({ color: petalCols[i], roughness: 0.38 })
+        );
+        fl.scale.set(1.1, 0.65, 1.1);
+        fl.position.set(Math.cos(ang) * 0.165, 0.2, Math.sin(ang) * 0.165);
+        head.add(fl);
+      }
+    }
+
+    if (acc === "wizard") {
+      // Adorable Pointed Alchemist Hat with silver band!
+      const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.24, 0.022, 22), clothMat);
+      brim.position.set(0, 0.2, -0.01);
+      brim.rotation.z = -0.14;
+      head.add(brim);
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.145, 0.32, 18), clothMat);
+      cone.position.set(0.025, 0.35, -0.01);
+      cone.rotation.z = -0.14;
+      cone.castShadow = true;
+      head.add(cone);
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.016, 8, 22), titaniumMat);
+      band.rotation.x = Math.PI / 2;
+      band.rotation.y = -0.14;
+      band.position.set(0.005, 0.22, -0.01);
+      head.add(band);
+    }
+
+    if (acc === "shades") {
+      // Cool Miniature Titanium Shades!
+      const darkLens = new THREE.MeshStandardMaterial({
+        color: "#0f172a",
+        roughness: 0.08,
+        metalness: 0.85
+      });
+      const zOff = isDog ? 0.22 : 0.215;
+      const yOff = isDog ? 0.04 : 0.02;
+      for (const side of [-1, 1]) {
+        const lens = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.056, 0.02), darkLens);
+        lens.position.set(side * 0.082, yOff, zOff);
+        head.add(lens);
+      }
+      const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.014, 0.018), titaniumMat);
+      bridge.position.set(0, yOff + 0.022, zOff + 0.004);
+      head.add(bridge);
+    }
+
+    if (acc === "bandana") {
+      // Cute Explorer Triangle Neckerchief Bandana!
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.188, 0.026, 8, 26), clothMat);
+      band.rotation.x = Math.PI / 2;
+      band.position.set(0, collarY, 0);
+      bodyGroup.add(band);
+      const tri = new THREE.Mesh(new THREE.ConeGeometry(0.115, 0.14, 3), clothMat);
+      tri.rotation.z = Math.PI;
+      tri.scale.set(1.1, 1, 0.35);
+      tri.position.set(0, collarY - 0.08, 0.21);
+      bodyGroup.add(tri);
+    }
+
+    return petWings;
   }
 
   public updateState(next: Partial<LiveImpactState>) {
@@ -4031,7 +4349,7 @@ export class Alchemy3DRenderer {
     nose.position.set(0, -0.04, 0.22);
     head.add(nose);
 
-    this.addPetWardrobe3D(head, group, 0.46, false, variant);
+    const wings = this.addPetWardrobe3D(head, group, 0.46, false, variant);
 
     group.add(head);
     this.dynamicGroup.add(group);
@@ -4040,6 +4358,7 @@ export class Alchemy3DRenderer {
       head,
       tail: tailPivot,
       paw,
+      wings,
       eyes,
       homePos: new THREE.Vector3(x, baseY, z),
       homeRotY: rotY,
@@ -4160,7 +4479,7 @@ export class Alchemy3DRenderer {
       eyes.push(eye);
     }
 
-    this.addPetWardrobe3D(head, group, collar.position.y, true, variant);
+    const wings = this.addPetWardrobe3D(head, group, collar.position.y, true, variant);
 
     group.add(head);
     this.dynamicGroup.add(group);
@@ -4168,6 +4487,7 @@ export class Alchemy3DRenderer {
       group,
       head,
       tail: tailPivot,
+      wings,
       eyes,
       homePos: new THREE.Vector3(x, baseY, z),
       homeRotY: rotY,
@@ -5209,6 +5529,11 @@ export class Alchemy3DRenderer {
     for (let ci = 0; ci < this.companions.length; ci++) {
       const c = this.companions[ci];
       c.petReaction = Math.max(0, c.petReaction - dt * 0.75);
+      if (c.wings) {
+        const flutter = Math.sin(t * (5.2 + c.petReaction * 6) + ci) * 0.28;
+        c.wings[0].rotation.y = -0.3 - flutter;
+        c.wings[1].rotation.y = 0.3 + flutter;
+      }
 
       // Autonomous 3D Pet AI: chase the bouncing toy ball, trot to dropped treats, stroll to Pet Lounge, or nap!
       let targetX = c.homePos.x;

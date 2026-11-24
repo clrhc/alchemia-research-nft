@@ -13,11 +13,19 @@ import {
   computeStructureGeometryQuality
 } from "../structuralAnalysis";
 import {
+  PET_ACCESSORY_ORDER,
+  PET_BACK_GEAR_OPTIONS,
+  PET_COLOR_SWATCHES,
+  PET_OUTFIT_OPTIONS,
   applyGentleDecay,
   applyTamagotchiAction,
   companionBoostMultiplier,
   companionMoodLabel,
   cycleCompanionAccessory,
+  randomizeCompanionWardrobe,
+  setCompanionBackGear,
+  setCompanionOutfit,
+  setCompanionOutfitColor,
   setCompanionPetName,
   toggleCompanionSleep,
   type CompanionVitals
@@ -255,6 +263,25 @@ describe("Tamagotchi Vitals, Daily Streaks & Boost Multiplier", () => {
     const styled2 = cycleCompanionAccessory(styled1);
     expect(styled1.accessory).toBe("bowtie");
     expect(styled2.accessory).toBe("beret");
+
+    // Full 3D Animal Clothing Boutique catalogs & setters
+    expect(PET_OUTFIT_OPTIONS).toHaveLength(8);
+    expect(PET_ACCESSORY_ORDER).toHaveLength(13);
+    expect(PET_BACK_GEAR_OPTIONS).toHaveLength(4);
+    expect(PET_COLOR_SWATCHES).toHaveLength(8);
+
+    const dressed = setCompanionOutfitColor(
+      setCompanionBackGear(setCompanionOutfit(styled2, "labcoat"), "wings"),
+      "#38bdf8"
+    );
+    expect(dressed.outfit).toBe("labcoat");
+    expect(dressed.backGear).toBe("wings");
+    expect(dressed.outfitColor).toBe("#38bdf8");
+
+    const shuffled = randomizeCompanionWardrobe(dressed);
+    expect(PET_OUTFIT_OPTIONS.some((o) => o.id === shuffled.outfit)).toBe(true);
+    expect(PET_BACK_GEAR_OPTIONS.some((b) => b.id === shuffled.backGear)).toBe(true);
+    expect(shuffled.outfitColor).toMatch(/^#[0-9a-fA-F]{6}$/);
   });
 
   it("increments daily streak on consecutive day care and calculates 1.0x–1.4x lab boost", () => {

@@ -160,15 +160,27 @@ import {
 import { soundEngine } from "../engine/soundEngine";
 import {
   PET_ACCESSORY_LABELS,
+  PET_ACCESSORY_ORDER,
+  PET_BACK_GEAR_OPTIONS,
+  PET_COLOR_SWATCHES,
+  PET_OUTFIT_OPTIONS,
   applyTamagotchiAction,
   companionBoostMultiplier,
   companionMoodLabel,
   cycleCompanionAccessory,
   loadCompanionVitals,
+  randomizeCompanionWardrobe,
   saveCompanionVitals,
+  setCompanionAccessory,
+  setCompanionBackGear,
+  setCompanionOutfit,
+  setCompanionOutfitColor,
   setCompanionPetName,
   toggleCompanionSleep,
   type CompanionVitals,
+  type PetAccessory,
+  type PetBackGearId,
+  type PetOutfitId,
   type TamagotchiAction
 } from "../engine/tamagotchi";
 import { complexityTierFromUsd, usdToEth } from "../web3/config";
@@ -564,6 +576,7 @@ export function LabWorldExperience({
   const [goals, setGoals] = useState<Record<GoalKey, boolean>>(() => loadGoals());
   const [editingPetName, setEditingPetName] = useState(false);
   const [petNameDraft, setPetNameDraft] = useState("");
+  const [petSubTab, setPetSubTab] = useState<"care" | "boutique">("care");
   const [vitals, setVitals] = useState<CompanionVitals>(() => loadCompanionVitals(vessel.tokenId));
   const [tamaSignal, setTamaSignal] = useState<{ action: TamagotchiAction; seq: number } | null>(
     null
@@ -1463,7 +1476,15 @@ export function LabWorldExperience({
     setVitals(next);
     saveCompanionVitals(activeVessel.tokenId, next);
     soundEngine.playTap(1174.66);
-    setFeedback(`Switched ${petDisplayName}'s style to ${PET_ACCESSORY_LABELS[next.accessory]}.`);
+    setFeedback(`Switched ${petDisplayName}'s hat to ${PET_ACCESSORY_LABELS[next.accessory]}.`);
+  };
+
+  const applyPetWardrobe = (next: CompanionVitals, toastMsg: string) => {
+    setVitals(next);
+    saveCompanionVitals(activeVessel.tokenId, next);
+    setTamaSignal((prev) => ({ action: "pet", seq: (prev?.seq || 0) + 1 }));
+    soundEngine.playTap(1174.66);
+    setFeedback(toastMsg);
   };
 
   // Complete Sims-Style Contextual Radial Pie Action Handler
@@ -1493,7 +1514,8 @@ export function LabWorldExperience({
         handleToggleSleep();
         break;
       case "pet-style":
-        handleCycleStyle();
+        setPetSubTab("boutique");
+        navigateToStation("pet");
         break;
       case "open-pet":
         navigateToStation("pet");
@@ -1995,6 +2017,9 @@ export function LabWorldExperience({
     petLevel: vitals.level,
     petMoodScore,
     petAccessory: vitals.accessory,
+    petOutfit: vitals.outfit || "none",
+    petBackGear: vitals.backGear || "none",
+    petOutfitColor: vitals.outfitColor || "#f472b6",
     petSleeping: vitals.sleeping,
     workUnits: activeVessel.workUnits
   };
@@ -3055,9 +3080,160 @@ export function LabWorldExperience({
               </div>
             )}
 
-            {/* STATION 3: PET SANCTUARY */}
+            {/* STATION 3: PET SANCTUARY & 3D ANIMAL CLOTHING BOUTIQUE */}
             {openStation === "pet" && (
               <div className="world-drawer-stack">
+                <div className="builder-subtabs" role="tablist" aria-label="Pet studio tabs">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={petSubTab === "care"}
+                    className={`builder-subtab clickable ${petSubTab === "care" ? "active" : ""}`}
+                    onClick={() => {
+                      setPetSubTab("care");
+                      soundEngine.playTap(880);
+                    }}
+                  >
+                    <Heart size={12} /> Care &amp; Play
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={petSubTab === "boutique"}
+                    className={`builder-subtab clickable ${
+                      petSubTab === "boutique" ? "active" : ""
+                    }`}
+                    onClick={() => {
+                      setPetSubTab("boutique");
+                      soundEngine.playTap(1046.5);
+                    }}
+                  >
+                    <Shirt size={12} /> Pet Clothes
+                  </button>
+                </div>
+
+                {petSubTab === "boutique" ? (
+                  <div className="world-drawer-stack">
+                    <div className="furnish-header-row">
+                      <span className="single-kicker">
+                        {petDisplayName}&apos;s 3D Wardrobe
+                      </span>
+                      <button
+                        type="button"
+                        className="subtle-pill-btn clickable"
+                        style={{ padding: "4px 10px", fontSize: "0.7rem" }}
+                        onClick={() => {
+                          const next = randomizeCompanionWardrobe(vitals);
+                          applyPetWardrobe(
+                            next,
+                            `Styled ${petDisplayName} in a fresh randomized outfit!`
+                          );
+                        }}
+                      >
+                        <Dices size={12} /> Shuffle Look
+                      </button>
+                    </div>
+
+                    <div className="creator-field">
+                      <span className="creator-label">Animal Outfits ({PET_OUTFIT_OPTIONS.length})</span>
+                      <div className="creator-chip-grid">
+                        {PET_OUTFIT_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            className={`creator-chip clickable ${
+                              (vitals.outfit || "none") === opt.id ? "active" : ""
+                            }`}
+                            onClick={() =>
+                              applyPetWardrobe(
+                                setCompanionOutfit(vitals, opt.id as PetOutfitId),
+                                `Dressed ${petDisplayName} in ${opt.label}!`
+                              )
+                            }
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="creator-field">
+                      <span className="creator-label">Outfit &amp; Hat Color</span>
+                      <div className="creator-swatch-row">
+                        {PET_COLOR_SWATCHES.map((sw) => (
+                          <button
+                            key={sw.id}
+                            type="button"
+                            className={`creator-swatch clickable ${
+                              (vitals.outfitColor || "#f472b6").toLowerCase() ===
+                              sw.hex.toLowerCase()
+                                ? "active"
+                                : ""
+                            }`}
+                            style={{ background: sw.hex }}
+                            title={sw.label}
+                            aria-label={sw.label}
+                            onClick={() =>
+                              applyPetWardrobe(
+                                setCompanionOutfitColor(vitals, sw.hex),
+                                `Switched ${petDisplayName}'s wardrobe color to ${sw.label}!`
+                              )
+                            }
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="creator-field">
+                      <span className="creator-label">Hats, Scarves &amp; Glasses ({PET_ACCESSORY_ORDER.length})</span>
+                      <div className="creator-chip-grid">
+                        {PET_ACCESSORY_ORDER.map((accId) => (
+                          <button
+                            key={accId}
+                            type="button"
+                            className={`creator-chip clickable ${
+                              (vitals.accessory || "auto") === accId ? "active" : ""
+                            }`}
+                            onClick={() =>
+                              applyPetWardrobe(
+                                setCompanionAccessory(vitals, accId as PetAccessory),
+                                `Equipped ${PET_ACCESSORY_LABELS[accId]} on ${petDisplayName}!`
+                              )
+                            }
+                          >
+                            {PET_ACCESSORY_LABELS[accId]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="creator-field">
+                      <span className="creator-label">Wings &amp; Back Gear ({PET_BACK_GEAR_OPTIONS.length})</span>
+                      <div className="creator-chip-grid">
+                        {PET_BACK_GEAR_OPTIONS.map((bg) => (
+                          <button
+                            key={bg.id}
+                            type="button"
+                            className={`creator-chip clickable ${
+                              (vitals.backGear || "none") === bg.id ? "active" : ""
+                            }`}
+                            onClick={() =>
+                              applyPetWardrobe(
+                                setCompanionBackGear(vitals, bg.id as PetBackGearId),
+                                bg.id === "none"
+                                  ? `Removed ${petDisplayName}'s back gear.`
+                                  : `Put ${bg.label} on ${petDisplayName}!`
+                              )
+                            }
+                          >
+                            {bg.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <>
                 <div className="tama-head">
                   <div>
                     {editingPetName ? (
@@ -3172,6 +3348,16 @@ export function LabWorldExperience({
                   <button
                     type="button"
                     className="subtle-pill-btn clickable"
+                    onClick={() => {
+                      setPetSubTab("boutique");
+                      soundEngine.playTap(1046.5);
+                    }}
+                  >
+                    <Shirt size={13} /> Dress Up
+                  </button>
+                  <button
+                    type="button"
+                    className="subtle-pill-btn clickable"
                     onClick={handleCycleStyle}
                   >
                     <Tag size={13} /> {PET_ACCESSORY_LABELS[vitals.accessory || "auto"]}
@@ -3232,6 +3418,8 @@ export function LabWorldExperience({
                     </span>
                   ))}
                 </div>
+                  </>
+                )}
               </div>
             )}
 
