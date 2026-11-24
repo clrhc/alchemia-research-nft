@@ -3,6 +3,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import {
   AdaptivePixelRatioController,
+  createFastArchitecturalGlass,
   detectDevicePerfProfile,
   installBrowserCompatPolyfills,
   type DevicePerfProfile
@@ -2253,11 +2254,11 @@ export class Alchemy3DRenderer {
     if (Math.hypot(e.clientX - this.pointerDownPos.x, e.clientY - this.pointerDownPos.y) > 7) return;
 
     const rect = this.renderer.domElement.getBoundingClientRect();
-    const ndc = new THREE.Vector2(
+    this.tmpNdc.set(
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -((e.clientY - rect.top) / rect.height) * 2 + 1
     );
-    this.raycaster.setFromCamera(ndc, this.camera);
+    this.raycaster.setFromCamera(this.tmpNdc, this.camera);
 
     // 0. Live 3D Move Mode: clicking anywhere on the active floor places the selected station or furniture!
     if (this.walkMode && !this.creatorCameraMode && this.movingItem) {
@@ -2677,15 +2678,21 @@ export class Alchemy3DRenderer {
         bodyGroup.add(cord);
       }
     } else if (outfit === "raincoat") {
-      // Glossy Translucent Pastel Raincoat Cape with silver buttons!
-      const slickerMat = new THREE.MeshPhysicalMaterial({
-        color: clothHex,
-        roughness: 0.14,
-        clearcoat: 1.0,
-        transmission: 0.35,
-        transparent: true,
-        opacity: 0.92
-      });
+      // Glossy Translucent Pastel Raincoat Cape with silver buttons (zero transmission overhead in walkMode!)
+      const slickerMat = this.walkMode
+        ? createFastArchitecturalGlass({
+            color: clothHex,
+            roughness: 0.14,
+            opacity: 0.86
+          })
+        : new THREE.MeshPhysicalMaterial({
+            color: clothHex,
+            roughness: 0.14,
+            clearcoat: 1.0,
+            transmission: 0.35,
+            transparent: true,
+            opacity: 0.92
+          });
       const cape = new THREE.Mesh(
         new THREE.CylinderGeometry(0.225, 0.285, 0.3, 22, 1, false, -Math.PI * 0.78, Math.PI * 1.56),
         slickerMat
@@ -2761,16 +2768,25 @@ export class Alchemy3DRenderer {
     // ------------------------------------------------------------------
     let petWings: [THREE.Object3D, THREE.Object3D] | undefined;
     if (backGear === "wings") {
-      const wingMat = new THREE.MeshPhysicalMaterial({
-        color: clothHex,
-        emissive: clothHex,
-        emissiveIntensity: 0.42,
-        transmission: 0.62,
-        roughness: 0.08,
-        transparent: true,
-        opacity: 0.84,
-        side: THREE.DoubleSide
-      });
+      const wingMat = this.walkMode
+        ? createFastArchitecturalGlass({
+            color: clothHex,
+            emissive: clothHex,
+            emissiveIntensity: 0.42,
+            roughness: 0.08,
+            opacity: 0.72,
+            side: THREE.DoubleSide
+          })
+        : new THREE.MeshPhysicalMaterial({
+            color: clothHex,
+            emissive: clothHex,
+            emissiveIntensity: 0.42,
+            transmission: 0.62,
+            roughness: 0.08,
+            transparent: true,
+            opacity: 0.84,
+            side: THREE.DoubleSide
+          });
       const pivots: THREE.Object3D[] = [];
       for (const side of [-1, 1]) {
         const wPivot = new THREE.Group();
@@ -2871,14 +2887,22 @@ export class Alchemy3DRenderer {
         strap.position.set(0, 0.11, 0.02);
         head.add(strap);
       }
-      const lensMat = new THREE.MeshPhysicalMaterial({
-        color: pal.liquidTop,
-        emissive: pal.electron,
-        emissiveIntensity: 0.38,
-        roughness: 0.07,
-        transmission: 0.6,
-        transparent: true
-      });
+      const lensMat = this.walkMode
+        ? createFastArchitecturalGlass({
+            color: pal.liquidTop,
+            emissive: pal.electron,
+            emissiveIntensity: 0.38,
+            roughness: 0.07,
+            opacity: 0.66
+          })
+        : new THREE.MeshPhysicalMaterial({
+            color: pal.liquidTop,
+            emissive: pal.electron,
+            emissiveIntensity: 0.38,
+            roughness: 0.07,
+            transmission: 0.6,
+            transparent: true
+          });
       for (const side of [-1, 1]) {
         const gRim = new THREE.Mesh(
           new THREE.TorusGeometry(isDog ? 0.062 : 0.056, 0.011, 10, 24),

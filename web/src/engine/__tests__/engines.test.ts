@@ -60,6 +60,7 @@ import {
   randomizeOutfitOnly,
   sanitizeCharacterProfile
 } from "../characterConfig";
+import { ResearcherAvatar3D } from "../character3D";
 import {
   ONBOARDING_GRAND_BONUS_SPARKS,
   ONBOARDING_STEPS,
@@ -1498,5 +1499,30 @@ describe("Living Minted NFT Neighborhood & Sims Interactivity", () => {
     expect(loadHomeBlueprintSlots(515)[0]?.decor.floorStyle).toBe("marble");
     const clearedSlots = deleteHomeBlueprintSlot(515, 0);
     expect(clearedSlots[0]).toBeNull();
+
+    // 5. ResearcherAvatar3D builds all 9 hairstyles cleanly without front-of-face cylinder blocking
+    //    and preserves shared GPU geometries safely across rebuilds & disposes!
+    const defaultProf = createDefaultCharacterProfile();
+    const avatar = new ResearcherAvatar3D(defaultProf, { enablePlumbob: true });
+    for (const hs of HAIR_STYLES) {
+      avatar.rebuild({ ...defaultProf, hairStyle: hs.id });
+      avatar.update(0.016, 1.2, 0.5, true, 0.08);
+      // Verify no open-ended hair cylinder in the head was flipped backward (rotation.y === Math.PI)
+      avatar.root.traverse((obj) => {
+        const mesh = obj as { geometry?: { type?: string }; rotation?: { y: number } };
+        if (mesh.geometry?.type === "CylinderGeometry" && hs.id === "bob") {
+          // Bob cylinder sits around head with open front at theta=0 (+Z), never flipped by PI!
+          const isFlippedHeadCyl =
+            Math.abs((mesh.rotation?.y ?? 0) - Math.PI) < 0.05 &&
+            (obj.parent?.position.y ?? 0) > 0.7;
+          expect(isFlippedHeadCyl).toBe(false);
+        }
+      });
+    }
+    avatar.disposeRig();
+    // Creating a second avatar after disposing the first still succeeds cleanly with shared buffers
+    const avatar2 = new ResearcherAvatar3D(defaultProf);
+    expect(avatar2.root.children.length).toBeGreaterThan(0);
+    avatar2.disposeRig();
   });
 });

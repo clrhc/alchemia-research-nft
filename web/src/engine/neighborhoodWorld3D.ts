@@ -186,8 +186,23 @@ export class NeighborhoodWorld3D {
   private laneLineMat!: THREE.MeshBasicMaterial;
   private stripeMat!: THREE.MeshBasicMaterial;
   private metalMat!: THREE.MeshStandardMaterial;
+  // Shared neighbor house & yard materials reused across up to 240+ minted plots (drastically reduces WebGL state switches!)
+  private sharedNeighborStoneMat!: THREE.MeshStandardMaterial;
+  private sharedNeighborMetalMat!: THREE.MeshStandardMaterial;
+  private sharedNeighborGlassMat!: THREE.Material;
+  private sharedYardLawnMat!: THREE.MeshStandardMaterial;
+  private sharedHedgeMat!: THREE.MeshStandardMaterial;
+  private sharedWoodBedMat!: THREE.MeshStandardMaterial;
+  private sharedFenceMat!: THREE.MeshStandardMaterial;
+  private sharedMaterialsSet = new Set<THREE.Material>();
   private canalBridgesBuilt = false;
   private builtExpansionBands = 0;
+
+  // Cached per-frame zero-allocation buffers & dirty-tracked query arrays
+  private cachedRaycastTargets: THREE.Object3D[] | null = null;
+  private cachedObstacles: Array<[number, number, number]> | null = null;
+  private npcCoordBuf: Array<[number, number]> = [];
+  private frameCounter = 0;
 
   private skyMat: THREE.ShaderMaterial;
   private canalMat!: THREE.ShaderMaterial;
@@ -230,6 +245,37 @@ export class NeighborhoodWorld3D {
     this.groundTex.wrapS = THREE.RepeatWrapping;
     this.groundTex.wrapT = THREE.RepeatWrapping;
     this.groundTex.repeat.set(3.8, 3.8);
+
+    // Initialize shared neighbor architecture & yard materials once for all 240+ minted plots
+    this.sharedNeighborStoneMat = new THREE.MeshStandardMaterial({
+      map: this.terrazzoTex,
+      color: "#f4f7fb",
+      roughness: 0.46
+    });
+    this.sharedNeighborMetalMat = new THREE.MeshStandardMaterial({
+      map: this.titaniumTex,
+      color: "#cfd8e6",
+      roughness: 0.22,
+      metalness: 0.88
+    });
+    this.sharedNeighborGlassMat = createFastArchitecturalGlass({
+      color: "#eaf4ff",
+      roughness: 0.08,
+      opacity: 0.56
+    });
+    this.sharedYardLawnMat = new THREE.MeshStandardMaterial({ color: "#bbf7d0", roughness: 0.85 });
+    this.sharedHedgeMat = new THREE.MeshStandardMaterial({ color: "#4ade80", roughness: 0.7 });
+    this.sharedWoodBedMat = new THREE.MeshStandardMaterial({ color: "#c8a986", roughness: 0.68 });
+    this.sharedFenceMat = new THREE.MeshStandardMaterial({ color: "#f8fafc", roughness: 0.44 });
+    [
+      this.sharedNeighborStoneMat,
+      this.sharedNeighborMetalMat,
+      this.sharedNeighborGlassMat,
+      this.sharedYardLawnMat,
+      this.sharedHedgeMat,
+      this.sharedWoodBedMat,
+      this.sharedFenceMat
+    ].forEach((m) => this.sharedMaterialsSet.add(m));
 
     this.traffic = new TownTraffic3D(this.perfProfile.maxTrafficVehicles);
 
@@ -1519,7 +1565,13 @@ export class NeighborhoodWorld3D {
     this.builtExpansionBands = Math.max(this.builtExpansionBands, neededBands);
   }
 
+  private invalidateSpatialCaches() {
+    this.cachedRaycastTargets = null;
+    this.cachedObstacles = null;
+  }
+
   private removePlotRig(rig: NeighborPlotRig) {
+    this.invalidateSpatialCaches();
     this.neighborsGroup.remove(rig.group);
     this.disposeObjectTree(rig.group);
     if (rig.conduitFiber) {
@@ -1638,6 +1690,7 @@ export class NeighborhoodWorld3D {
       this.blueprintsGroup.add(g);
       this.blueprintRigs.push({ lot, group: g, beaconRing });
     }
+    this.invalidateSpatialCaches();
   }
 
   public getPlacements(): NeighborhoodPlotPlacement[] {
@@ -1645,6 +1698,7 @@ export class NeighborhoodWorld3D {
   }
 
   public getRaycastTargets(): THREE.Object3D[] {
+    if (this.cachedRaycastTargets) return this.cachedRaycastTargets;
     const targets: THREE.Object3D[] = [this.fountainGroup];
     for (const rig of this.plotRigs.values()) {
       targets.push(rig.group);
@@ -1656,16 +1710,19 @@ export class NeighborhoodWorld3D {
       targets.push(npc.avatar.root);
     }
     targets.push(...this.traffic.getRaycastTargets());
+    this.cachedRaycastTargets = targets;
     return targets;
   }
 
   public getNeighborObstacles(): Array<[number, number, number]> {
+    if (this.cachedObstacles) return this.cachedObstacles;
     const obs: Array<[number, number, number]> = [
       [COMMUNITY_FOUNTAIN_POS[0], COMMUNITY_FOUNTAIN_POS[1], 1.72]
     ];
     for (const rig of this.plotRigs.values()) {
       obs.push([rig.placement.x, rig.placement.z, rig.placement.ring === 3 ? 2.15 : 2.25]);
     }
+    this.cachedObstacles = obs;
     return obs;
   }
 
@@ -1745,28 +1802,15 @@ export class NeighborhoodWorld3D {
     g.position.set(pl.x, 0, pl.z);
     g.rotation.y = pl.rotY;
 
-    const stoneMat = new THREE.MeshStandardMaterial({
-      map: this.terrazzoTex,
-      color: "#f4f7fb",
-      roughness: 0.46
-    });
-    const metalMat = new THREE.MeshStandardMaterial({
-      map: this.titaniumTex,
-      color: "#cfd8e6",
-      roughness: 0.22,
-      metalness: 0.88
-    });
+    const stoneMat = this.sharedNeighborStoneMat;
+    const metalMat = this.sharedNeighborMetalMat;
     const elixirMat = new THREE.MeshStandardMaterial({
       color: pal.liquidMid,
       emissive: pal.liquidMid,
       emissiveIntensity: 0.68,
       roughness: 0.16
     });
-    const glassMat = createFastArchitecturalGlass({
-      color: "#eaf4ff",
-      roughness: 0.08,
-      opacity: 0.56
-    });
+    const glassMat = this.sharedNeighborGlassMat;
 
     const windowGlowMats: THREE.MeshStandardMaterial[] = [elixirMat];
     let spinner: THREE.Object3D | undefined;
@@ -1777,10 +1821,7 @@ export class NeighborhoodWorld3D {
     if (pl.ring === 3) {
       // Lightweight Walkable Subdivided Outer Expansion Residence (5.0m × 4.8m green yard + driveway
       // + modern multi-story architect glass villa — keeps 240+ outer plots smooth at 60fps!)
-      const lawn = new THREE.Mesh(
-        new THREE.BoxGeometry(5.0, 0.05, 4.8),
-        new THREE.MeshStandardMaterial({ color: "#bbf7d0", roughness: 0.86 })
-      );
+      const lawn = new THREE.Mesh(new THREE.BoxGeometry(5.0, 0.05, 4.8), this.sharedYardLawnMat);
       lawn.position.y = 0.025;
       lawn.receiveShadow = true;
       g.add(lawn);
@@ -1849,10 +1890,10 @@ export class NeighborhoodWorld3D {
       });
     } else {
       // Full-Detail Walkable Subdivided Neighborhood Plot (5.4m × 5.2m) with Fence, Driveway, Mailbox & Mini-Greenhouse!
-      const yardLawnMat = new THREE.MeshStandardMaterial({ color: "#bbf7d0", roughness: 0.85 });
-      const hedgeMat = new THREE.MeshStandardMaterial({ color: "#4ade80", roughness: 0.7 });
-      const woodBedMat = new THREE.MeshStandardMaterial({ color: "#c8a986", roughness: 0.68 });
-      const fenceMat = new THREE.MeshStandardMaterial({ color: "#f8fafc", roughness: 0.44 });
+      const yardLawnMat = this.sharedYardLawnMat;
+      const hedgeMat = this.sharedHedgeMat;
+      const woodBedMat = this.sharedWoodBedMat;
+      const fenceMat = this.sharedFenceMat;
       const flowerColors = ["#f472b6", "#a78bfa", "#fbbf24", "#38bdf8", "#fb7185"];
       const yardBloomCol = flowerColors[lab.tokenId % flowerColors.length];
       const yardBloomMat = new THREE.MeshStandardMaterial({
@@ -2256,6 +2297,7 @@ export class NeighborhoodWorld3D {
         bubbleSprite: null
       });
     });
+    this.invalidateSpatialCaches();
   }
 
   private showNpcBubble(npc: NeighborNpcRig, kind: MoodBubbleKind) {
@@ -2385,7 +2427,10 @@ export class NeighborhoodWorld3D {
 
       npc.avatar.root.position.set(npc.x, 0.04, npc.z);
       npc.avatar.root.rotation.y = npc.yaw;
-      npc.avatar.update(dt, t + i * 1.7, isMoving ? 0.5 : 0, isMoving);
+      // Distance LOD: faraway Ring-2 NPCs animate at 30Hz (every 2nd frame) for mobile/Safari headroom!
+      if (distToPlayer < 26 || ((this.frameCounter + i) & 1) === 0) {
+        npc.avatar.update(distToPlayer < 26 ? dt : dt * 2, t + i * 1.7, isMoving ? 0.5 : 0, isMoving);
+      }
 
       const ud = npc.avatar.root.userData.simsTarget as SimsObjectTarget | undefined;
       if (ud) {
@@ -2407,10 +2452,19 @@ export class NeighborhoodWorld3D {
         }
       }
     }
+    this.frameCounter++;
 
-    // Update Autonomous Right-Hand-Lane Driving Vehicles (politely yielding to player & strolling NPCs!)
-    const npcCoords: Array<readonly [number, number]> = this.npcRigs.map((n) => [n.x, n.z]);
-    this.traffic.update(dt, t, playerX, playerZ, npcCoords);
+    // Update Autonomous Right-Hand-Lane Driving Vehicles with zero per-frame array allocation!
+    this.npcCoordBuf.length = this.npcRigs.length;
+    for (let i = 0; i < this.npcRigs.length; i++) {
+      const n = this.npcRigs[i];
+      if (!this.npcCoordBuf[i]) this.npcCoordBuf[i] = [n.x, n.z];
+      else {
+        this.npcCoordBuf[i][0] = n.x;
+        this.npcCoordBuf[i][1] = n.z;
+      }
+    }
+    this.traffic.update(dt, t, playerX, playerZ, this.npcCoordBuf);
 
     // Animate arcing social research-spark beams between labs
     for (let i = this.socialBeams.length - 1; i >= 0; i--) {
@@ -2470,6 +2524,7 @@ export class NeighborhoodWorld3D {
       if (m.material) {
         const mats = Array.isArray(m.material) ? m.material : [m.material];
         for (const mat of mats) {
+          if (this.sharedMaterialsSet.has(mat)) continue;
           const mAny = mat as unknown as { map?: THREE.Texture | null };
           if (mAny.map && !shared.has(mAny.map)) mAny.map.dispose();
           mat.dispose();
@@ -2490,8 +2545,11 @@ export class NeighborhoodWorld3D {
     this.plotRigs.clear();
     this.socialBeams = [];
     this.constructionFx = [];
+    this.invalidateSpatialCaches();
     this.traffic.dispose();
     this.disposeObjectTree(this.group);
+    for (const mat of this.sharedMaterialsSet) mat.dispose();
+    this.sharedMaterialsSet.clear();
     this.groundTex.dispose();
     for (const tex of this.ownedTextures) tex.dispose();
     this.ownedTextures = [];

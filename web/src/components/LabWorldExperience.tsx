@@ -25,6 +25,7 @@ import {
   Download,
   Droplets,
   Eye,
+  EyeOff,
   FileJson,
   Flame,
   FlaskConical,
@@ -512,6 +513,7 @@ export function LabWorldExperience({
   const [soundOn, setSoundOn] = useState(() => soundEngine.isEnabled());
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showTouchPad, setShowTouchPad] = useState(false);
+  const [zenHud, setZenHud] = useState(false);
 
   // Visit Other Users' Homes + Cozy Guestbook state
   const [visitingHome, setVisitingHome] = useState<NeighborLabSummary | null>(
@@ -1408,6 +1410,9 @@ export function LabWorldExperience({
         soundEngine.playTap(987.77);
       } else if (e.key.toLowerCase() === "c") {
         openCharacterCreator();
+      } else if (e.key.toLowerCase() === "z") {
+        setZenHud((z) => !z);
+        soundEngine.playTap(987.77);
       } else if (e.key === "1") {
         setCameraMode("orbit");
         setCamPreset((p) => ({ preset: "iso", seq: (p?.seq || 0) + 1 }));
@@ -3826,7 +3831,7 @@ export function LabWorldExperience({
       )}
 
       {/* Layer 1: 5 World-Anchored Decluttered Floating Glass Cards + Hairline SVG Leader Lines */}
-      {walkModeActive && !creatorOpen && (
+      {walkModeActive && !creatorOpen && !zenHud && (
         <div className="world-floats-layer" aria-label="In-world lab station floating panels">
           <svg className="world-leaders-svg" aria-hidden="true">
             {LAB_STATIONS.map((st) => (
@@ -4065,6 +4070,19 @@ export function LabWorldExperience({
 
             <button
               type="button"
+              className={`world-icon-orb clickable ${zenHud ? "active" : ""}`}
+              onClick={() => {
+                setZenHud((z) => !z);
+                soundEngine.playTap(987.77);
+              }}
+              aria-label={zenHud ? "Show HUD overlays" : "Clean view — hide HUD overlays"}
+              title={zenHud ? "Show HUD (Z)" : "Clean view — hide extra HUD (Z)"}
+            >
+              {zenHud ? <Eye size={14} /> : <EyeOff size={14} />}
+            </button>
+
+            <button
+              type="button"
               className="world-icon-orb clickable"
               onClick={() => setSoundOn(soundEngine.toggle())}
               aria-label={soundOn ? "Mute sound" : "Enable sound"}
@@ -4107,101 +4125,160 @@ export function LabWorldExperience({
         </header>
       )}
 
-      {/* Clickable Cutesy Silver-Glass B1 / 1F / 2F / 3F Multi-Story Floor Switcher */}
-      {!creatorOpen && Boolean(savedProfile) && (labDecor.hasBasement || labDecor.houseFloors >= 2) && (
-        <div className="floor-switcher-hud" role="group" aria-label="Switch house floor">
-          <span className="floor-switcher-label">
-            <Layers size={11} /> Floor
-          </span>
-          {([0, 1, 2, 3] as FloorNumber[])
-            .filter((f) => (f === 0 ? labDecor.hasBasement : f <= labDecor.houseFloors))
-            .map((f) => (
-              <button
-                key={f}
-                type="button"
-                className={`floor-pill-btn clickable ${activeFloor === f ? "active" : ""}`}
-                onClick={() => handleSwitchFloor(f)}
-                title={
-                  f === 0
-                    ? "Go down to B1 Sunken Basement (or walk down the East steps!)"
-                    : `Go to Floor ${formatFloorLabel(f)} (or walk up/down the steps!)`
-                }
-              >
-                {formatFloorLabel(f)}
-              </button>
-            ))}
+      {/* Unified Non-Overlapping Left HUD Column: Plumbob Mood -> Floor Switcher -> Active Buffs */}
+      {!creatorOpen && Boolean(savedProfile) && !zenHud && (
+        <div className="world-left-hud-stack">
+          <button
+            type="button"
+            className="sims-vibes-bar clickable"
+            aria-label="Open Sims moods, character status and relationships"
+            title="Click to change mood, rename character, or grow relationships"
+            onClick={() => {
+              setNeighborhoodDrawerOpen(false);
+              setQuestsDrawerOpen(false);
+              setConsoleSubTab("sims");
+              setOpenStation((cur) => (cur === "console" ? null : "console"));
+              soundEngine.playTap(1046.5);
+            }}
+          >
+            <span
+              className="sims-plumbob-dome"
+              style={{ "--plumbob": simsMood.plumbobHex } as React.CSSProperties}
+            >
+              <svg viewBox="0 0 16 24" className="sims-plumbob-icon" aria-hidden="true">
+                <polygon points="8,1 15,12 8,23 1,12" fill={simsMood.plumbobHex} />
+                <polygon points="8,1 15,12 8,14" fill="rgba(255,255,255,0.48)" />
+              </svg>
+            </span>
+            <span className="sims-mood-title">{simsMood.name}</span>
+            <div className="sims-vibe-meters">
+              <span className="sims-need-pill" title={`Energy ${simsVibes.energy}%`}>
+                <Zap size={10} className="sims-need-ico" />
+                <span className="sims-need-track">
+                  <i style={{ width: `${simsVibes.energy}%`, background: "#10b981" }} />
+                </span>
+              </span>
+              <span className="sims-need-pill" title={`Focus ${simsVibes.focus}%`}>
+                <Brain size={10} className="sims-need-ico" />
+                <span className="sims-need-track">
+                  <i style={{ width: `${simsVibes.focus}%`, background: "#38bdf8" }} />
+                </span>
+              </span>
+              <span className="sims-need-pill" title={`Social ${simsVibes.social}%`}>
+                <Heart size={10} className="sims-need-ico" />
+                <span className="sims-need-track">
+                  <i style={{ width: `${simsVibes.social}%`, background: "#f472b6" }} />
+                </span>
+              </span>
+              <span className="sims-need-pill" title={`Fun ${simsVibes.fun}%`}>
+                <Smile size={10} className="sims-need-ico" />
+                <span className="sims-need-track">
+                  <i style={{ width: `${simsVibes.fun}%`, background: "#a855f7" }} />
+                </span>
+              </span>
+            </div>
+            {activeMoodlet && activeMoodlet.expiresAtMs > nowTick ? (
+              <span className="sims-activity-pill">
+                <Sparkles size={9} /> {activeMoodlet.label}
+              </span>
+            ) : currentActivity ? (
+              <span className="sims-activity-pill">{currentActivity}</span>
+            ) : null}
+          </button>
+
+          {(labDecor.hasBasement || labDecor.houseFloors >= 2) && (
+            <div className="floor-switcher-hud" role="group" aria-label="Switch house floor">
+              <span className="floor-switcher-label">
+                <Layers size={11} /> Floor
+              </span>
+              {([0, 1, 2, 3] as FloorNumber[])
+                .filter((f) => (f === 0 ? labDecor.hasBasement : f <= labDecor.houseFloors))
+                .map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    className={`floor-pill-btn clickable ${activeFloor === f ? "active" : ""}`}
+                    onClick={() => handleSwitchFloor(f)}
+                    title={
+                      f === 0
+                        ? "Go down to B1 Sunken Basement (or walk down the East steps!)"
+                        : `Go to Floor ${formatFloorLabel(f)} (or walk up/down the steps!)`
+                    }
+                  >
+                    {formatFloorLabel(f)}
+                  </button>
+                ))}
+            </div>
+          )}
+
+          {!movingItem &&
+            (activeElixirBuffs.length > 0 ||
+              townWeatherId !== "sunlit-breeze" ||
+              friendshipSynergy.bonusPct > 0) && (
+              <div className="active-buffs-hud" aria-label="Active world buffs">
+                {townWeatherId !== "sunlit-breeze" && (
+                  <button
+                    type="button"
+                    className="active-buff-pill clickable"
+                    style={{ "--buff-accent": activeWeather.accent } as React.CSSProperties}
+                    onClick={() => {
+                      setOpenStation(null);
+                      setQuestsDrawerOpen(false);
+                      setTownSubTab("town");
+                      setNeighborhoodDrawerOpen(true);
+                    }}
+                    title={activeWeather.desc}
+                  >
+                    <CloudRain size={11} />
+                    <span>
+                      {activeWeather.shortLabel} · {activeWeather.perkLabel}
+                    </span>
+                  </button>
+                )}
+                {activeElixirBuffs.map((buff) => {
+                  const secLeft = Math.max(0, Math.ceil((buff.expiresAtMs - nowTick) / 1000));
+                  const mm = Math.floor(secLeft / 60);
+                  const ss = String(secLeft % 60).padStart(2, "0");
+                  return (
+                    <button
+                      key={buff.id}
+                      type="button"
+                      className="active-buff-pill clickable"
+                      style={{ "--buff-accent": buff.accent } as React.CSSProperties}
+                      onClick={() => {
+                        setOpenStation(null);
+                        setQuestsDrawerOpen(false);
+                        setTownSubTab("alchemy");
+                        setNeighborhoodDrawerOpen(true);
+                      }}
+                    >
+                      <Wand2 size={11} />
+                      <span>
+                        {buff.label} · {mm}:{ss}
+                      </span>
+                    </button>
+                  );
+                })}
+                {friendshipSynergy.bonusPct > 0 && (
+                  <button
+                    type="button"
+                    className="active-buff-pill clickable"
+                    style={{ "--buff-accent": "#f472b6" } as React.CSSProperties}
+                    onClick={() => {
+                      setNeighborhoodDrawerOpen(false);
+                      setQuestsDrawerOpen(false);
+                      setConsoleSubTab("friends");
+                      setOpenStation("console");
+                    }}
+                  >
+                    <HeartHandshake size={11} />
+                    <span>Town Friends +{friendshipSynergy.bonusPct}% ALCH</span>
+                  </button>
+                )}
+              </div>
+            )}
         </div>
       )}
-
-      {/* Compact Live Active Buffs, Weather Perk & Town Friendship Synergy Strip */}
-      {!creatorOpen &&
-        Boolean(savedProfile) &&
-        !movingItem &&
-        (activeElixirBuffs.length > 0 ||
-          townWeatherId !== "sunlit-breeze" ||
-          friendshipSynergy.bonusPct > 0) && (
-          <div className="active-buffs-hud" aria-label="Active world buffs">
-            {townWeatherId !== "sunlit-breeze" && (
-              <button
-                type="button"
-                className="active-buff-pill clickable"
-                style={{ "--buff-accent": activeWeather.accent } as React.CSSProperties}
-                onClick={() => {
-                  setOpenStation(null);
-                  setQuestsDrawerOpen(false);
-                  setTownSubTab("town");
-                  setNeighborhoodDrawerOpen(true);
-                }}
-                title={activeWeather.desc}
-              >
-                <CloudRain size={11} />
-                <span>
-                  {activeWeather.shortLabel} · {activeWeather.perkLabel}
-                </span>
-              </button>
-            )}
-            {activeElixirBuffs.map((buff) => {
-              const secLeft = Math.max(0, Math.ceil((buff.expiresAtMs - nowTick) / 1000));
-              const mm = Math.floor(secLeft / 60);
-              const ss = String(secLeft % 60).padStart(2, "0");
-              return (
-                <button
-                  key={buff.id}
-                  type="button"
-                  className="active-buff-pill clickable"
-                  style={{ "--buff-accent": buff.accent } as React.CSSProperties}
-                  onClick={() => {
-                    setOpenStation(null);
-                    setQuestsDrawerOpen(false);
-                    setTownSubTab("alchemy");
-                    setNeighborhoodDrawerOpen(true);
-                  }}
-                >
-                  <Wand2 size={11} />
-                  <span>
-                    {buff.label} · {mm}:{ss}
-                  </span>
-                </button>
-              );
-            })}
-            {friendshipSynergy.bonusPct > 0 && (
-              <button
-                type="button"
-                className="active-buff-pill clickable"
-                style={{ "--buff-accent": "#f472b6" } as React.CSSProperties}
-                onClick={() => {
-                  setNeighborhoodDrawerOpen(false);
-                  setQuestsDrawerOpen(false);
-                  setConsoleSubTab("friends");
-                  setOpenStation("console");
-                }}
-              >
-                <HeartHandshake size={11} />
-                <span>Town Friends +{friendshipSynergy.bonusPct}% ALCH</span>
-              </button>
-            )}
-          </div>
-        )}
 
       {/* Live 3D Free-Placement Move Mode Floating Top Banner */}
       {!creatorOpen && movingItem && (() => {
@@ -4268,66 +4345,6 @@ export function LabWorldExperience({
           </div>
         );
       })()}
-
-      {/* Clickable Cutesy Silver-Glass Plumbob Mood & 4-Icon Needs Charm */}
-      {!creatorOpen && Boolean(savedProfile) && (
-        <button
-          type="button"
-          className="sims-vibes-bar clickable"
-          aria-label="Open Sims moods, character status and relationships"
-          title="Click to change mood, rename character, or grow relationships"
-          onClick={() => {
-            setNeighborhoodDrawerOpen(false);
-            setConsoleSubTab("sims");
-            setOpenStation((cur) => (cur === "console" ? null : "console"));
-            soundEngine.playTap(1046.5);
-          }}
-        >
-          <span
-            className="sims-plumbob-dome"
-            style={{ "--plumbob": simsMood.plumbobHex } as React.CSSProperties}
-          >
-            <svg viewBox="0 0 16 24" className="sims-plumbob-icon" aria-hidden="true">
-              <polygon points="8,1 15,12 8,23 1,12" fill={simsMood.plumbobHex} />
-              <polygon points="8,1 15,12 8,14" fill="rgba(255,255,255,0.48)" />
-            </svg>
-          </span>
-          <span className="sims-mood-title">{simsMood.name}</span>
-          <div className="sims-vibe-meters">
-            <span className="sims-need-pill" title={`Energy ${simsVibes.energy}%`}>
-              <Zap size={10} className="sims-need-ico" />
-              <span className="sims-need-track">
-                <i style={{ width: `${simsVibes.energy}%`, background: "#10b981" }} />
-              </span>
-            </span>
-            <span className="sims-need-pill" title={`Focus ${simsVibes.focus}%`}>
-              <Brain size={10} className="sims-need-ico" />
-              <span className="sims-need-track">
-                <i style={{ width: `${simsVibes.focus}%`, background: "#38bdf8" }} />
-              </span>
-            </span>
-            <span className="sims-need-pill" title={`Social ${simsVibes.social}%`}>
-              <Heart size={10} className="sims-need-ico" />
-              <span className="sims-need-track">
-                <i style={{ width: `${simsVibes.social}%`, background: "#f472b6" }} />
-              </span>
-            </span>
-            <span className="sims-need-pill" title={`Fun ${simsVibes.fun}%`}>
-              <Smile size={10} className="sims-need-ico" />
-              <span className="sims-need-track">
-                <i style={{ width: `${simsVibes.fun}%`, background: "#a855f7" }} />
-              </span>
-            </span>
-          </div>
-          {activeMoodlet && activeMoodlet.expiresAtMs > nowTick ? (
-            <span className="sims-activity-pill">
-              <Sparkles size={9} /> {activeMoodlet.label}
-            </span>
-          ) : currentActivity ? (
-            <span className="sims-activity-pill">{currentActivity}</span>
-          ) : null}
-        </button>
-      )}
 
       {/* Doorstep Portal Transition Shimmer when Entering or Leaving a Neighbor's Home */}
       {homeTransitionLabel && (
@@ -8294,6 +8311,7 @@ export function LabWorldExperience({
 
       {/* Interactive Cutesy Silver-Glass Housewarming Welcome Guide (Auto-Hides When Drawers Open!) */}
       {!creatorOpen &&
+        !zenHud &&
         Boolean(savedProfile) &&
         !onboarding.dismissed &&
         !onboardingProgress.allDone &&
@@ -8389,11 +8407,11 @@ export function LabWorldExperience({
         )}
 
       {/* Subtle Frosted-Silver Keyboard & Walk Hint Micro-Capsule */}
-      {!creatorOpen && Boolean(savedProfile) && (
+      {!creatorOpen && Boolean(savedProfile) && !zenHud && !openStation && !neighborhoodDrawerOpen && !questsDrawerOpen && (
         <div className="world-walk-hint">
           <kbd className="world-walk-kbd">WASD</kbd> walk · <kbd className="world-walk-kbd">Click</kbd>{" "}
           Sims actions · <kbd className="world-walk-kbd">N</kbd> town ·{" "}
-          <kbd className="world-walk-kbd">H</kbd> home · <kbd className="world-walk-kbd">C</kbd> look
+          <kbd className="world-walk-kbd">Z</kbd> clean view · <kbd className="world-walk-kbd">C</kbd> closet
         </div>
       )}
 
@@ -8431,7 +8449,7 @@ export function LabWorldExperience({
       )}
 
       {/* Live Dual-Scale Architectural Blueprint Mini-Map Radar (Home Lab ↔ Neighborhood District!) */}
-      {!creatorOpen && Boolean(savedProfile) && !showTouchPad && (
+      {!creatorOpen && Boolean(savedProfile) && !showTouchPad && !zenHud && (
         <div className="world-minimap" aria-label="Lab & neighborhood blueprint mini-map">
           <svg viewBox="0 0 112 112" className="world-minimap-svg">
             {radarIsDistrict ? (
