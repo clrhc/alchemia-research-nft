@@ -305,6 +305,89 @@ body {
   box-shadow: 0 0 6px rgba(14, 165, 233, 0.6);
 }
 
+/* Progression Quests & Achievements Cards */
+.quest-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 11px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(203, 213, 225, 0.6);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.quest-card.is-ready {
+  background: linear-gradient(155deg, rgba(255, 255, 255, 0.94), rgba(254, 249, 195, 0.42));
+  border-color: rgba(245, 158, 11, 0.55);
+  box-shadow: 0 8px 20px -12px rgba(245, 158, 11, 0.4);
+}
+
+.quest-card.is-complete {
+  background: rgba(240, 253, 244, 0.64);
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
+.quest-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.quest-chain-kicker {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+
+.quest-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.quest-meta-nums {
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 600;
+  color: #475569;
+  white-space: nowrap;
+}
+
+.ach-rarity-pill {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1.5px 6px;
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+}
+
+.ach-rarity-pill.is-common {
+  background: rgba(226, 232, 240, 0.85);
+  color: #475569;
+}
+
+.ach-rarity-pill.is-rare {
+  background: rgba(224, 242, 254, 0.9);
+  color: #0369a1;
+}
+
+.ach-rarity-pill.is-epic {
+  background: rgba(237, 233, 254, 0.9);
+  color: #6d28d9;
+}
+
+.ach-rarity-pill.is-legendary {
+  background: linear-gradient(135deg, rgba(254, 243, 199, 0.96), rgba(253, 230, 138, 0.9));
+  color: #b45309;
+}
+
 /* Main Mint Stack (Panel-Free) */
 .open-stack {
   width: min(500px, 100%);

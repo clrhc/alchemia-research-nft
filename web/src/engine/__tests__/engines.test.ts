@@ -117,6 +117,19 @@ import {
   unpackLabStyleBits
 } from "../../web3/estateCodec";
 import {
+  ACHIEVEMENT_DEFS,
+  QUEST_STEPS,
+  RESEARCHER_RANKS,
+  claimAchievementReward,
+  claimAllReadyRewards,
+  claimQuestReward,
+  createInitialProgressionState,
+  evaluateAchievements,
+  evaluateQuestChains,
+  getResearcherRank,
+  recordProgressionAction
+} from "../progressionQuests";
+import {
   AdaptivePixelRatioController,
   detectDevicePerfProfile
 } from "../browserCompat";
@@ -1227,5 +1240,75 @@ describe("Living Minted NFT Neighborhood & Sims Interactivity", () => {
     expect(testState.contractAddress).toMatch(/^0x[a-fA-F0-9]{40}$/);
     expect(testState.coinAddress).toMatch(/^0x[a-fA-F0-9]{40}$/);
     expect(testState.chainId).toBe(84532);
+  });
+
+  it("tracks multi-step progression quest chains, 10 achievement badges, researcher XP ranks & claimable spark rewards", () => {
+    expect(QUEST_STEPS).toHaveLength(15); // 5 chains × 3 progressive steps
+    expect(ACHIEVEMENT_DEFS).toHaveLength(10);
+    expect(RESEARCHER_RANKS).toHaveLength(8);
+
+    const baseMetrics = {
+      builtRoomsCount: 0,
+      houseSize: 1,
+      houseFloors: 2,
+      totalStationUpgrades: 0,
+      builtLabWingsCount: 0,
+      totalHarvests: 0,
+      uniqueSpeciesHarvested: 0,
+      totalMintedLabs: 6,
+      expansionBandsUnlocked: 0,
+      bestRelationScore: 0
+    };
+
+    let state = createInitialProgressionState();
+    expect(getResearcherRank(state.xp).level).toBe(1);
+    expect(evaluateQuestChains(state, baseMetrics).every((q) => !q.readyToClaim)).toBe(true);
+
+    // Record player actions -> unlocks Step 1 quests & Common achievements
+    state = recordProgressionAction(state, "furnishActions", 1);
+    state = recordProgressionAction(state, "protonPops", 5);
+    state = recordProgressionAction(state, "vehicleWaves", 2);
+    state = recordProgressionAction(state, "floorChanges", 1);
+    state = recordProgressionAction(state, "petCareActions", 2);
+
+    const chainsBefore = evaluateQuestChains(state, baseMetrics);
+    expect(chainsBefore.find((c) => c.chainId === "architect")?.readyToClaim).toBe(true);
+    expect(chainsBefore.find((c) => c.chainId === "science")?.readyToClaim).toBe(true);
+    expect(chainsBefore.find((c) => c.chainId === "town")?.readyToClaim).toBe(true);
+
+    // Claim Architect Step 1 -> awards Sparks & XP and advances chain to Step 2!
+    const claimArch1 = claimQuestReward(state, baseMetrics, "q-arch-1");
+    expect(claimArch1.claimed).toBe(true);
+    expect(claimArch1.sparksAwarded).toBe(8);
+    expect(claimArch1.xpAwarded).toBe(25);
+    // Double-claiming same quest is idempotent and awards 0
+    expect(claimQuestReward(claimArch1.nextState, baseMetrics, "q-arch-1").claimed).toBe(false);
+    state = claimArch1.nextState;
+    expect(evaluateQuestChains(state, baseMetrics).find((c) => c.chainId === "architect")?.activeStep.id).toBe(
+      "q-arch-2"
+    );
+
+    // Claim an unlocked achievement ("ach-traffic" -> Beep Beep Boulevard)
+    const achRes = claimAchievementReward(state, baseMetrics, "ach-traffic");
+    expect(achRes.claimed).toBe(true);
+    expect(achRes.sparksAwarded).toBe(10);
+    state = achRes.nextState;
+
+    // Claim All Ready collects remaining quests & achievements and ranks up researcher!
+    const bulk = claimAllReadyRewards(state, {
+      ...baseMetrics,
+      builtRoomsCount: 3,
+      totalHarvests: 5,
+      uniqueSpeciesHarvested: 4,
+      totalMintedLabs: 26,
+      expansionBandsUnlocked: 1,
+      bestRelationScore: 45,
+      totalStationUpgrades: 3
+    });
+    expect(bulk.claimedCount).toBeGreaterThanOrEqual(8);
+    expect(bulk.sparksAwarded).toBeGreaterThan(150);
+    expect(bulk.leveledUp).toBe(true);
+    expect(bulk.newRank.level).toBeGreaterThanOrEqual(4);
+    expect(bulk.newRank.unlockedTitles.length).toBeGreaterThanOrEqual(4);
   });
 });

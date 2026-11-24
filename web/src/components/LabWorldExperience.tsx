@@ -199,6 +199,20 @@ import {
   type OnboardingStepId
 } from "../engine/onboarding";
 import {
+  claimAchievementReward,
+  claimAllReadyRewards,
+  claimQuestReward,
+  evaluateAchievements,
+  evaluateQuestChains,
+  getResearcherRank,
+  loadProgressionState,
+  recordProgressionAction,
+  saveProgressionState,
+  type ProgressionCounterKey,
+  type ProgressionLiveMetrics,
+  type ProgressionState
+} from "../engine/progressionQuests";
+import {
   PROTEIN_BENCHMARKS,
   downloadPDBFromSnapshot,
   downloadScienceCertificateFromSnapshot,
@@ -513,6 +527,9 @@ export function LabWorldExperience({
   const [activeFloor, setActiveFloor] = useState<FloorNumber>(1);
   const [movingItem, setMovingItem] = useState<MovableItemId | null>(null);
   const [moveSnapGrid, setMoveSnapGrid] = useState<boolean>(true);
+  const [questsDrawerOpen, setQuestsDrawerOpen] = useState(false);
+  const [questsSubTab, setQuestsSubTab] = useState<"quests" | "achievements">("quests");
+  const [progression, setProgression] = useState<ProgressionState>(() => loadProgressionState());
   const [gardenState, setGardenState] = useState<GardenWorldState>(() =>
     loadGardenState(activeVessel.tokenId)
   );
@@ -831,8 +848,13 @@ export function LabWorldExperience({
     }
   }, [dailyDone, liveSnap, dailyChallenge, onAwardPlayBonus]);
 
+  const bumpProgression = useCallback((key: ProgressionCounterKey, delta = 1) => {
+    setProgression((prev) => saveProgressionState(recordProgressionAction(prev, key, delta)));
+  }, []);
+
   const markGoalDone = useCallback(
     (key: GoalKey) => {
+      if (key === "fold") bumpProgression("scienceActions");
       setGoals((prev) => {
         if (prev[key]) return prev;
         const next = { ...prev, [key]: true };
@@ -913,8 +935,9 @@ export function LabWorldExperience({
       setLabDecor(saved);
       soundEngine.playTap(1046.5);
       completeGuideStep("furnish");
+      bumpProgression("furnishActions");
     },
-    [activeVessel.tokenId, completeGuideStep]
+    [activeVessel.tokenId, completeGuideStep, bumpProgression]
   );
 
   const triggerPlayerMoodlet = useCallback((mood: SimsMoodName, label: string, source: string) => {
@@ -987,6 +1010,7 @@ export function LabWorldExperience({
         savedProfile?.trait
       );
       setRelationsMap(outcome.nextMap);
+      bumpProgression("socialActions");
       setSimsVibes((v) => applySimsVibeDelta(v, outcome.playerVibeDelta));
       triggerPlayerMoodlet(outcome.playerMood, outcome.moodletLabel, npcProfile.name);
 
@@ -1076,6 +1100,7 @@ export function LabWorldExperience({
         "visit",
         savedProfile.trait
       );
+      bumpProgression("neighborVisits");
       setRelationsMap(outcome.nextMap);
       setVisitingHome(lab);
       setHomeTransitionLabel(`Entering ${host.name}'s Home · Lab #${lab.tokenId}`);
@@ -1409,6 +1434,7 @@ export function LabWorldExperience({
     manualPanelPinRef.current = true;
     setPieMenu(null);
     setNeighborhoodDrawerOpen(false);
+    setQuestsDrawerOpen(false);
     setCurrentActivity(null);
     setCameraMode("follow");
     setOpenStation(stationId);
@@ -1475,6 +1501,7 @@ export function LabWorldExperience({
     soundEngine.playTap(1046.5);
     setPieMenu(null);
     setOpenStation(null);
+    setQuestsDrawerOpen(false);
     setInspectedNeighbor(null);
     setNeighborhoodDrawerOpen((open) => {
       const next = !open;
@@ -1507,6 +1534,145 @@ export function LabWorldExperience({
     () => computeStationUpgradeBonuses(labDecor.stationUpgrades),
     [labDecor.stationUpgrades]
   );
+
+  // Live Progression Quests, Achievements & Researcher Rank Evaluation
+  const progressionLiveMetrics = useMemo<ProgressionLiveMetrics>(() => {
+    const uniqueSpecies = Object.values(gardenState.harvestedCounts).filter((c) => (c ?? 0) > 0).length;
+    const bestRel = Object.values(relationsMap).reduce((m, r) => Math.max(m, r.score || 0), 0);
+    return {
+      builtRoomsCount: labDecor.extraRooms.length,
+      houseSize: labDecor.houseSize,
+      houseFloors: labDecor.houseFloors,
+      totalStationUpgrades: stationBonuses.totalUpgrades,
+      builtLabWingsCount: countSectors(vessel.sectorsMask),
+      totalHarvests: gardenState.totalHarvests,
+      uniqueSpeciesHarvested: uniqueSpecies,
+      totalMintedLabs: neighbors.length + 1,
+      expansionBandsUnlocked: activeExpansionBands,
+      bestRelationScore: bestRel
+    };
+  }, [
+    labDecor.extraRooms.length,
+    labDecor.houseSize,
+    labDecor.houseFloors,
+    stationBonuses.totalUpgrades,
+    vessel.sectorsMask,
+    gardenState.totalHarvests,
+    gardenState.harvestedCounts,
+    neighbors.length,
+    activeExpansionBands,
+    relationsMap
+  ]);
+
+  const questChains = useMemo(
+    () => evaluateQuestChains(progression, progressionLiveMetrics),
+    [progression, progressionLiveMetrics]
+  );
+  const evaluatedAchievements = useMemo(
+    () => evaluateAchievements(progression, progressionLiveMetrics),
+    [progression, progressionLiveMetrics]
+  );
+  const researcherRank = useMemo(() => getResearcherRank(progression.xp), [progression.xp]);
+  const readyQuestCount = useMemo(
+    () => questChains.filter((q) => q.readyToClaim).length,
+    [questChains]
+  );
+  const readyAchCount = useMemo(
+    () => evaluatedAchievements.filter((a) => a.readyToClaim).length,
+    [evaluatedAchievements]
+  );
+  const readyRewardCount = readyQuestCount + readyAchCount;
+
+  // Celebrate live whenever a new quest or achievement flips to Ready-to-Claim!
+  const prevReadyRewardsRef = useRef<number>(readyRewardCount);
+  useEffect(() => {
+    const prev = prevReadyRewardsRef.current;
+    prevReadyRewardsRef.current = readyRewardCount;
+    if (readyRewardCount > prev) {
+      const readyQ = questChains.find((q) => q.readyToClaim);
+      const readyA = evaluatedAchievements.find((a) => a.readyToClaim);
+      soundEngine.playBuildRoom();
+      setFeedback(
+        readyQ
+          ? `Quest complete: "${readyQ.activeStep.title}"! Open Quests to claim +${readyQ.activeStep.rewardSparks} sparks.`
+          : readyA
+            ? `Achievement unlocked: "${readyA.def.title}"! Open Quests to claim +${readyA.def.rewardSparks} sparks.`
+            : `New reward ready to claim in Quests!`
+      );
+    }
+  }, [readyRewardCount, questChains, evaluatedAchievements]);
+
+  const handleClaimQuest = (questId: string) => {
+    const res = claimQuestReward(progression, progressionLiveMetrics, questId);
+    if (!res.claimed) return;
+    setProgression(saveProgressionState(res.nextState));
+    onAwardPlayBonus?.(res.sparksAwarded);
+    soundEngine.playBuildRoom();
+    setCharacterEmote((prev) => ({ emote: "hop", seq: (prev?.seq || 0) + 1 }));
+    triggerPlayerMoodlet("Inspired", `+${res.sparksAwarded} Quest Sparks!`, "Quest Board");
+    setFeedback(
+      res.leveledUp
+        ? `Rank Up! Lv.${res.newRank.level} ${res.newRank.title} (+${res.sparksAwarded} sparks, +${res.xpAwarded} XP)`
+        : `Claimed +${res.sparksAwarded} sparks & +${res.xpAwarded} XP!`
+    );
+  };
+
+  const handleClaimAchievement = (achievementId: string) => {
+    const res = claimAchievementReward(progression, progressionLiveMetrics, achievementId);
+    if (!res.claimed) return;
+    setProgression(saveProgressionState(res.nextState));
+    onAwardPlayBonus?.(res.sparksAwarded);
+    soundEngine.playBuildRoom();
+    setCharacterEmote((prev) => ({ emote: "spin", seq: (prev?.seq || 0) + 1 }));
+    triggerPlayerMoodlet("Inspired", "Achievement Badge Claimed!", "Trophy Case");
+    setFeedback(
+      res.leveledUp
+        ? `Rank Up! Lv.${res.newRank.level} ${res.newRank.title} (+${res.sparksAwarded} sparks, +${res.xpAwarded} XP)`
+        : `Achievement claimed! +${res.sparksAwarded} sparks & +${res.xpAwarded} XP!`
+    );
+  };
+
+  const handleClaimAllRewards = () => {
+    const res = claimAllReadyRewards(progression, progressionLiveMetrics);
+    if (res.claimedCount === 0) return;
+    setProgression(saveProgressionState(res.nextState));
+    onAwardPlayBonus?.(res.sparksAwarded);
+    soundEngine.playBuildRoom();
+    setCharacterEmote((prev) => ({ emote: "spin", seq: (prev?.seq || 0) + 1 }));
+    triggerPlayerMoodlet("Inspired", `Claimed ${res.claimedCount} Rewards!`, "Quest Board");
+    setFeedback(
+      res.leveledUp
+        ? `Claimed ${res.claimedCount} rewards (+${res.sparksAwarded} sparks) & Ranked Up to Lv.${res.newRank.level} ${res.newRank.title}!`
+        : `Claimed ${res.claimedCount} rewards! +${res.sparksAwarded} sparks & +${res.xpAwarded} XP!`
+    );
+  };
+
+  const handleEquipRankTitle = (title: string) => {
+    if (!savedProfile) return;
+    const updated = saveCharacterProfile({ ...savedProfile, title });
+    setSavedProfile(updated);
+    setCreatorDraft(updated);
+    soundEngine.playTap(1046.5);
+    setFeedback(`Equipped prestige title: ${title}!`);
+  };
+
+  const handleJumpToQuestHint = (hint: "builder" | "research" | "gardens" | "pet" | "town") => {
+    setQuestsDrawerOpen(false);
+    if (hint === "gardens") {
+      setOpenStation(null);
+      setTownSubTab("gardens");
+      setNeighborhoodDrawerOpen(true);
+      soundEngine.playTap(1046.5);
+    } else if (hint === "town") {
+      setOpenStation(null);
+      setTownSubTab("town");
+      setNeighborhoodDrawerOpen(true);
+      setCameraMode("neighborhood");
+      soundEngine.playTap(1046.5);
+    } else {
+      navigateToStation(hint);
+    }
+  };
   const tamaBoost = Number((companionBoostMultiplier(vitals) + stationBonuses.petBoostBonus).toFixed(2));
   const baseRate = computeMiningRatePerHour(tier, activeVessel.sectorsMask, activeVessel.workUnits);
   const effectiveMiningRate = Number((baseRate * tamaBoost * stationBonuses.miningMult).toFixed(1));
@@ -1564,6 +1730,7 @@ export function LabWorldExperience({
       const clamped = Math.max(minFloor, Math.min(labDecor.houseFloors, floor)) as FloorNumber;
       setActiveFloor(clamped);
       artworkRef.current?.setActiveFloor(clamped);
+      if (clamped !== activeFloor) bumpProgression("floorChanges");
       soundEngine.playTap(
         clamped === 0 ? 660 : clamped === 3 ? 1318.5 : clamped === 2 ? 1046.5 : 880
       );
@@ -1734,6 +1901,7 @@ export function LabWorldExperience({
         plantSeedInPlot(gardenState, plotId, speciesId, Date.now())
       );
       setGardenState(next);
+      bumpProgression("plantsPlanted");
       artworkRef.current?.waterGardenPlotFX(plotId);
       soundEngine.playTap(1046.5);
       setCharacterEmote((prev) => ({ emote: "hop", seq: (prev?.seq || 0) + 1 }));
@@ -1860,6 +2028,7 @@ export function LabWorldExperience({
     setCameraMode("follow");
     setCurrentActivity(`Strolling to ${park.name}`);
     artworkRef.current?.walkToPark(park.id);
+    bumpProgression("parkVisits");
     soundEngine.playTap(1046.5);
     setFeedback(`Walking down the paved boulevard to ${park.name}!`);
   }, []);
@@ -1934,6 +2103,7 @@ export function LabWorldExperience({
     setTamaSignal((prev) => ({ action, seq: (prev?.seq || 0) + 1 }));
     setCharacterEmote((prev) => ({ emote: "wave", seq: (prev?.seq || 0) + 1 }));
     completeGuideStep("pet");
+    bumpProgression("petCareActions");
   };
 
   const handleSavePetName = () => {
@@ -1961,6 +2131,7 @@ export function LabWorldExperience({
     setVitals(next);
     saveCompanionVitals(activeVessel.tokenId, next);
     soundEngine.playTap(1174.66);
+    bumpProgression("petStyleActions");
     setFeedback(`Switched ${petDisplayName}'s hat to ${PET_ACCESSORY_LABELS[next.accessory]}.`);
   };
 
@@ -1971,6 +2142,7 @@ export function LabWorldExperience({
     soundEngine.playTap(1174.66);
     setFeedback(toastMsg);
     completeGuideStep("pet");
+    bumpProgression("petStyleActions");
   };
 
   const handleTriggerGuideAction = (stepId: OnboardingStepId) => {
@@ -2645,6 +2817,7 @@ export function LabWorldExperience({
           artworkRef.current?.triggerEmote("wave");
           artworkRef.current?.triggerVehicleHonk(target.vehicleId);
           soundEngine.playTap(1046.5);
+          bumpProgression("vehicleWaves");
           setSimsVibes((prev) => applySimsVibeDelta(prev, { social: 8, fun: 6 }));
           setFeedback(`Waved at the passing ${target.label}! (+Social)`);
         }
@@ -2654,6 +2827,7 @@ export function LabWorldExperience({
           artworkRef.current?.triggerVehicleHonk(target.vehicleId);
           soundEngine.playTap(659.25);
           window.setTimeout(() => soundEngine.playTap(880), 110);
+          bumpProgression("vehicleWaves");
           setSimsVibes((prev) => applySimsVibeDelta(prev, { fun: 12, social: 4 }));
           setFeedback(`Beep beep! ${target.label} honked back along the boulevard!`);
         }
@@ -3000,6 +3174,7 @@ export function LabWorldExperience({
         onActiveFloorChange={(fl) => {
           setActiveFloor(fl);
           setCurrentActivity(`Walked to ${formatFloorLabel(fl)}`);
+          bumpProgression("floorChanges");
         }}
         onSimsObjectClick={(target, sx, sy) => {
           if (!savedProfile && !creatorOpen && creatorTriggerMode === "on-first-interaction") {
@@ -3032,6 +3207,7 @@ export function LabWorldExperience({
             setSimsVibes((v) => applySimsVibeDelta(v, { social: 12 }));
             onAwardPlayBonus?.(ev.bonusCoins);
             markGoalDone("pet");
+            bumpProgression("petCareActions");
             setFeedback(
               `Petted ${petDisplayName} in 3D.${onAwardPlayBonus ? ` +${ev.bonusCoins} spark.` : ""}`
             );
@@ -3045,6 +3221,7 @@ export function LabWorldExperience({
           } else if (ev.kind === "atom-popped") {
             onAwardPlayBonus?.(ev.bonusCoins);
             markGoalDone("proton");
+            bumpProgression("protonPops");
             setSimsVibes((v) => applySimsVibeDelta(v, { focus: 6 }));
             setMiniGame((prev) => (prev ? { ...prev, popped: prev.popped + 1 } : null));
             setFeedback(
@@ -3869,6 +4046,7 @@ export function LabWorldExperience({
                           onClick={async () => {
                             try {
                               await onAnchorProof(vessel, liveSnap);
+                              bumpProgression("proofsAnchored");
                               soundEngine.playBuildRoom();
                               setFeedback(
                                 `Saved fold proof (${liveSnap.proofHash.slice(0, 12)}…) on-chain.`
@@ -6571,6 +6749,255 @@ export function LabWorldExperience({
         </aside>
       )}
 
+      {/* Layer 3.6: Progression Quests, Achievements & Researcher Rank Rewards Drawer */}
+      {!creatorOpen && !openStation && !neighborhoodDrawerOpen && questsDrawerOpen && (
+        <aside className="glass-panel world-station-drawer" aria-label="Progression Quests & Achievements">
+          <div className="world-drawer-head">
+            <div className="world-drawer-title-group">
+              <span
+                className="drawer-icon-medallion"
+                style={{ "--bubble-accent": "#f59e0b" } as React.CSSProperties}
+              >
+                <Trophy size={17} />
+              </span>
+              <div>
+                <div className="single-kicker">
+                  Lv.{researcherRank.level} {researcherRank.title} · {progression.xp} XP
+                </div>
+                <h3 className="world-drawer-title">Quests &amp; Achievements</h3>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="inline-icon-btn clickable"
+              onClick={() => setQuestsDrawerOpen(false)}
+              aria-label="Close quests panel"
+            >
+              <X size={14} />
+            </button>
+          </div>
+
+          <div className="world-drawer-scroll">
+            <div className="world-drawer-stack">
+              {/* Researcher Rank Progress + Claim All Button */}
+              <div className="town-growth-card">
+                <div className="town-growth-head">
+                  <strong>
+                    Rank {researcherRank.level}/8 · {researcherRank.title}
+                  </strong>
+                  <span>
+                    {researcherRank.nextRankXp
+                      ? `${researcherRank.xp} / ${researcherRank.nextRankXp} XP`
+                      : `${researcherRank.xp} XP · Max Rank`}
+                  </span>
+                </div>
+                <div className="town-growth-track" style={{ marginTop: 6 }}>
+                  <div
+                    className="town-growth-fill"
+                    style={{
+                      width: `${Math.max(8, researcherRank.progressPct)}%`,
+                      background: "linear-gradient(90deg, #f59e0b, #fbbf24)"
+                    }}
+                  />
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    marginTop: 9,
+                    flexWrap: "wrap"
+                  }}
+                >
+                  <span className="tama-sub">
+                    Total claimed: <strong>+{progression.totalSparksClaimed} sparks</strong>
+                  </span>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {savedProfile && savedProfile.title !== researcherRank.title && (
+                      <button
+                        type="button"
+                        className="subtle-pill-btn clickable"
+                        style={{ padding: "4px 9px", fontSize: "0.68rem" }}
+                        onClick={() => handleEquipRankTitle(researcherRank.title)}
+                      >
+                        <Award size={11} /> Equip Title
+                      </button>
+                    )}
+                    {readyRewardCount > 0 && (
+                      <button
+                        type="button"
+                        className="sector-btn clickable"
+                        style={{ padding: "4px 10px", fontSize: "0.7rem" }}
+                        onClick={handleClaimAllRewards}
+                      >
+                        <Sparkles size={11} /> Claim All ({readyRewardCount})
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="builder-subtabs" role="tablist" aria-label="Quests or Achievements">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={questsSubTab === "quests"}
+                  className={`builder-subtab clickable ${questsSubTab === "quests" ? "active" : ""}`}
+                  onClick={() => {
+                    setQuestsSubTab("quests");
+                    soundEngine.playTap(987.77);
+                  }}
+                >
+                  <Star size={12} /> Quests{readyQuestCount > 0 ? ` (${readyQuestCount}!)` : ""}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={questsSubTab === "achievements"}
+                  className={`builder-subtab clickable ${
+                    questsSubTab === "achievements" ? "active" : ""
+                  }`}
+                  onClick={() => {
+                    setQuestsSubTab("achievements");
+                    soundEngine.playTap(1046.5);
+                  }}
+                >
+                  <Trophy size={12} /> Badges ({evaluatedAchievements.filter((a) => a.claimed).length}/
+                  {evaluatedAchievements.length})
+                  {readyAchCount > 0 ? ` · ${readyAchCount}!` : ""}
+                </button>
+              </div>
+
+              {questsSubTab === "quests" ? (
+                <div className="world-sector-list">
+                  {questChains.map((chain) => (
+                    <div
+                      key={chain.chainId}
+                      className={`quest-card ${chain.readyToClaim ? "is-ready" : ""} ${
+                        chain.allClaimed ? "is-complete" : ""
+                      }`}
+                    >
+                      <div className="quest-card-top">
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="quest-chain-kicker" style={{ color: chain.accent }}>
+                            {chain.chainLabel} · Step{" "}
+                            {Math.min(chain.totalSteps, chain.completedSteps + (chain.allClaimed ? 0 : 1))}
+                            /{chain.totalSteps}
+                          </div>
+                          <strong>{chain.activeStep.title}</strong>
+                          <div className="tama-sub">{chain.activeStep.desc}</div>
+                        </div>
+                        <div style={{ flexShrink: 0 }}>
+                          {chain.allClaimed ? (
+                            <span className="built-pill">
+                              <Check size={11} /> Done
+                            </span>
+                          ) : chain.readyToClaim ? (
+                            <button
+                              type="button"
+                              className="sector-btn clickable"
+                              style={{ padding: "5px 10px", fontSize: "0.7rem" }}
+                              onClick={() => handleClaimQuest(chain.activeStep.id)}
+                            >
+                              <Sparkles size={11} /> +{chain.activeStep.rewardSparks}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="subtle-pill-btn clickable"
+                              style={{ padding: "4px 9px", fontSize: "0.68rem" }}
+                              onClick={() => handleJumpToQuestHint(chain.activeStep.actionHint)}
+                            >
+                              Go <ArrowRight size={10} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="quest-progress-row">
+                        <div className="garden-progress-track" style={{ flex: 1, marginTop: 0 }}>
+                          <div
+                            className="garden-progress-fill"
+                            style={{
+                              width: `${chain.allClaimed ? 100 : Math.max(6, chain.pct)}%`,
+                              background: chain.accent
+                            }}
+                          />
+                        </div>
+                        <span className="quest-meta-nums">
+                          {chain.allClaimed
+                            ? "Chain Mastered"
+                            : `${chain.progress}/${chain.target} · +${chain.activeStep.rewardSparks}⚡ +${chain.activeStep.rewardXp}xp`}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="world-sector-list">
+                  {evaluatedAchievements.map((ach) => (
+                    <div
+                      key={ach.def.id}
+                      className={`quest-card ${ach.readyToClaim ? "is-ready" : ""} ${
+                        ach.claimed ? "is-complete" : ""
+                      }`}
+                    >
+                      <div className="quest-card-top">
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                            <strong>{ach.def.title}</strong>
+                            <span
+                              className={`ach-rarity-pill is-${ach.def.rarity.toLowerCase()}`}
+                            >
+                              {ach.def.rarity}
+                            </span>
+                          </div>
+                          <div className="tama-sub">{ach.def.desc}</div>
+                        </div>
+                        <div style={{ flexShrink: 0 }}>
+                          {ach.claimed ? (
+                            <span className="built-pill">
+                              <Check size={11} /> Earned
+                            </span>
+                          ) : ach.readyToClaim ? (
+                            <button
+                              type="button"
+                              className="sector-btn clickable"
+                              style={{ padding: "5px 10px", fontSize: "0.7rem" }}
+                              onClick={() => handleClaimAchievement(ach.def.id)}
+                            >
+                              <Sparkles size={11} /> +{ach.def.rewardSparks}
+                            </button>
+                          ) : (
+                            <span className="quest-meta-nums">
+                              +{ach.def.rewardSparks}⚡
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="quest-progress-row">
+                        <div className="garden-progress-track" style={{ flex: 1, marginTop: 0 }}>
+                          <div
+                            className="garden-progress-fill"
+                            style={{
+                              width: `${ach.claimed ? 100 : Math.max(5, ach.pct)}%`,
+                              background: ach.def.accent
+                            }}
+                          />
+                        </div>
+                        <span className="quest-meta-nums">
+                          {ach.progress}/{ach.target} · +{ach.def.rewardXp}xp
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </aside>
+      )}
+
       {/* Layer 4: Plush Silver-White Glassmorphism Bottom Dock & Cute Icon Controls */}
       {!creatorOpen && Boolean(savedProfile) && (
         <div className="world-hud-bottom">
@@ -6622,6 +7049,7 @@ export function LabWorldExperience({
                 soundEngine.playTap(1046.5);
                 setPieMenu(null);
                 setOpenStation(null);
+                setQuestsDrawerOpen(false);
                 setTownSubTab("gardens");
                 setNeighborhoodDrawerOpen((open) => (townSubTab === "gardens" ? !open : true));
               }}
@@ -6631,6 +7059,26 @@ export function LabWorldExperience({
                 <Flower2 size={13} />
               </span>
               <span>{readyGardenCount > 0 ? `Gardens (${readyGardenCount})` : "Gardens"}</span>
+            </button>
+            <button
+              type="button"
+              className={`world-dock-btn clickable ${questsDrawerOpen ? "active" : ""} ${
+                readyRewardCount > 0 ? "is-near" : ""
+              }`}
+              style={{ "--dock-accent": "#f59e0b" } as React.CSSProperties}
+              onClick={() => {
+                soundEngine.playTap(1174.66);
+                setPieMenu(null);
+                setOpenStation(null);
+                setNeighborhoodDrawerOpen(false);
+                setQuestsDrawerOpen((open) => !open);
+              }}
+              title="Open Progression Quests, Achievements & Spark Rewards"
+            >
+              <span className="dock-icon-charm">
+                <Trophy size={13} />
+              </span>
+              <span>{readyRewardCount > 0 ? `Quests (${readyRewardCount}!)` : "Quests"}</span>
             </button>
           </div>
 
@@ -6711,6 +7159,7 @@ export function LabWorldExperience({
         !onboardingProgress.allDone &&
         !openStation &&
         !neighborhoodDrawerOpen &&
+        !questsDrawerOpen &&
         onboardingProgress.nextStep && (
           onboarding.minimized ? (
             <button
