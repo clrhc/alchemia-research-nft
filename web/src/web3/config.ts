@@ -82,12 +82,20 @@ export const CHAIN_NAMES: Record<number, string> = {
   31337: "Local Hardhat Node"
 };
 
-export const CONTRACT_ADDRESS = (
-  import.meta.env.VITE_CONTRACT_ADDRESS || "0x6f6D4c12EF3b3de964E2C8C84Bed4eBb8a83677F"
+export type AppNetworkMode = "example" | "testnet";
+
+export const TESTNET_CONTRACT_ADDRESS = (
+  import.meta.env.VITE_CONTRACT_ADDRESS || "0x34765BAD704E355906DA16476E90Ea25866f2d5F"
 ).trim();
-export const COIN_CONTRACT_ADDRESS = (
-  import.meta.env.VITE_COIN_ADDRESS || "0x4Da32048ab4Fc630FED0ECc5a48D6cE3c31Ea382"
+export const TESTNET_COIN_ADDRESS = (
+  import.meta.env.VITE_COIN_ADDRESS || "0xFD204815cE4A66c9A539551c03B5944F6069851a"
 ).trim();
+export const TESTNET_RENDERER_ADDRESS = (
+  import.meta.env.VITE_RENDERER_ADDRESS || "0x676FC571c4381EA47f0D0C86ec3c9872015d77c1"
+).trim();
+
+export const CONTRACT_ADDRESS = TESTNET_CONTRACT_ADDRESS;
+export const COIN_CONTRACT_ADDRESS = TESTNET_COIN_ADDRESS;
 export const TARGET_CHAIN_ID = Number(import.meta.env.VITE_CHAIN_ID || "84532");
 export const BASE_MINT_PRICE_ETH = Number(import.meta.env.VITE_MINT_PRICE_ETH || "0.0004");
 export const ETH_USD_RATE = Number(import.meta.env.VITE_ETH_USD_RATE || "2500"); // 0.0004 ETH = $1.00

@@ -4,16 +4,18 @@ import {
   BASE_MINT_PRICE_ETH,
   CHAIN_RPC_FALLBACKS,
   CHAIN_RPC_URLS,
-  COIN_CONTRACT_ADDRESS,
-  CONTRACT_ADDRESS,
   DEFAULT_CAUSES,
   IMPACT_SPLIT_PCT,
   TARGET_CHAIN_ID,
+  TESTNET_COIN_ADDRESS,
+  TESTNET_CONTRACT_ADDRESS,
   complexityTierFromUsd,
   ethToUsd,
   usdToEth,
+  type AppNetworkMode,
   type ResearchCauseInfo
 } from "./config";
+import type { OnChainEstateBlueprint } from "./estateCodec";
 import { randomSeedHex, SeededRNG } from "../engine/prng";
 import { deterministicNeighborSeed } from "../engine/neighborhoodLayout";
 import { stageFromEth } from "../engine/traits";
@@ -36,6 +38,7 @@ export interface MintedVessel {
   syncedAtMs?: number;
   mintedAt: number;
   txHash?: string;
+  estate?: OnChainEstateBlueprint;
 }
 
 export interface ResearchDiscoveryLog {
@@ -74,8 +77,34 @@ export interface CollectionState {
 }
 
 const DEMO_STORAGE_KEY = "alchemia_ecosystem_v2";
-const CHAIN_CACHE_PREFIX = "alchemia_chain_cache_v1_";
-const COIN_ADDRESS = COIN_CONTRACT_ADDRESS;
+const NETWORK_MODE_STORAGE_KEY = "alchemia_network_mode_v1";
+const CHAIN_CACHE_PREFIX = "alchemia_chain_cache_v2_";
+
+export function loadNetworkMode(): AppNetworkMode {
+  if (typeof window === "undefined") return "example";
+  try {
+    const param = new URLSearchParams(window.location.search).get("mode")?.toLowerCase();
+    if (param === "example" || param === "demo") return "example";
+    if (param === "testnet" || param === "live" || param === "sepolia") return "testnet";
+    const saved = window.localStorage.getItem(NETWORK_MODE_STORAGE_KEY);
+    if (saved === "example" || saved === "testnet") return saved;
+  } catch {
+    // ignore storage errors
+  }
+  return "example";
+}
+
+export function saveNetworkMode(mode: AppNetworkMode) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(NETWORK_MODE_STORAGE_KEY, mode);
+    const url = new URL(window.location.href);
+    url.searchParams.set("mode", mode);
+    window.history.replaceState({}, "", url.toString());
+  } catch {
+    // ignore storage/history errors inside sandboxed iframes
+  }
+}
 
 function chainCacheKey(chainId: number, contractAddress: string): string {
   return `${CHAIN_CACHE_PREFIX}${chainId}_${contractAddress.toLowerCase()}`;
@@ -262,17 +291,22 @@ function createInitialDemoVessels(): MintedVessel[] {
   }));
 }
 
-export function loadInitialCollectionState(): CollectionState {
+export function loadCollectionStateForMode(
+  mode: AppNetworkMode,
+  walletAddress: string | null = null
+): CollectionState {
   const defaultTotal = DEFAULT_CAUSES.reduce((sum, c) => sum + c.raisedEth, 0);
-  const isLiveChain = Boolean(CONTRACT_ADDRESS);
+  const isLiveChain = mode === "testnet" && Boolean(TESTNET_CONTRACT_ADDRESS);
+  const activeContract = isLiveChain ? TESTNET_CONTRACT_ADDRESS : "";
+  const activeCoin = isLiveChain ? TESTNET_COIN_ADDRESS : "";
 
   const base: CollectionState = {
     connectedMode: isLiveChain ? modeFromChainId(TARGET_CHAIN_ID) : "simulation",
     chainSynced: !isLiveChain,
     chainId: TARGET_CHAIN_ID,
-    contractAddress: CONTRACT_ADDRESS,
-    coinAddress: COIN_ADDRESS,
-    walletAddress: null,
+    contractAddress: activeContract,
+    coinAddress: activeCoin,
+    walletAddress,
     totalSupply: isLiveChain ? 0 : 6,
     maxSupply: 0,
     supplyLocked: false,
@@ -294,11 +328,18 @@ export function loadInitialCollectionState(): CollectionState {
   if (typeof window !== "undefined") {
     try {
       if (isLiveChain) {
-        const cached = window.localStorage.getItem(chainCacheKey(TARGET_CHAIN_ID, CONTRACT_ADDRESS));
+        const cached = window.localStorage.getItem(chainCacheKey(TARGET_CHAIN_ID, activeContract));
         if (cached) {
           const parsed = JSON.parse(cached);
           if (parsed && typeof parsed.globalDonatedEth === "number") {
-            return { ...base, ...parsed, chainSynced: true, walletAddress: null };
+            return {
+              ...base,
+              ...parsed,
+              contractAddress: activeContract,
+              coinAddress: activeCoin,
+              chainSynced: true,
+              walletAddress
+            };
           }
         }
       } else {
@@ -306,8 +347,6 @@ export function loadInitialCollectionState(): CollectionState {
         if (saved) {
           const parsed = JSON.parse(saved);
           if (parsed && Array.isArray(parsed.vessels)) {
-            // Migrate legacy maxed-out demo default (totalSupply === 159 with 6 curated vessels)
-            // so simulation players start in an actively growing village with open blueprint lots!
             const migratedSupply =
               parsed.totalSupply === 159 && parsed.vessels.length <= 6
                 ? Math.max(6, parsed.vessels.length)
@@ -315,9 +354,12 @@ export function loadInitialCollectionState(): CollectionState {
             return {
               ...base,
               ...parsed,
+              contractAddress: "",
+              coinAddress: "",
+              connectedMode: "simulation",
               totalSupply: migratedSupply,
               chainSynced: true,
-              walletAddress: null
+              walletAddress
             };
           }
         }
@@ -327,6 +369,10 @@ export function loadInitialCollectionState(): CollectionState {
     }
   }
   return base;
+}
+
+export function loadInitialCollectionState(): CollectionState {
+  return loadCollectionStateForMode(loadNetworkMode(), null);
 }
 
 export function saveDemoState(state: CollectionState) {
@@ -742,7 +788,8 @@ async function fetchCollectionWithProvider(
       workUnits: bigint;
       causeName: string;
     },
-    owner: string
+    owner: string,
+    estate?: OnChainEstateBlueprint
   ): MintedVessel => {
     const valEth = Number(ethers.formatEther(snap.tokenTotalValueWei));
     const pendingCoinsNum = Number(ethers.formatEther(snap.pendingCoins));
@@ -768,13 +815,35 @@ async function fetchCollectionWithProvider(
       onChainPendingCoins: pendingCoinsNum,
       onChainMiningRate: miningRateNum,
       syncedAtMs: nowMs,
-      mintedAt: Number(snap.mintedAt)
+      mintedAt: Number(snap.mintedAt),
+      estate
+    };
+  };
+
+  const decodeEstateTuple = (rawBp: {
+    houseSize: bigint;
+    houseFloors: bigint;
+    extraRoomsMask: bigint;
+    hasBasement: boolean;
+    gardenHarvests: bigint;
+    stylePacked: bigint;
+  }, profileCode: string): OnChainEstateBlueprint => {
+    const sz = Number(rawBp.houseSize);
+    const fl = Number(rawBp.houseFloors);
+    return {
+      houseSize: (sz === 3 ? 3 : sz === 2 ? 2 : 1) as 1 | 2 | 3,
+      houseFloors: (fl === 3 ? 3 : fl === 1 ? 1 : 2) as 1 | 2 | 3,
+      hasBasement: Boolean(rawBp.hasBasement),
+      extraRoomsMask: Number(rawBp.extraRoomsMask),
+      gardenHarvests: Number(rawBp.gardenHarvests),
+      stylePackedHex: `0x${BigInt(rawBp.stylePacked).toString(16)}`,
+      profileCode: profileCode || undefined
     };
   };
 
   if (useMulticall && (ids.length > 0 || hasCoin)) {
-    // Chunk Multicall3 batches safely (<= 36 tokens = 72 calls per aggregate3) for fast, reliable public RPC hydration
-    const CHUNK_TOKENS = 36;
+    // Chunk Multicall3 batches safely (<= 24 tokens × 3 calls = 72 calls per aggregate3)
+    const CHUNK_TOKENS = 24;
     const chunks: number[][] = [];
     for (let start = 0; start < ids.length; start += CHUNK_TOKENS) {
       chunks.push(ids.slice(start, start + CHUNK_TOKENS));
@@ -793,6 +862,10 @@ async function fetchCollectionWithProvider(
         batchCalls.push({
           target: contractAddress,
           callData: nftIface.encodeFunctionData("ownerOf", [id])
+        });
+        batchCalls.push({
+          target: contractAddress,
+          callData: nftIface.encodeFunctionData("getEstateBlueprint", [id])
         });
       }
       const coinStartIdx = batchCalls.length;
@@ -813,12 +886,22 @@ async function fetchCollectionWithProvider(
 
       const res = await runMulticall3(provider, batchCalls);
       for (let i = 0; i < chunkIds.length; i++) {
-        const snapRes = res[i * 2];
-        const ownRes = res[i * 2 + 1];
+        const snapRes = res[i * 3];
+        const ownRes = res[i * 3 + 1];
+        const estRes = res[i * 3 + 2];
         if (!snapRes?.success || !ownRes?.success) continue;
         const snap = nftIface.decodeFunctionResult("getLiveImpactSnapshot", snapRes.returnData)[0];
         const owner = String(nftIface.decodeFunctionResult("ownerOf", ownRes.returnData)[0]);
-        vessels.push(formatVessel(chunkIds[i], snap, owner));
+        let estate: OnChainEstateBlueprint | undefined;
+        if (estRes?.success) {
+          try {
+            const decoded = nftIface.decodeFunctionResult("getEstateBlueprint", estRes.returnData);
+            estate = decodeEstateTuple(decoded[0], String(decoded[1] || ""));
+          } catch {
+            // Backward-compatible with V1 contracts
+          }
+        }
+        vessels.push(formatVessel(chunkIds[i], snap, owner, estate));
       }
       if (includeCoin) {
         if (res[coinStartIdx]?.success) {
@@ -1123,6 +1206,86 @@ export async function executeOnChainSeedLiquidity(contractAddress: string): Prom
   const signer = await provider.getSigner();
   const contract = new Contract(contractAddress, ALCHEMIA_ABI, signer);
   const tx = await contract.seedLiquidity();
+  await tx.wait();
+  return tx.hash;
+}
+
+export async function executeOnChainExpandEstate(params: {
+  contractAddress: string;
+  coinAddress?: string;
+  tokenId: number;
+  targetSize: 1 | 2 | 3;
+  targetFloors: 1 | 2 | 3;
+  enableBasement: boolean;
+  extraRoomsMask: number;
+  payWithCoins: boolean;
+  coinCost?: number;
+  ethAmount?: number;
+}): Promise<string> {
+  const eth = getSelectedProvider();
+  if (!eth) throw new Error("Ethereum wallet not connected");
+
+  const provider = new BrowserProvider(eth);
+  const signer = await provider.getSigner();
+  const contract = new Contract(params.contractAddress, ALCHEMIA_ABI, signer);
+
+  if (params.payWithCoins) {
+    const coinAddr = params.coinAddress || (await contract.coin());
+    const coin = new Contract(coinAddr, ALCHEMIA_COIN_ABI, signer);
+    const needed = ethers.parseEther(String(Math.max(1, params.coinCost || 45)));
+    const currentAllowance: bigint = await coin.allowance(
+      await signer.getAddress(),
+      params.contractAddress
+    );
+    if (currentAllowance < needed) {
+      const approveTx = await coin.approve(params.contractAddress, needed);
+      await approveTx.wait();
+    }
+    const tx = await contract.expandEstateWithCoins(
+      params.tokenId,
+      params.targetSize,
+      params.targetFloors,
+      params.enableBasement,
+      params.extraRoomsMask
+    );
+    await tx.wait();
+    return tx.hash;
+  }
+
+  const tx = await contract.expandEstateWithEth(
+    params.tokenId,
+    params.targetSize,
+    params.targetFloors,
+    params.enableBasement,
+    params.extraRoomsMask,
+    {
+      value: ethers.parseEther(Math.max(0.0008, params.ethAmount || 0.0008).toFixed(6))
+    }
+  );
+  await tx.wait();
+  return tx.hash;
+}
+
+export async function executeOnChainSyncEstateCustomization(params: {
+  contractAddress: string;
+  tokenId: number;
+  stylePacked: bigint;
+  gardenHarvests: number;
+  profileCode: string;
+}): Promise<string> {
+  const eth = getSelectedProvider();
+  if (!eth) throw new Error("Ethereum wallet not connected");
+
+  const provider = new BrowserProvider(eth);
+  const signer = await provider.getSigner();
+  const contract = new Contract(params.contractAddress, ALCHEMIA_ABI, signer);
+  const safeCode = params.profileCode.slice(0, 250);
+  const tx = await contract.syncEstateCustomization(
+    params.tokenId,
+    params.stylePacked,
+    Math.max(0, Math.floor(params.gardenHarvests)),
+    safeCode
+  );
   await tx.wait();
   return tx.hash;
 }

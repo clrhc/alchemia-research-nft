@@ -105,8 +105,17 @@ import {
 } from "../neighborhoodLayout";
 import {
   createSimulatedNeighborVessels,
+  loadCollectionStateForMode,
   mergeMintedVessels
 } from "../../web3/contractService";
+import {
+  applyOnChainEstateToDecor,
+  decodeExtraRoomsMask,
+  encodeExtraRoomsMask,
+  estimateEstateExpansionCost,
+  packLabStyleBits,
+  unpackLabStyleBits
+} from "../../web3/estateCodec";
 import {
   AdaptivePixelRatioController,
   detectDevicePerfProfile
@@ -1141,5 +1150,82 @@ describe("Living Minted NFT Neighborhood & Sims Interactivity", () => {
     }
     expect(restored).not.toBeNull();
     expect(restored!).toBeGreaterThan(lowered!);
+  });
+
+  it("bit-packs on-chain V2 EstateBlueprint styles/rooms accurately and switches cleanly between Example and Base Sepolia Testnet modes", () => {
+    // 1. Round-trip 6-bit homely room bitmask (exact EXTRA_ROOM_DEFS IDs)
+    const allIds = EXTRA_ROOM_DEFS.map((r) => r.id);
+    expect(encodeExtraRoomsMask(allIds)).toBe(0b111111);
+    const sampleRooms = [allIds[0], allIds[3], allIds[5]];
+    const mask = encodeExtraRoomsMask(sampleRooms);
+    expect(mask).toBe(0b101001);
+    expect(decodeExtraRoomsMask(mask)).toEqual(sampleRooms);
+
+    // 2. Round-trip 64-bit packed home decor & architectural finishes
+    const sampleWallStyle = WALL_STYLES[2].id;
+    const customDecor = {
+      ...defaultLabDecor(),
+      floorStyle: "oak" as const,
+      wallStyle: sampleWallStyle,
+      patioDecor: "cherry-tree" as const,
+      seatingStyle: "egg-chair" as const,
+      barStyle: "boba" as const,
+      hobbyProp: "aquarium" as const,
+      rugStyle: "star-weave" as const,
+      plantPack: "succulents" as const,
+      lightingFixture: "fairy-orbs" as const,
+      houseSize: 3 as const,
+      houseFloors: 3 as const,
+      hasBasement: true,
+      extraRooms: [allIds[0], allIds[3]]
+    };
+    const packed = packLabStyleBits(customDecor);
+    expect(packed).toBeGreaterThan(0n);
+    const unpacked = unpackLabStyleBits(packed);
+    expect(unpacked.floorStyle).toBe("oak");
+    expect(unpacked.wallStyle).toBe(sampleWallStyle);
+    expect(unpacked.patioDecor).toBe("cherry-tree");
+    expect(unpacked.seatingStyle).toBe("egg-chair");
+    expect(unpacked.barStyle).toBe("boba");
+    expect(unpacked.hobbyProp).toBe("aquarium");
+    expect(unpacked.rugStyle).toBe("star-weave");
+    expect(unpacked.plantPack).toBe("succulents");
+    expect(unpacked.lightingFixture).toBe("fairy-orbs");
+
+    // 3. Merging on-chain EstateBlueprint onto default decor applies all multi-story upgrades & rooms
+    const hydrated = applyOnChainEstateToDecor(defaultLabDecor(), {
+      houseSize: 3,
+      houseFloors: 3,
+      hasBasement: true,
+      extraRoomsMask: encodeExtraRoomsMask([allIds[0], allIds[3]]),
+      gardenHarvests: 12,
+      stylePackedHex: `0x${packed.toString(16)}`
+    });
+    expect(hydrated.houseSize).toBe(3);
+    expect(hydrated.houseFloors).toBe(3);
+    expect(hydrated.extraRooms).toContain(allIds[0]);
+    expect(hydrated.extraRooms).toContain(allIds[3]);
+    expect(hydrated.hobbyProp).toBe("aquarium");
+
+    // 4. Incremental estate expansion cost matches Solidity _computeEstateExpansion exactly!
+    const est = estimateEstateExpansionCost(
+      { houseSize: 1, houseFloors: 2, hasBasement: true, extraRoomsMask: 0 },
+      { houseSize: 2, houseFloors: 3, hasBasement: true, extraRoomsMask: 0b000101 }
+    );
+    expect(est.coinCost).toBe(80 + 90 + 90); // 260 ALCH
+    expect(est.ethUnits).toBe(4);
+
+    // 5. Mode switcher builds completely clean Example vs Base Sepolia Testnet states
+    const exState = loadCollectionStateForMode("example");
+    expect(exState.connectedMode).toBe("simulation");
+    expect(exState.contractAddress).toBe("");
+    expect(exState.totalSupply).toBe(6);
+    expect(exState.vessels).toHaveLength(6);
+
+    const testState = loadCollectionStateForMode("testnet");
+    expect(testState.connectedMode).toBe("sepolia");
+    expect(testState.contractAddress).toMatch(/^0x[a-fA-F0-9]{40}$/);
+    expect(testState.coinAddress).toMatch(/^0x[a-fA-F0-9]{40}$/);
+    expect(testState.chainId).toBe(84532);
   });
 });

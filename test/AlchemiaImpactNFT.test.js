@@ -561,4 +561,100 @@ describe("Alchemia Ecosystem ($ALCH Coin + Liquidity Threshold + Sims-Style Lab 
     expect(await contract.totalDonatedWei()).to.equal(rDeltaSum);
     expect(await contract.totalDevWei()).to.equal(devDelta);
   });
+
+  it("supports multi-story Architect Estate expansion (coins & ETH), wardrobe/decor customization sync, town growth summary & batch snapshots", async function () {
+    const { coin, contract, minter, other, research0, mintPrice } = await deployFixture(0n);
+
+    // Mint 26 labs to verify Pioneer -> Boulevard -> Canal-Side -> Outer Expansion Band 0 (Skyline Heights)!
+    await contract.connect(minter).mint(20, 0, { value: mintPrice * 20n });
+    await contract.connect(minter).mint(6, 1, { value: mintPrice * 6n });
+
+    const summary = await contract.townGrowthSummary();
+    expect(summary.mintedLabs).to.equal(26n);
+    expect(summary.townStage).to.equal(4n); // Alchemia Town (25+)
+    expect(summary.expansionBandsUnlocked).to.equal(1n); // Band 0 unlocked!
+    expect(summary.transitUnlocked).to.equal(true);
+
+    // Verify deterministic district mapping matches neighborhoodLayout.ts
+    expect((await contract.neighborhoodPlotOf(1)).districtName).to.equal("Central Plaza");
+    expect((await contract.neighborhoodPlotOf(2)).districtName).to.equal("Willow Lane");
+    expect((await contract.neighborhoodPlotOf(3)).districtName).to.equal("Maple Lane");
+    expect((await contract.neighborhoodPlotOf(10)).ring).to.equal(2n);
+    expect((await contract.neighborhoodPlotOf(26)).ring).to.equal(3n);
+    expect((await contract.neighborhoodPlotOf(26)).districtName).to.equal("Skyline Heights");
+
+    // Accrue $ALCH on Lab #1 and expand estate via coins: Size 1->2 (80) + Floor 2->3 (90) + 2 rooms (90) = 260 ALCH
+    await time.increase(60 * 3600);
+    await contract.connect(minter).claimMinedCoins(1, 0);
+    const rateBefore = await contract.miningRatePerHourOf(1);
+    const resBefore = await coin.balanceOf(research0.address);
+    const supplyBefore = await coin.totalSupply();
+
+    await coin.connect(minter).approve(await contract.getAddress(), ethers.parseEther("260"));
+    await expect(contract.connect(minter).expandEstateWithCoins(1, 2, 3, true, 0b000101))
+      .to.emit(contract, "EstateExpanded")
+      .withArgs(1, 2, 3, true, 5, true)
+      .and.to.emit(contract, "MetadataUpdate")
+      .withArgs(1);
+
+    // 20% (52 ALCH) sent directly to research wallet; 80% (208 ALCH) burned cleanly
+    expect(await coin.balanceOf(research0.address)).to.equal(resBefore + ethers.parseEther("52"));
+    expect(await coin.totalSupply()).to.equal(supplyBefore - ethers.parseEther("208"));
+    // Mining rate boosts by +3 (size 2) + +4 (3F penthouse) + +4 (2 homely rooms) = +11 ALCH/hr!
+    expect(await contract.miningRatePerHourOf(1)).to.equal(rateBefore + ethers.parseEther("11"));
+
+    // Non-owner or downgrade/noop reverts cleanly
+    await expect(
+      contract.connect(other).expandEstateWithCoins(1, 3, 3, true, 0b000101)
+    ).to.be.revertedWithCustomError(contract, "NotTokenOwner");
+    await expect(
+      contract.connect(minter).expandEstateWithCoins(1, 2, 3, true, 0b000101)
+    ).to.be.revertedWithCustomError(contract, "InvalidEstateConfig");
+
+    // Expand Size 2->3 + 1 room (2 units = 4 * mintPrice) via ETH
+    await expect(
+      contract.connect(minter).expandEstateWithEth(1, 3, 3, true, 0b001101, { value: mintPrice * 4n })
+    ).to.emit(contract, "EstateExpanded");
+
+    // Owner saves furnishings, character/pet look code & botanical garden harvests on-chain!
+    await expect(
+      contract.connect(minter).syncEstateCustomization(1, 0x0abc123456n, 14, "ALCH1-STYLE-CODE")
+    )
+      .to.emit(contract, "EstateCustomized")
+      .withArgs(1, 0x0abc123456n, 14);
+
+    // Reject oversized profile codes (> 256 bytes)
+    await expect(
+      contract.connect(minter).syncEstateCustomization(1, 0n, 1, "x".repeat(257))
+    ).to.be.revertedWithCustomError(contract, "ProfileCodeTooLong");
+
+    const [bp, profileCode] = await contract.getEstateBlueprint(1);
+    expect(bp.houseSize).to.equal(3n);
+    expect(bp.houseFloors).to.equal(3n);
+    expect(bp.hasBasement).to.equal(true);
+    expect(bp.extraRoomsMask).to.equal(0b001101n);
+    expect(bp.gardenHarvests).to.equal(14n);
+    expect(bp.stylePacked).to.equal(0x0abc123456n);
+    expect(profileCode).to.equal("ALCH1-STYLE-CODE");
+
+    // Single-call batchGetLiveSnapshots hydrates multiple labs + owners + estates cleanly!
+    const batch = await contract.batchGetLiveSnapshots([1, 2, 26]);
+    expect(batch.snaps).to.have.lengthOf(3);
+    expect(batch.owners[0]).to.equal(minter.address);
+    expect(batch.estates[0].houseSize).to.equal(3n);
+    expect(batch.estates[2].houseFloors).to.equal(2n);
+
+    // TokenURI & animationUrl reflect live supply, floors, rooms, district & garden harvests!
+    const uri = await contract.tokenURI(1);
+    const meta = JSON.parse(
+      Buffer.from(uri.replace("data:application/json;base64,", ""), "base64").toString("utf8")
+    );
+    expect(meta.animation_url).to.include("&supply=26");
+    expect(meta.animation_url).to.include("&floors=3");
+    expect(meta.animation_url).to.include("&rooms=13");
+    expect(meta.attributes.some((a) => a.trait_type === "Town District" && a.value === "Central Plaza")).to.equal(true);
+    expect(meta.attributes.some((a) => a.trait_type === "Architecture" && a.value === "B1+3F Grand Estate")).to.equal(true);
+    expect(meta.attributes.some((a) => a.trait_type === "Homely Rooms" && a.value === 3)).to.equal(true);
+    expect(meta.attributes.some((a) => a.trait_type === "Botanical Harvests" && a.value === 14)).to.equal(true);
+  });
 });

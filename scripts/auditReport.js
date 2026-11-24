@@ -75,6 +75,15 @@ async function main() {
   await recordGas("claimMinedCoins(20% tithe)", nft.connect(minter).claimMinedCoins(2, 2000));
   await (await coin.connect(minter).approve(await nft.getAddress(), ethers.parseEther("220"))).wait();
   await recordGas("buildLabSectorWithCoins(Mine)", nft.connect(minter).buildLabSectorWithCoins(2, 1));
+  await (await coin.connect(minter).approve(await nft.getAddress(), ethers.parseEther("215"))).wait();
+  await recordGas(
+    "expandEstateWithCoins(3F+Rm)",
+    nft.connect(minter).expandEstateWithCoins(2, 2, 3, true, 0b000001)
+  );
+  await recordGas(
+    "syncEstateCustomization()",
+    nft.connect(minter).syncEstateCustomization(2, 0x123456n, 5, "ALCH1-DEMO-STYLE")
+  );
   await recordGas(
     "submitResearchProof(SHA-256)",
     nft

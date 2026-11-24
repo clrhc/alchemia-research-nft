@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Check, Copy, ExternalLink, LogOut, Sparkles, Wallet, X } from "lucide-react";
-import { CHAIN_NAMES, TARGET_CHAIN_ID } from "../web3/config";
+import { CHAIN_NAMES, TARGET_CHAIN_ID, type AppNetworkMode } from "../web3/config";
 
 export interface DiscoveredProvider {
   id: string;
@@ -14,6 +14,8 @@ interface WalletModalProps {
   onClose: () => void;
   walletAddress: string | null;
   chainId: number;
+  networkMode: AppNetworkMode;
+  onSwitchNetworkMode: (mode: AppNetworkMode) => void;
   connecting: boolean;
   error: string | null;
   onConnectProvider: (selectedProvider?: unknown) => Promise<void>;
@@ -25,6 +27,8 @@ export function WalletModal({
   onClose,
   walletAddress,
   chainId,
+  networkMode,
+  onSwitchNetworkMode,
   connecting,
   error,
   onConnectProvider,
@@ -181,10 +185,33 @@ export function WalletModal({
           {walletAddress ? "Your wallet" : "Connect a wallet"}
         </h2>
         <p className="wallet-modal-sub">
-          {walletAddress
-            ? `Connected on ${CHAIN_NAMES[chainId] || `Chain ${chainId}`}`
-            : `Pick a wallet to mint and build on ${CHAIN_NAMES[TARGET_CHAIN_ID] || "Base Sepolia"}.`}
+          {networkMode === "example"
+            ? "Currently exploring the Example Sandbox (no wallet needed). Switch to Base Sepolia Testnet below for live on-chain mints!"
+            : walletAddress
+              ? `Connected on ${CHAIN_NAMES[chainId] || `Chain ${chainId}`}`
+              : `Pick a wallet to mint, expand estates, and claim ALCH on ${CHAIN_NAMES[TARGET_CHAIN_ID] || "Base Sepolia"}.`}
         </p>
+
+        <div className="mode-toggle-group" style={{ marginBottom: 14, width: "100%", justifyContent: "center" }}>
+          <button
+            type="button"
+            className={`mode-toggle-btn clickable ${networkMode === "example" ? "active is-example" : ""}`}
+            style={{ flex: 1, justifyContent: "center" }}
+            onClick={() => onSwitchNetworkMode("example")}
+          >
+            <span className="mode-dot is-example" />
+            <span>Example Sandbox</span>
+          </button>
+          <button
+            type="button"
+            className={`mode-toggle-btn clickable ${networkMode === "testnet" ? "active is-testnet" : ""}`}
+            style={{ flex: 1, justifyContent: "center" }}
+            onClick={() => onSwitchNetworkMode("testnet")}
+          >
+            <span className="mode-dot is-testnet" />
+            <span>Base Sepolia Testnet</span>
+          </button>
+        </div>
 
         {walletAddress ? (
           <div className="wallet-connected-box">

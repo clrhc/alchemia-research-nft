@@ -2,7 +2,8 @@ import { Sparkles } from "lucide-react";
 import { LabWorldExperience } from "./LabWorldExperience";
 import type { NeighborLabSummary } from "../engine/neighborhoodLayout";
 import type { ComputeSnapshot } from "../engine/researchCompute";
-import { complexityTierFromUsd } from "../web3/config";
+import type { LabDecorConfig } from "../engine/simsState";
+import { complexityTierFromUsd, type AppNetworkMode } from "../web3/config";
 import {
   buildAnimationUrl,
   type CollectionState,
@@ -26,6 +27,14 @@ interface MyLabsViewProps {
   onConnectWallet: () => Promise<void>;
   onSpendCoinsForTreat: (cost: number) => boolean;
   onSimulateNewNeighbor?: (count?: number) => void;
+  networkMode: AppNetworkMode;
+  onSwitchNetworkMode: (mode: AppNetworkMode) => void;
+  onSyncEstateOnChain?: (
+    vessel: MintedVessel,
+    decor: LabDecorConfig,
+    gardenHarvests: number,
+    profileCode: string
+  ) => Promise<void>;
   onGoMint: () => void;
 }
 
@@ -46,6 +55,9 @@ export function MyLabsView({
   onConnectWallet,
   onSpendCoinsForTreat,
   onSimulateNewNeighbor,
+  networkMode,
+  onSwitchNetworkMode,
+  onSyncEstateOnChain,
   onGoMint
 }: MyLabsViewProps) {
   const userVessels = state.vessels.filter((v) => v.ownedByUser);
@@ -134,6 +146,9 @@ export function MyLabsView({
         onConnectWallet={onConnectWallet}
         onSpendCoinsForTreat={onSpendCoinsForTreat}
         onSimulateNewNeighbor={onSimulateNewNeighbor}
+        networkMode={networkMode}
+        onSwitchNetworkMode={onSwitchNetworkMode}
+        onSyncEstateOnChain={onSyncEstateOnChain}
         onGoMint={onGoMint}
       />
     </section>

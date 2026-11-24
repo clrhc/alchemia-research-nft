@@ -15,7 +15,8 @@ async function main() {
   const mintPriceWei = hre.ethers.parseEther(process.env.MINT_PRICE_ETH || "0.0004");
   const royaltyBps = BigInt(process.env.ROYALTY_BPS || "500");
   const animationBaseUrl =
-    process.env.ANIMATION_BASE_URL || "https://alchemia.art/animation.html";
+    process.env.ANIMATION_BASE_URL ||
+    "https://alchemia-labs.s2celerity.workers.dev/animation.html";
 
   const isMainnet = network.chainId === 1n;
   const devWallet = process.env.DEV_WALLET || (isMainnet ? "" : deployer.address);

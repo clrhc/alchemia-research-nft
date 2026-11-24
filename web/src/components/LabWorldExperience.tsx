@@ -238,7 +238,8 @@ import {
   type PetOutfitId,
   type TamagotchiAction
 } from "../engine/tamagotchi";
-import { complexityTierFromUsd, usdToEth } from "../web3/config";
+import { complexityTierFromUsd, usdToEth, type AppNetworkMode } from "../web3/config";
+import { applyOnChainEstateToDecor } from "../web3/estateCodec";
 import {
   LAB_SECTORS,
   computeMiningRatePerHour,
@@ -282,6 +283,14 @@ export interface LabWorldExperienceProps {
   onAwardPlayBonus?: (sparks: number) => void;
   onConnectWallet?: () => Promise<void>;
   onSpendCoinsForTreat?: (cost: number) => boolean;
+  networkMode?: AppNetworkMode;
+  onSwitchNetworkMode?: (mode: AppNetworkMode) => void;
+  onSyncEstateOnChain?: (
+    vessel: MintedVessel,
+    decor: LabDecorConfig,
+    gardenHarvests: number,
+    profileCode: string
+  ) => Promise<void>;
   onGoMint?: () => void;
 }
 
@@ -383,6 +392,9 @@ export function LabWorldExperience({
   onAwardPlayBonus,
   onConnectWallet,
   onSpendCoinsForTreat,
+  networkMode,
+  onSwitchNetworkMode,
+  onSyncEstateOnChain,
   onGoMint
 }: LabWorldExperienceProps) {
   const stageRef = useRef<HTMLDivElement>(null);
@@ -687,6 +699,7 @@ export function LabWorldExperience({
     null
   );
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [syncingEstate, setSyncingEstate] = useState(false);
   const [miniGame, setMiniGame] = useState<{
     endsAtMs: number;
     popped: number;
@@ -729,7 +742,12 @@ export function LabWorldExperience({
     setEditingPetName(false);
     setSelectedBenchmark(null);
     setPreviewSectorId(null);
-    setLabDecor(loadLabDecor(activeVessel.tokenId, isVisiting ? activeVessel.seed : undefined));
+    const matchedFullVessel =
+      activeVessel.tokenId === vessel.tokenId
+        ? vessel
+        : allVessels?.find((v) => v.tokenId === activeVessel.tokenId);
+    const baseDecor = loadLabDecor(activeVessel.tokenId, isVisiting ? activeVessel.seed : undefined);
+    setLabDecor(applyOnChainEstateToDecor(baseDecor, matchedFullVessel?.estate));
     setGuestbookEntries(loadGuestbookEntries(activeVessel.tokenId, activeVessel.seed));
     setGuestbookDraft("");
     setPieMenu(null);
@@ -4865,6 +4883,50 @@ export function LabWorldExperience({
                 {/* TAB 2: EXPAND HOUSE SIZE, ADD MULTI-STORY FLOORS (2F/3F) & 6 COZY ROOMS */}
                 {builderSubTab === "expand" && (
                   <div className="world-drawer-stack">
+                    {onSyncEstateOnChain && !isVisiting && vessel.ownedByUser && (
+                      <div className="expand-section-card" style={{ borderColor: "rgba(56,189,248,0.45)" }}>
+                        <div className="expand-room-top">
+                          <div>
+                            <div className="single-kicker">Base Sepolia V2 On-Chain Estate</div>
+                            <strong>Sync Floors, Rooms, Decor &amp; Look On-Chain</strong>
+                            <div className="tama-sub">
+                              Saves {labDecor.hasBasement ? "B1+" : ""}
+                              {labDecor.houseFloors}F · Lv.{labDecor.houseSize} · {labDecor.extraRooms.length} rooms · {gardenState.totalHarvests} harvests directly to your NFT!
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="sector-btn clickable"
+                            disabled={syncingEstate}
+                            onClick={async () => {
+                              setSyncingEstate(true);
+                              try {
+                                const code = savedProfile ? encodeCharacterCode(savedProfile) : "";
+                                await onSyncEstateOnChain(
+                                  vessel,
+                                  labDecor,
+                                  gardenState.totalHarvests,
+                                  code
+                                );
+                                soundEngine.playBuildRoom();
+                                setFeedback(
+                                  `Anchored Lab #${vessel.tokenId}'s multi-story estate, rooms & wardrobe on Base Sepolia!`
+                                );
+                              } catch (err) {
+                                setFeedback(
+                                  err instanceof Error ? err.message : "On-chain estate sync cancelled."
+                                );
+                              } finally {
+                                setSyncingEstate(false);
+                              }
+                            }}
+                          >
+                            <ShieldCheck size={12} />{" "}
+                            {syncingEstate ? "Saving…" : "Save On-Chain"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     {/* 1. House Footprint Expansion (Lv. 1 -> 2 -> 3) */}
                     <div className="expand-section-card">
                       <div className="single-kicker">House Size · Bigger Courtyard &amp; Veranda</div>
@@ -6091,6 +6153,34 @@ export function LabWorldExperience({
               ) : (
                 <>
               {/* Live Town Growth Progress & Civic Milestone Unlocks */}
+              {onSwitchNetworkMode && networkMode && (
+                <div className="mode-toggle-group" style={{ width: "100%", justifyContent: "center" }}>
+                  <button
+                    type="button"
+                    className={`mode-toggle-btn clickable ${networkMode === "example" ? "active is-example" : ""}`}
+                    style={{ flex: 1, justifyContent: "center" }}
+                    onClick={() => {
+                      soundEngine.playTap(987.77);
+                      onSwitchNetworkMode("example");
+                    }}
+                  >
+                    <span className="mode-dot is-example" />
+                    <span>Example Town</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`mode-toggle-btn clickable ${networkMode === "testnet" ? "active is-testnet" : ""}`}
+                    style={{ flex: 1, justifyContent: "center" }}
+                    onClick={() => {
+                      soundEngine.playTap(1046.5);
+                      onSwitchNetworkMode("testnet");
+                    }}
+                  >
+                    <span className="mode-dot is-testnet" />
+                    <span>Base Sepolia Testnet</span>
+                  </button>
+                </div>
+              )}
               <div className="town-growth-card">
                 <div className="town-growth-head">
                   <strong>

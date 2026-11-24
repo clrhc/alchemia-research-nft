@@ -5,7 +5,6 @@ import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/token/common/ERC2981.sol";
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/utils/Strings.sol";
 import "./AlchemiaCoin.sol";
 import "./AlchemiaRenderer.sol";
 
@@ -30,7 +29,6 @@ import "./AlchemiaRenderer.sol";
  *        * 33.33% (3333 bps) IMMEDIATELY to Dev Wallet (0 ETH held in contract)
  */
 contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, ReentrancyGuard {
-    using Strings for uint256;
 
     // Phase 1 (Pre-Liquidity Seed): 60% Research / 25% Dev / 15% Liquidity Reserve
     uint96 public constant BOOTSTRAP_RESEARCH_BPS = 6000;
@@ -96,6 +94,17 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
         uint64 updatedAt;
     }
 
+    /// @notice Packed on-chain multi-story Architect Estate & Sims customization state (1 storage slot!)
+    struct EstateBlueprint {
+        uint8 houseSize;        // 1 = Cozy Studio, 2 = Atrium Villa, 3 = Grand Estate
+        uint8 houseFloors;      // 1..3 (1F, 2F Mezzanine Loft, 3F Starlight Sky Penthouse)
+        uint8 extraRoomsMask;   // 6-bit mask: Bedroom(0), Kitchen(1), Library(2), Conservatory(3), Studio(4), Music(5)
+        bool hasBasement;       // true = B1 Sunken Architect Basement unlocked
+        uint32 gardenHarvests;  // Recorded botanical greenhouse & courtyard harvests
+        uint64 stylePacked;     // Bit-packed floor/wall/patio/seating/bar/hobby/rug/plants/lighting styles
+        uint64 updatedAt;
+    }
+
     struct LiveImpactSnapshot {
         bytes32 seed;
         uint8 causeId;
@@ -147,7 +156,15 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
     Cause[] public causes;
     mapping(uint256 => TokenRecord) public tokenRecords;
     mapping(uint256 => ResearchProof) public researchProofs;
+    mapping(uint256 => EstateBlueprint) public estateBlueprints;
+    mapping(uint256 => string) public estateProfileCodes;
     uint256 private _nextTokenId = 1;
+
+    // On-chain $ALCH cost constants for multi-story home & homely room expansions (80% burned, 20% research)
+    uint256 public constant ESTATE_SIZE_COIN_COST = 80 ether;
+    uint256 public constant ESTATE_FLOOR_COIN_COST = 90 ether;
+    uint256 public constant ESTATE_ROOM_COIN_COST = 45 ether;
+    uint256 public constant MAX_PROFILE_CODE_BYTES = 256;
 
     // EIP-4906 ERC-721 Metadata Update Extension (auto-refreshes OpenSea / wallets on upgrade!)
     bytes4 private constant _INTERFACE_ID_ERC4906 = 0x49064906;
@@ -182,6 +199,19 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
         uint8 indexed sectorId,
         uint8 newSectorsMask,
         bool paidWithCoins
+    );
+    event EstateExpanded(
+        uint256 indexed tokenId,
+        uint8 houseSize,
+        uint8 houseFloors,
+        bool hasBasement,
+        uint8 extraRoomsMask,
+        bool paidWithCoins
+    );
+    event EstateCustomized(
+        uint256 indexed tokenId,
+        uint64 stylePacked,
+        uint32 gardenHarvests
     );
     event CoinsClaimed(
         uint256 indexed tokenId,
@@ -228,6 +258,8 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
     error NothingToClaim();
     error LiquidityThresholdNotMet();
     error LiquidityAlreadySeeded();
+    error InvalidEstateConfig();
+    error ProfileCodeTooLong();
     error TransferFailed();
 
     constructor(
@@ -331,6 +363,17 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
                 researchWei: uint128(tRes),
                 sectorsMask: 0,
                 lastClaimAt: uint64(block.timestamp)
+            });
+
+            // Every minted NFT starts as multi-story architect housing (B1 Basement + 1F + 2F Loft!)
+            estateBlueprints[tokenId] = EstateBlueprint({
+                houseSize: 1,
+                houseFloors: 2,
+                extraRoomsMask: 0,
+                hasBasement: true,
+                gardenHarvests: 0,
+                stylePacked: 0,
+                updatedAt: uint64(block.timestamp)
             });
 
             _safeMint(msg.sender, tokenId);
@@ -450,6 +493,18 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
             }
         }
 
+        // Add bonuses from expanded Architect Estate floors, footprint & homely rooms!
+        EstateBlueprint memory bp = estateBlueprints[tokenId];
+        if (bp.houseSize > 1) {
+            rate += uint256(bp.houseSize - 1) * 3 ether;
+        }
+        if (bp.houseFloors > 2) {
+            rate += uint256(bp.houseFloors - 2) * 4 ether;
+        }
+        if (bp.extraRoomsMask != 0) {
+            rate += _popcount6(bp.extraRoomsMask) * 2 ether;
+        }
+
         // Verified open-science research proofs amplify mining yield (+0.5 ALCH/hr per WU, capped)
         uint256 wuBonus = uint256(researchProofs[tokenId].workUnits) * 0.5 ether;
         if (wuBonus > 40 ether) wuBonus = 40 ether;
@@ -464,14 +519,33 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
         return (miningRatePerHourOf(tokenId) * elapsed) / 3600;
     }
 
+    function _requireTokenExists(uint256 tokenId) private view {
+        if (_ownerOf(tokenId) == address(0)) revert TokenDoesNotExist();
+    }
+
+    function _requireTokenOwner(uint256 tokenId) private view {
+        address tokOwner = _ownerOf(tokenId);
+        if (tokOwner == address(0)) revert TokenDoesNotExist();
+        if (tokOwner != msg.sender) revert NotTokenOwner();
+    }
+
+    function _collectAndTitheCoins(uint8 causeId, uint256 cost) private {
+        uint256 toResearch = (cost * 2000) / MAX_BPS;
+        coin.burnFrom(msg.sender, cost - toResearch);
+        if (toResearch > 0) {
+            bool ok = coin.transferFrom(msg.sender, causes[causeId].researchWallet, toResearch);
+            if (!ok) revert TransferFailed();
+            totalCoinsTithedToResearch += toResearch;
+        }
+    }
+
     /**
      * @notice Claim mined $ALCH coins from an NFT's active laboratory operations.
      *         Holders can choose a `researchTitheBps` (0..10000) to automatically send
      *         part of their mined $ALCH straight to the cause's research wallet!
      */
     function claimMinedCoins(uint256 tokenId, uint96 researchTitheBps) external nonReentrant {
-        if (_ownerOf(tokenId) == address(0)) revert TokenDoesNotExist();
-        if (ownerOf(tokenId) != msg.sender) revert NotTokenOwner();
+        _requireTokenOwner(tokenId);
         if (researchTitheBps > MAX_BPS) revert InvalidTithe();
 
         uint256 accrued = pendingCoinsOf(tokenId);
@@ -500,24 +574,14 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
      *         20% transfers directly to the Research Wallet; 80% is burned via standard burnFrom.
      */
     function buildLabSectorWithCoins(uint256 tokenId, uint8 sectorId) external nonReentrant {
-        if (_ownerOf(tokenId) == address(0)) revert TokenDoesNotExist();
-        if (ownerOf(tokenId) != msg.sender) revert NotTokenOwner();
+        _requireTokenOwner(tokenId);
         if (sectorId >= SECTOR_COUNT) revert InvalidSector();
 
         TokenRecord storage rec = tokenRecords[tokenId];
         uint8 bit = uint8(1) << sectorId;
         if ((rec.sectorsMask & bit) != 0) revert SectorAlreadyBuilt();
 
-        uint256 cost = sectorCoinCosts[sectorId];
-        uint256 toResearch = (cost * 2000) / MAX_BPS;
-        uint256 toBurn = cost - toResearch;
-
-        coin.burnFrom(msg.sender, toBurn);
-        if (toResearch > 0) {
-            bool ok = coin.transferFrom(msg.sender, causes[rec.causeId].researchWallet, toResearch);
-            if (!ok) revert TransferFailed();
-            totalCoinsTithedToResearch += toResearch;
-        }
+        _collectAndTitheCoins(rec.causeId, sectorCoinCosts[sectorId]);
 
         rec.sectorsMask |= bit;
         emit LabSectorBuilt(tokenId, sectorId, rec.sectorsMask, true);
@@ -529,8 +593,7 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
      *         also adding its value to the NFT's Complexity Tier & routing the split live!
      */
     function buildLabSectorWithEth(uint256 tokenId, uint8 sectorId) external payable nonReentrant {
-        if (_ownerOf(tokenId) == address(0)) revert TokenDoesNotExist();
-        if (ownerOf(tokenId) != msg.sender) revert NotTokenOwner();
+        _requireTokenOwner(tokenId);
         if (sectorId >= SECTOR_COUNT) revert InvalidSector();
 
         TokenRecord storage rec = tokenRecords[tokenId];
@@ -545,6 +608,150 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
 
         emit LabSectorBuilt(tokenId, sectorId, rec.sectorsMask, false);
         emit MetadataUpdate(tokenId);
+    }
+
+    // -------------------------------------------------------------------------
+    // Multi-Story Architect Home Expansion, Homely Rooms & Wardrobe/Decor Sync
+    // -------------------------------------------------------------------------
+
+    function _computeEstateExpansion(
+        EstateBlueprint memory cur,
+        uint8 targetSize,
+        uint8 targetFloors,
+        bool enableBasement,
+        uint8 newExtraRoomsMask
+    ) private pure returns (uint256 coinCost, uint256 unitsAdded, uint8 mergedRooms) {
+        if (targetSize < 1 || targetSize > 3 || targetFloors < 1 || targetFloors > 3 || newExtraRoomsMask > 63) {
+            revert InvalidEstateConfig();
+        }
+        uint8 curSize = cur.houseSize == 0 ? 1 : cur.houseSize;
+        uint8 curFloors = cur.houseFloors == 0 ? 2 : cur.houseFloors;
+        if (targetSize < curSize || targetFloors < curFloors) revert InvalidEstateConfig();
+
+        uint8 addedSizes = targetSize - curSize;
+        uint8 addedFloors = targetFloors - curFloors;
+        uint8 addedBasement = (enableBasement && !cur.hasBasement) ? 1 : 0;
+        mergedRooms = cur.extraRoomsMask | newExtraRoomsMask;
+        uint8 addedRooms = uint8(_popcount6(mergedRooms ^ cur.extraRoomsMask));
+
+        unitsAdded = uint256(addedSizes) + uint256(addedFloors) + uint256(addedBasement) + uint256(addedRooms);
+        if (unitsAdded == 0) revert InvalidEstateConfig();
+
+        coinCost =
+            uint256(addedSizes) * ESTATE_SIZE_COIN_COST +
+            uint256(addedFloors + addedBasement) * ESTATE_FLOOR_COIN_COST +
+            uint256(addedRooms) * ESTATE_ROOM_COIN_COST;
+    }
+
+    /**
+     * @notice Expand house footprint (1..3), add stories (up to 3F penthouse), or build any of the
+     *         6 homely rooms using mined $ALCH (80% burned, 20% sent straight to research wallet!).
+     */
+    function expandEstateWithCoins(
+        uint256 tokenId,
+        uint8 targetSize,
+        uint8 targetFloors,
+        bool enableBasement,
+        uint8 newExtraRoomsMask
+    ) external nonReentrant {
+        _requireTokenOwner(tokenId);
+
+        EstateBlueprint storage bp = estateBlueprints[tokenId];
+        (uint256 cost, , uint8 mergedRooms) = _computeEstateExpansion(
+            bp,
+            targetSize,
+            targetFloors,
+            enableBasement,
+            newExtraRoomsMask
+        );
+
+        _collectAndTitheCoins(tokenRecords[tokenId].causeId, cost);
+
+        bp.houseSize = targetSize;
+        bp.houseFloors = targetFloors;
+        bp.hasBasement = bp.hasBasement || enableBasement;
+        bp.extraRoomsMask = mergedRooms;
+        bp.updatedAt = uint64(block.timestamp);
+
+        emit EstateExpanded(tokenId, bp.houseSize, bp.houseFloors, bp.hasBasement, bp.extraRoomsMask, true);
+        emit MetadataUpdate(tokenId);
+    }
+
+    /**
+     * @notice Expand house footprint, floors, or homely rooms with ETH (2x base mint per upgrade unit),
+     *         routing ETH live via the Phase 1 / Phase 2 transparent research split.
+     */
+    function expandEstateWithEth(
+        uint256 tokenId,
+        uint8 targetSize,
+        uint8 targetFloors,
+        bool enableBasement,
+        uint8 newExtraRoomsMask
+    ) external payable nonReentrant {
+        _requireTokenOwner(tokenId);
+
+        EstateBlueprint storage bp = estateBlueprints[tokenId];
+        (, uint256 unitsAdded, uint8 mergedRooms) = _computeEstateExpansion(
+            bp,
+            targetSize,
+            targetFloors,
+            enableBasement,
+            newExtraRoomsMask
+        );
+
+        if (msg.value < mintPriceWei * 2 * unitsAdded) revert InsufficientPayment();
+
+        TokenRecord storage rec = tokenRecords[tokenId];
+        (uint256 researchShare, , ) = _splitAndRoute(rec.causeId, msg.value);
+        rec.totalValueWei += uint128(msg.value);
+        rec.researchWei += uint128(researchShare);
+
+        bp.houseSize = targetSize;
+        bp.houseFloors = targetFloors;
+        bp.hasBasement = bp.hasBasement || enableBasement;
+        bp.extraRoomsMask = mergedRooms;
+        bp.updatedAt = uint64(block.timestamp);
+
+        emit EstateExpanded(tokenId, bp.houseSize, bp.houseFloors, bp.hasBasement, bp.extraRoomsMask, false);
+        emit MetadataUpdate(tokenId);
+    }
+
+    /**
+     * @notice Persist home furnishings, wall/floor styles, researcher & companion wardrobe code,
+     *         and botanical greenhouse harvests directly on-chain so visiting neighbors see your look!
+     */
+    function syncEstateCustomization(
+        uint256 tokenId,
+        uint64 stylePacked,
+        uint32 gardenHarvests,
+        string calldata profileCode
+    ) external {
+        _requireTokenOwner(tokenId);
+        if (bytes(profileCode).length > MAX_PROFILE_CODE_BYTES) revert ProfileCodeTooLong();
+
+        EstateBlueprint storage bp = estateBlueprints[tokenId];
+        if (bp.houseSize == 0) {
+            bp.houseSize = 1;
+            bp.houseFloors = 2;
+            bp.hasBasement = true;
+        }
+        bp.stylePacked = stylePacked;
+        if (gardenHarvests > bp.gardenHarvests) {
+            bp.gardenHarvests = gardenHarvests;
+        }
+        bp.updatedAt = uint64(block.timestamp);
+        if (bytes(profileCode).length > 0) {
+            estateProfileCodes[tokenId] = profileCode;
+        }
+
+        emit EstateCustomized(tokenId, stylePacked, bp.gardenHarvests);
+        emit MetadataUpdate(tokenId);
+    }
+
+    function _popcount6(uint8 mask) private pure returns (uint256 c) {
+        for (uint8 i = 0; i < 6; i++) {
+            if ((mask & (uint8(1) << i)) != 0) c++;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -619,7 +826,7 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
         return causes;
     }
 
-    function getLiveImpactSnapshot(uint256 tokenId) external view returns (LiveImpactSnapshot memory snap) {
+    function getLiveImpactSnapshot(uint256 tokenId) public view returns (LiveImpactSnapshot memory snap) {
         if (_ownerOf(tokenId) == address(0)) revert TokenDoesNotExist();
         TokenRecord memory rec = tokenRecords[tokenId];
         Cause memory c = causes[rec.causeId];
@@ -646,25 +853,113 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
         });
     }
 
-    function animationUrlOf(uint256 tokenId) public view returns (string memory) {
+    function getEstateBlueprint(uint256 tokenId)
+        external
+        view
+        returns (EstateBlueprint memory bp, string memory profileCode)
+    {
         if (_ownerOf(tokenId) == address(0)) revert TokenDoesNotExist();
-        TokenRecord memory rec = tokenRecords[tokenId];
+        bp = estateBlueprints[tokenId];
+        if (bp.houseSize == 0) {
+            bp.houseSize = 1;
+            bp.houseFloors = 2;
+            bp.hasBasement = true;
+        }
+        profileCode = estateProfileCodes[tokenId];
+    }
 
-        return string.concat(
+    /**
+     * @notice Live on-chain Alchemia Town civic growth metrics synchronized with the 3D neighborhood.
+     */
+    function townGrowthSummary()
+        external
+        view
+        returns (
+            uint256 mintedLabs,
+            uint8 townStage,
+            uint8 expansionBandsUnlocked,
+            bool transitUnlocked
+        )
+    {
+        mintedLabs = totalSupply();
+        uint256 n = mintedLabs == 0 ? 1 : mintedLabs;
+        townStage = n < 4 ? 1 : n < 10 ? 2 : n < 25 ? 3 : n < 50 ? 4 : 5;
+        transitUnlocked = n >= 10;
+        uint256 occupiedPlusSurveyed = (n > 1 ? n - 1 : 0) + 4;
+        if (occupiedPlusSurveyed > 24) {
+            uint256 bands = (occupiedPlusSurveyed - 24 + 23) / 24;
+            expansionBandsUnlocked = bands > 255 ? 255 : uint8(bands);
+        }
+    }
+
+    /**
+     * @notice Deterministic neighborhood plot ring, expansion band & street district for any tokenId.
+     */
+    function neighborhoodPlotOf(uint256 tokenId)
+        external
+        view
+        returns (uint256 plotNumber, uint8 ring, uint8 expansionBand, string memory districtName)
+    {
+        if (_ownerOf(tokenId) == address(0)) revert TokenDoesNotExist();
+        plotNumber = tokenId;
+        (ring, expansionBand, districtName) = renderer.districtInfoForToken(tokenId);
+    }
+
+    /**
+     * @notice Single-call batch reader for wallets, indexers, and standalone NFT embeds (up to 72 labs).
+     */
+    function batchGetLiveSnapshots(uint256[] calldata tokenIds)
+        external
+        view
+        returns (
+            LiveImpactSnapshot[] memory snaps,
+            address[] memory owners,
+            EstateBlueprint[] memory estates
+        )
+    {
+        uint256 len = tokenIds.length;
+        snaps = new LiveImpactSnapshot[](len);
+        owners = new address[](len);
+        estates = new EstateBlueprint[](len);
+        for (uint256 i = 0; i < len; i++) {
+            uint256 tid = tokenIds[i];
+            if (_ownerOf(tid) == address(0)) continue;
+            snaps[i] = getLiveImpactSnapshot(tid);
+            owners[i] = ownerOf(tid);
+            EstateBlueprint memory bp = estateBlueprints[tid];
+            if (bp.houseSize == 0) {
+                bp.houseSize = 1;
+                bp.houseFloors = 2;
+                bp.hasBasement = true;
+            }
+            estates[i] = bp;
+        }
+    }
+
+    function animationUrlOf(uint256 tokenId) public view returns (string memory) {
+        _requireTokenExists(tokenId);
+        TokenRecord memory rec = tokenRecords[tokenId];
+        EstateBlueprint memory bp = estateBlueprints[tokenId];
+
+        return renderer.buildAnimationUrl(
             animationBaseUrl,
-            "?tokenId=", tokenId.toString(),
-            "&seed=", Strings.toHexString(uint256(rec.seed), 32),
-            "&cause=", uint256(rec.causeId).toString(),
-            "&tier=", uint256(complexityTierForValue(rec.totalValueWei)).toString(),
-            "&sectors=", uint256(rec.sectorsMask).toString(),
-            "&contract=", Strings.toHexString(uint160(address(this)), 20),
-            "&chainId=", block.chainid.toString()
+            tokenId,
+            rec.seed,
+            rec.causeId,
+            complexityTierForValue(rec.totalValueWei),
+            rec.sectorsMask,
+            totalSupply(),
+            bp.houseFloors,
+            bp.extraRoomsMask,
+            address(this),
+            block.chainid
         );
     }
 
     function tokenURI(uint256 tokenId) public view override returns (string memory) {
         if (_ownerOf(tokenId) == address(0)) revert TokenDoesNotExist();
         TokenRecord memory rec = tokenRecords[tokenId];
+        EstateBlueprint memory bp = estateBlueprints[tokenId];
         Cause memory c = causes[rec.causeId];
 
         return renderer.buildTokenURI(
@@ -681,6 +976,11 @@ contract AlchemiaImpactNFT is ERC721Enumerable, ERC2981, Ownable2Step, Reentranc
                 complexityTier: complexityTierForValue(rec.totalValueWei),
                 sectorsMask: rec.sectorsMask,
                 workUnits: researchProofs[tokenId].workUnits,
+                houseSize: bp.houseSize == 0 ? 1 : bp.houseSize,
+                houseFloors: bp.houseFloors == 0 ? 2 : bp.houseFloors,
+                hasBasement: bp.houseSize == 0 ? true : bp.hasBasement,
+                extraRoomsMask: bp.extraRoomsMask,
+                gardenHarvests: bp.gardenHarvests,
                 animationUrl: animationUrlOf(tokenId)
             })
         );

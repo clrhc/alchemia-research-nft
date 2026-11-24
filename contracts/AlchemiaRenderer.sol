@@ -7,8 +7,9 @@ import "@openzeppelin/contracts/utils/Base64.sol";
 /**
  * @title AlchemiaRenderer
  * @notice Standalone pure on-chain Swiss Architectural Blueprint SVG & ERC-721 JSON renderer.
- *         Keeps AlchemiaImpactNFT lean on Ethereum Mainnet & Base while visually reflecting
- *         live complexity tiers, built 3D lab rooms, companion species, and verified folds.
+ *         Keeps AlchemiaImpactNFT well under EIP-170 while visually reflecting live complexity
+ *         tiers, 6 modular lab wings, multi-story architect estate expansions (B1/1F/2F/3F +
+ *         6 homely rooms), town plot districts, botanical harvests, and verified protein folds.
  */
 contract AlchemiaRenderer {
     using Strings for uint256;
@@ -26,6 +27,11 @@ contract AlchemiaRenderer {
         uint8 complexityTier;
         uint8 sectorsMask;
         uint32 workUnits;
+        uint8 houseSize;
+        uint8 houseFloors;
+        bool hasBasement;
+        uint8 extraRoomsMask;
+        uint32 gardenHarvests;
         string animationUrl;
     }
 
@@ -95,9 +101,77 @@ contract AlchemiaRenderer {
         t.accentHex = aHex[palIdx];
     }
 
+    /**
+     * @notice Pure deterministic neighborhood district mapper matching `neighborhoodLayout.ts`!
+     *         tokenId #1 -> Central Founder Plaza, #2..#9 -> Ring 1 Inner Streets,
+     *         #10..#25 -> Ring 2 Park Boulevards, #26+ -> Ring 3+ Outer Expansion Districts.
+     */
+    function districtInfoForToken(uint256 tokenId)
+        public
+        pure
+        returns (uint8 ring, uint8 expansionBand, string memory districtName)
+    {
+        if (tokenId <= 1) {
+            return (1, 0, "Central Plaza");
+        }
+        uint256 plotIdx = tokenId - 2;
+        if (plotIdx < 8) {
+            string[8] memory inner = [
+                "Willow Lane", "Maple Lane", "Willow Lane", "Maple Lane",
+                "Oakwood Street", "Oakwood Street", "Main Street", "Main Street"
+            ];
+            return (1, 0, inner[plotIdx]);
+        }
+        if (plotIdx < 24) {
+            uint256 side = (plotIdx - 8) % 4;
+            string[4] memory suburb = [
+                "East Park Blvd", "South Blossom Ave", "West Park Blvd", "North Orchard Ave"
+            ];
+            return (2, 0, suburb[side]);
+        }
+        uint256 band = (plotIdx - 24) / 24;
+        uint8 bandU8 = band > 255 ? 255 : uint8(band);
+        if (band == 0) return (3, 0, "Skyline Heights");
+        if (band == 1) return (3, 1, "Innovation Ridge");
+        if (band == 2) return (3, 2, "Horizon Estates");
+        if (band == 3) return (3, 3, "Starlight Commons");
+        return (3, bandU8, string.concat("Frontier Sector ", (band - 3).toString()));
+    }
+
+    function buildAnimationUrl(
+        string calldata baseUrl,
+        uint256 tokenId,
+        bytes32 seed,
+        uint8 causeId,
+        uint8 complexityTier,
+        uint8 sectorsMask,
+        uint256 totalSupply,
+        uint8 houseFloors,
+        uint8 extraRoomsMask,
+        address nftContract,
+        uint256 chainId
+    ) external pure returns (string memory) {
+        uint8 floors = houseFloors == 0 ? 2 : houseFloors;
+        return string.concat(
+            baseUrl,
+            "?tokenId=", tokenId.toString(),
+            "&seed=", Strings.toHexString(uint256(seed), 32),
+            "&cause=", uint256(causeId).toString(),
+            "&tier=", uint256(complexityTier).toString(),
+            "&sectors=", uint256(sectorsMask).toString(),
+            "&supply=", totalSupply.toString(),
+            "&floors=", uint256(floors).toString(),
+            "&rooms=", uint256(extraRoomsMask).toString(),
+            "&contract=", Strings.toHexString(uint160(nftContract), 20),
+            "&chainId=", chainId.toString()
+        );
+    }
+
     function buildTokenURI(RenderParams calldata p) external pure returns (string memory) {
         DerivedTraits memory t = deriveTraits(p.seed);
-        string memory svg = _renderSVG(p, t);
+        (, , string memory district) = districtInfoForToken(p.tokenId);
+        string memory archLabel = _architectureLabel(p.houseSize, p.houseFloors, p.hasBasement);
+        string memory svg = _renderSVG(p, t, district, archLabel);
         string memory imageUri = string.concat("data:image/svg+xml;base64,", Base64.encode(bytes(svg)));
 
         string memory supplyLabel = p.maxSupply == 0
@@ -105,27 +179,54 @@ contract AlchemiaRenderer {
             : string.concat("Capped (", p.maxSupply.toString(), ")");
 
         uint256 sectorCount = _popcount(p.sectorsMask);
+        uint256 roomCount = _popcount(p.extraRoomsMask);
 
-        string memory json = string.concat(
-            '{"name":"Alchemia Lab #', p.tokenId.toString(),
-            '","description":"Interactive 3D glass laboratory that funds open science, folds real RCSB PDB mini-proteins, mines zero-tax ALCH coins, and grows with 6 buildable rooms. Cause: ',
-            p.causeName, '.","image":"', imageUri,
-            '","animation_url":"', p.animationUrl, '","attributes":[',
+        string memory attrsA = string.concat(
             '{"trait_type":"Vessel","value":"', t.vessel, '"},',
             '{"trait_type":"Pet","value":"', t.familiar, '"},',
             '{"trait_type":"Species","value":"', t.familiarKind, '"},',
             '{"trait_type":"Palette","value":"', t.palette, '"},',
             '{"trait_type":"Cause","value":"', p.causeName, '"},',
+            '{"trait_type":"Town District","value":"', district, '"},',
+            '{"trait_type":"Architecture","value":"', archLabel, '"},'
+        );
+
+        string memory attrsB = string.concat(
             '{"trait_type":"Supply","value":"', supplyLabel, '"},',
             '{"trait_type":"Detail Level","value":"Level ', uint256(p.complexityTier).toString(), '/5"},',
             '{"display_type":"number","trait_type":"Built Lab Wings","value":', sectorCount.toString(), '},',
-            '{"display_type":"number","trait_type":"Verified Research WUs","value":', uint256(p.workUnits).toString(), '}]}'
+            '{"display_type":"number","trait_type":"Homely Rooms","value":', roomCount.toString(), '},',
+            '{"display_type":"number","trait_type":"Botanical Harvests","value":', uint256(p.gardenHarvests).toString(), '},',
+            '{"display_type":"number","trait_type":"Verified Research WUs","value":', uint256(p.workUnits).toString(), '},',
+            '{"display_type":"number","trait_type":"Town Population","value":', p.totalSupply.toString(), '}'
+        );
+
+        string memory json = string.concat(
+            '{"name":"Alchemia Lab #', p.tokenId.toString(),
+            '","description":"Interactive multi-story 3D architectural glass laboratory in Alchemia Town that funds open science, folds real RCSB PDB mini-proteins, mines zero-tax ALCH coins, and grows with buildable wings, rooms, gardens, and neighbors. Cause: ',
+            p.causeName, '.","image":"', imageUri,
+            '","animation_url":"', p.animationUrl, '","attributes":[',
+            attrsA, attrsB, ']}'
         );
 
         return string.concat("data:application/json;base64,", Base64.encode(bytes(json)));
     }
 
-    function _renderSVG(RenderParams calldata p, DerivedTraits memory t) private pure returns (string memory) {
+    function _architectureLabel(uint8 size, uint8 floors, bool hasBasement) private pure returns (string memory) {
+        uint8 safeFloors = floors == 0 ? 2 : (floors > 3 ? 3 : floors);
+        string memory sizeName = size >= 3 ? "Grand Estate" : size == 2 ? "Atrium Villa" : "Architect Home";
+        string memory floorTag = hasBasement
+            ? string.concat("B1+", uint256(safeFloors).toString(), "F")
+            : string.concat(uint256(safeFloors).toString(), "F");
+        return string.concat(floorTag, " ", sizeName);
+    }
+
+    function _renderSVG(
+        RenderParams calldata p,
+        DerivedTraits memory t,
+        string memory district,
+        string memory archLabel
+    ) private pure returns (string memory) {
         uint256 boost = (p.globalDonatedWei * 68) / 5 ether;
         if (boost > 68) boost = 68;
         uint256 liqY = 382 - ((24 + boost) * 140) / 100;
@@ -146,7 +247,7 @@ contract AlchemiaRenderer {
             '<path d="', flaskD, '" fill="none" stroke="#475569" stroke-width="2.6"/>',
             '<path d="M286 178v72" stroke="#ffffff" stroke-opacity=".65" stroke-width="4" stroke-linecap="round"/>',
             _familiarSvg(t.familiarIdx, p.sectorsMask, p.complexityTier, t.accentHex),
-            _titleBlockSvg(p, t),
+            _titleBlockSvg(p, t, district, archLabel),
             '</svg>'
         );
     }
@@ -193,16 +294,22 @@ contract AlchemiaRenderer {
         return string.concat(out, '</g>');
     }
 
-    function _titleBlockSvg(RenderParams calldata p, DerivedTraits memory t) private pure returns (string memory) {
+    function _titleBlockSvg(
+        RenderParams calldata p,
+        DerivedTraits memory t,
+        string memory district,
+        string memory archLabel
+    ) private pure returns (string memory) {
         return string.concat(
-            '<rect x="34" y="464" width="532" height="98" rx="18" fill="#ffffff" fill-opacity=".84" stroke="#cbd5e1"/>',
-            '<text x="56" y="494" font-family="sans-serif" font-size="14" font-weight="600" fill="#1a1f2c">ALCHEMIA LAB #',
-            p.tokenId.toString(), ' - ', t.familiar, '</text>',
-            '<text x="56" y="520" font-family="sans-serif" font-size="12" fill="#5a6478">Level ',
+            '<rect x="34" y="460" width="532" height="106" rx="18" fill="#ffffff" fill-opacity=".86" stroke="#cbd5e1"/>',
+            '<text x="56" y="489" font-family="sans-serif" font-size="14" font-weight="600" fill="#1a1f2c">ALCHEMIA LAB #',
+            p.tokenId.toString(), ' - ', t.familiar, ' (', district, ')</text>',
+            '<text x="56" y="514" font-family="sans-serif" font-size="12" fill="#5a6478">Level ',
             uint256(p.complexityTier).toString(), '/5 | ', _popcount(p.sectorsMask).toString(),
-            '/6 Rooms | ', p.causeName, '</text>',
-            '<text x="56" y="544" font-family="monospace" font-size="11" fill="#334155">FOLDS: ',
-            uint256(p.workUnits).toString(), ' | LIVE RESEARCH: ', _formatEth3(p.globalDonatedWei), ' ETH</text>'
+            '/6 Rooms | ', archLabel, '</text>',
+            '<text x="56" y="538" font-family="monospace" font-size="11" fill="#334155">FOLDS: ',
+            uint256(p.workUnits).toString(), ' | TOWN: ', p.totalSupply.toString(),
+            ' LABS | RESEARCH: ', _formatEth3(p.globalDonatedWei), ' ETH</text>'
         );
     }
 
@@ -259,7 +366,7 @@ contract AlchemiaRenderer {
         string memory json = string.concat(
             '{"name":"',
             collectionName,
-            '","description":"Interactive 3D glass labs that fund open scientific research, fold real proteins in your browser, let you build rooms, care for your pet, and mine 0% tax ALCH coins.","image":"data:image/svg+xml;base64,',
+            '","description":"Interactive 3D architectural glass labs in living Alchemia Town that fund open scientific research, fold real proteins in your browser, let you expand multi-story homes & gardens, care for your pet, and mine 0% tax ALCH coins.","image":"data:image/svg+xml;base64,',
             Base64.encode(bytes(emblemSvg)),
             '","external_link":"',
             externalLink,

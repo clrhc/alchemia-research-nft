@@ -27,8 +27,15 @@ import {
   DEFAULT_CAUSES,
   complexityTierFromUsd,
   ethToUsd,
-  usdToEth
+  usdToEth,
+  type AppNetworkMode
 } from "./web3/config";
+import {
+  encodeExtraRoomsMask,
+  estimateEstateExpansionCost,
+  packLabStyleBits
+} from "./web3/estateCodec";
+import type { LabDecorConfig } from "./engine/simsState";
 import {
   buildAnimationUrl,
   clearSelectedWalletProvider,
@@ -37,16 +44,20 @@ import {
   executeOnChainBuildSector,
   executeOnChainClaimCoins,
   executeOnChainDonateCoins,
+  executeOnChainExpandEstate,
   executeOnChainMint,
   executeOnChainSeedLiquidity,
   executeOnChainSubmitResearchProof,
+  executeOnChainSyncEstateCustomization,
   executeOnChainUpgradeVessel,
   fetchOnChainCollectionSnapshot,
   fetchRecentResearchDiscoveries,
-  loadInitialCollectionState,
+  loadCollectionStateForMode,
+  loadNetworkMode,
   mergeMintedVessels,
   saveChainCache,
   saveDemoState,
+  saveNetworkMode,
   subscribeWalletEvents,
   type CollectionState,
   type MintedVessel
@@ -65,7 +76,8 @@ function sliderDetailLabel(usd: number): string {
 
 export function App() {
   const [page, setPage] = useState<PageTab>("mint");
-  const [state, setState] = useState<CollectionState>(() => loadInitialCollectionState());
+  const [networkMode, setNetworkMode] = useState<AppNetworkMode>(() => loadNetworkMode());
+  const [state, setState] = useState<CollectionState>(() => loadCollectionStateForMode(loadNetworkMode()));
   const [labSparks, setLabSparks] = useState<number>(() => loadLabSparks());
   const [sliderIndex, setSliderIndex] = useState<number>(0); // 0 -> $1
   const [currentSeed, setCurrentSeed] = useState<`0x${string}`>(
@@ -131,6 +143,24 @@ export function App() {
     if (typeof window !== "undefined") {
       window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
     }
+  };
+
+  const handleSwitchNetworkMode = (nextMode: AppNetworkMode) => {
+    if (nextMode === networkMode) return;
+    saveNetworkMode(nextMode);
+    setNetworkMode(nextMode);
+    const nextState = loadCollectionStateForMode(nextMode, state.walletAddress);
+    setState(nextState);
+    setExploreSelected(null);
+    setVisitHomeLab(null);
+    setMyLabTokenId(nextState.vessels[0]?.tokenId ?? 1);
+    setLastPulseAt(Date.now());
+    setBgPulseSignal((n) => n + 1);
+    setNotice(
+      nextMode === "testnet"
+        ? "Switched to Base Sepolia Testnet (live V2 smart contracts)."
+        : "Switched to Example Sandbox (free instant minting & town growth preview)."
+    );
   };
 
   // Subscribe to EIP-1193 MetaMask/Rabby/Coinbase account & chain switch events
@@ -654,6 +684,90 @@ export function App() {
     return false;
   };
 
+  const handleSyncEstateOnChain = async (
+    vessel: MintedVessel,
+    decor: LabDecorConfig,
+    gardenHarvests: number,
+    profileCode: string
+  ) => {
+    if (!state.contractAddress) {
+      setNotice("Saved locally in Example Sandbox. Switch to Testnet to anchor on Base Sepolia!");
+      return;
+    }
+    if (!vessel.ownedByUser) {
+      throw new Error("Connect the owner wallet of this lab to save on Base Sepolia.");
+    }
+    if (!state.walletAddress) {
+      const { address, chainId } = await connectInjectedWallet();
+      setState((prev) => ({ ...prev, walletAddress: address, chainId }));
+    }
+
+    const cur = vessel.estate ?? {
+      houseSize: 1 as const,
+      houseFloors: 2 as const,
+      hasBasement: true,
+      extraRoomsMask: 0,
+      gardenHarvests: 0,
+      stylePackedHex: "0x0"
+    };
+    const targetMask = encodeExtraRoomsMask(decor.extraRooms);
+    const costEst = estimateEstateExpansionCost(cur, {
+      houseSize: decor.houseSize,
+      houseFloors: decor.houseFloors,
+      hasBasement: decor.hasBasement,
+      extraRoomsMask: targetMask
+    });
+
+    if (costEst.ethUnits > 0) {
+      const payWithCoins = state.userCoinBalance >= costEst.coinCost && costEst.coinCost > 0;
+      await executeOnChainExpandEstate({
+        contractAddress: state.contractAddress,
+        coinAddress: state.coinAddress || undefined,
+        tokenId: vessel.tokenId,
+        targetSize: decor.houseSize,
+        targetFloors: decor.houseFloors,
+        enableBasement: decor.hasBasement,
+        extraRoomsMask: costEst.mergedRoomsMask,
+        payWithCoins,
+        coinCost: costEst.coinCost,
+        ethAmount: state.mintPriceEth * 2 * costEst.ethUnits
+      });
+    }
+
+    const stylePacked = packLabStyleBits(decor);
+    await executeOnChainSyncEstateCustomization({
+      contractAddress: state.contractAddress,
+      tokenId: vessel.tokenId,
+      stylePacked,
+      gardenHarvests,
+      profileCode
+    });
+
+    const nextEstate = {
+      houseSize: decor.houseSize,
+      houseFloors: decor.houseFloors,
+      hasBasement: decor.hasBasement,
+      extraRoomsMask: costEst.mergedRoomsMask,
+      gardenHarvests: Math.max(cur.gardenHarvests, gardenHarvests),
+      stylePackedHex: `0x${stylePacked.toString(16)}`,
+      profileCode
+    };
+    setState((prev) => {
+      const next: CollectionState = {
+        ...prev,
+        vessels: prev.vessels.map((v) =>
+          v.tokenId === vessel.tokenId ? { ...v, estate: nextEstate } : v
+        )
+      };
+      saveChainCache(next);
+      broadcastUpdate(next, vessel.tokenId, vessel.valueUsd, vessel.sectorsMask);
+      return next;
+    });
+    awardSparks(20);
+    setLastPulseAt(Date.now());
+    setBgPulseSignal((n) => n + 1);
+  };
+
   const handleSimulateNewNeighbor = (count = 1) => {
     if (state.contractAddress) return;
     const safeCount = Math.max(1, Math.min(25, Math.floor(count)));
@@ -745,6 +859,28 @@ export function App() {
                 : "Connect"}
             </span>
           </button>
+          <div className="mode-toggle-group" role="group" aria-label="Switch Example and Base Sepolia Testnet view">
+            <button
+              type="button"
+              className={`mode-toggle-btn clickable ${networkMode === "example" ? "active is-example" : ""}`}
+              aria-pressed={networkMode === "example"}
+              onClick={() => handleSwitchNetworkMode("example")}
+              title="Interactive Example Sandbox — free instant minting & town expansion preview"
+            >
+              <span className="mode-dot is-example" />
+              <span>Example</span>
+            </button>
+            <button
+              type="button"
+              className={`mode-toggle-btn clickable ${networkMode === "testnet" ? "active is-testnet" : ""}`}
+              aria-pressed={networkMode === "testnet"}
+              onClick={() => handleSwitchNetworkMode("testnet")}
+              title="Live Base Sepolia Testnet — real V2 smart contracts & on-chain mints"
+            >
+              <span className="mode-dot is-testnet" />
+              <span>Testnet</span>
+            </button>
+          </div>
         </nav>
 
         {page === "mint" && (
@@ -892,6 +1028,9 @@ export function App() {
               onConnectWallet={handleConnectWallet}
               onSpendCoinsForTreat={handleSpendSparksForTreat}
               onSimulateNewNeighbor={!state.contractAddress ? handleSimulateNewNeighbor : undefined}
+              networkMode={networkMode}
+              onSwitchNetworkMode={handleSwitchNetworkMode}
+              onSyncEstateOnChain={state.contractAddress ? handleSyncEstateOnChain : undefined}
               onGoMint={() => setPage("mint")}
             />
           </Suspense>
@@ -917,6 +1056,8 @@ export function App() {
             open={showWhitePaper}
             onClose={() => setShowWhitePaper(false)}
             state={state}
+            networkMode={networkMode}
+            onSwitchNetworkMode={handleSwitchNetworkMode}
             animationUrl={previewAnimationUrl}
             liveCompute={liveCompute}
             onSeedLiquidity={async () => {
@@ -939,6 +1080,8 @@ export function App() {
             onClose={() => setShowWalletModal(false)}
             walletAddress={state.walletAddress}
             chainId={state.chainId}
+            networkMode={networkMode}
+            onSwitchNetworkMode={handleSwitchNetworkMode}
             connecting={walletConnecting}
             error={walletError}
             onConnectProvider={handleConnectProvider}

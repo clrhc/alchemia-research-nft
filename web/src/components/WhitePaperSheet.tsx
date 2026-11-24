@@ -6,13 +6,22 @@ import {
   type ComputeSnapshot
 } from "../engine/researchCompute";
 import { downloadMMCIFFromSnapshot } from "../engine/structuralAnalysis";
-import { CHAIN_NAMES, ethToUsd } from "../web3/config";
+import {
+  CHAIN_NAMES,
+  TESTNET_COIN_ADDRESS,
+  TESTNET_CONTRACT_ADDRESS,
+  TESTNET_RENDERER_ADDRESS,
+  ethToUsd,
+  type AppNetworkMode
+} from "../web3/config";
 import type { CollectionState } from "../web3/contractService";
 
 interface WhitePaperSheetProps {
   open: boolean;
   onClose: () => void;
   state: CollectionState;
+  networkMode: AppNetworkMode;
+  onSwitchNetworkMode: (mode: AppNetworkMode) => void;
   animationUrl: string;
   liveCompute: ComputeSnapshot | null;
   onSeedLiquidity?: () => Promise<void>;
@@ -22,6 +31,8 @@ export function WhitePaperSheet({
   open,
   onClose,
   state,
+  networkMode,
+  onSwitchNetworkMode,
   animationUrl,
   liveCompute,
   onSeedLiquidity
@@ -235,34 +246,54 @@ export function WhitePaperSheet({
             </div>
           )}
 
-          {state.contractAddress && (
-            <div>
-              <h3>
-                {state.recentDiscoveries.length > 0 ? "6" : "5"}. Live contracts (
-                {CHAIN_NAMES[state.chainId] || `Chain ${state.chainId}`})
-              </h3>
-              <div className="wp-contracts">
-                <a
-                  href={`${explorerBase}${state.contractAddress}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  NFT: {state.contractAddress.slice(0, 10)}…{state.contractAddress.slice(-8)}
-                  <ArrowUpRight size={11} />
-                </a>
-                {state.coinAddress && (
-                  <a
-                    href={`${explorerBase}${state.coinAddress}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    ALCH: {state.coinAddress.slice(0, 10)}…{state.coinAddress.slice(-8)}
-                    <ArrowUpRight size={11} />
-                  </a>
-                )}
-              </div>
+          <div>
+            <h3>
+              {state.recentDiscoveries.length > 0 ? "6" : "5"}. Deployed V2 Smart Contracts (
+              {CHAIN_NAMES[state.chainId] || "Base Sepolia"})
+            </h3>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+              <span className="tama-sub">
+                Active view: <strong>{networkMode === "testnet" ? "Live Base Sepolia Testnet" : "Example Sandbox"}</strong>
+              </span>
+              <button
+                type="button"
+                className="subtle-pill-btn clickable"
+                style={{ padding: "3px 10px", fontSize: "0.72rem" }}
+                onClick={() => onSwitchNetworkMode(networkMode === "testnet" ? "example" : "testnet")}
+              >
+                Switch to {networkMode === "testnet" ? "Example Sandbox" : "Base Sepolia Testnet"}
+              </button>
             </div>
-          )}
+            <div className="wp-contracts">
+              <a
+                href={`${explorerBase}${state.contractAddress || TESTNET_CONTRACT_ADDRESS}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                NFT V2: {(state.contractAddress || TESTNET_CONTRACT_ADDRESS).slice(0, 10)}…
+                {(state.contractAddress || TESTNET_CONTRACT_ADDRESS).slice(-8)}
+                <ArrowUpRight size={11} />
+              </a>
+              <a
+                href={`${explorerBase}${state.coinAddress || TESTNET_COIN_ADDRESS}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                ALCH: {(state.coinAddress || TESTNET_COIN_ADDRESS).slice(0, 10)}…
+                {(state.coinAddress || TESTNET_COIN_ADDRESS).slice(-8)}
+                <ArrowUpRight size={11} />
+              </a>
+              <a
+                href={`${explorerBase}${TESTNET_RENDERER_ADDRESS}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Renderer V2: {TESTNET_RENDERER_ADDRESS.slice(0, 10)}…
+                {TESTNET_RENDERER_ADDRESS.slice(-8)}
+                <ArrowUpRight size={11} />
+              </a>
+            </div>
+          </div>
 
           <div className="details-sheet-links">
             {liveCompute && (
