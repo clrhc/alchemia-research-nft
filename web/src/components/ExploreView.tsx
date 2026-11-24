@@ -10,9 +10,14 @@ import {
   DoorOpen,
   Download,
   FileJson,
+  Flower2,
+  Home,
+  Layers,
   Link2,
+  MapPin,
   RefreshCw,
   Search,
+  Sparkles,
   Sun,
   Volume2,
   VolumeX
@@ -20,6 +25,12 @@ import {
 import { ArtworkCanvas, type ArtworkCanvasHandle } from "./ArtworkCanvas";
 import { LabPortrait } from "./LabPortrait";
 import type { AtmosphereMode, CameraPreset, LightingMood } from "../engine/alchemy3DRenderer";
+import { EXTRA_ROOM_DEFS } from "../engine/homeLayout";
+import {
+  getExpansionBandCount,
+  getNeighborhoodGrowthStage,
+  getNeighborhoodPlotSlot
+} from "../engine/neighborhoodLayout";
 import { deriveTraitsFromSeed } from "../engine/prng";
 import {
   downloadPDBFromSnapshot,
@@ -33,6 +44,7 @@ import {
 } from "../engine/structuralAnalysis";
 import { soundEngine } from "../engine/soundEngine";
 import { complexityTierFromUsd, ethToUsd } from "../web3/config";
+import { decodeExtraRoomsMask } from "../web3/estateCodec";
 import {
   buildAnimationUrl,
   type CollectionState,
@@ -54,7 +66,32 @@ interface ExploreViewProps {
   onVisitHomeInMyLabs?: (vessel: MintedVessel) => void;
 }
 
-type GalleryFilter = "all" | "rooms" | "science" | "cats" | "dogs";
+type GalleryFilter = "all" | "estates" | "rooms" | "science" | "cats" | "dogs";
+
+function getDistrictLabelForToken(tokenId: number): string {
+  if (tokenId <= 1) return "Central Plaza";
+  return getNeighborhoodPlotSlot(Math.max(0, tokenId - 2)).districtName;
+}
+
+function getEstateSummary(vessel: MintedVessel): {
+  storyBadge: string;
+  sizeLabel: string;
+  homelyRooms: ReturnType<typeof decodeExtraRoomsMask>;
+  harvests: number;
+  estateScore: number;
+} {
+  const est = vessel.estate;
+  const floors = est?.houseFloors ?? 2;
+  const hasB1 = est ? est.hasBasement : true;
+  const size = est?.houseSize ?? 1;
+  const homelyRooms = est ? decodeExtraRoomsMask(est.extraRoomsMask) : [];
+  const harvests = est?.gardenHarvests ?? 0;
+  const sizeLabel = size === 3 ? "Grand Villa" : size === 2 ? "Courtyard" : "Studio";
+  const storyBadge = `${hasB1 ? "B1+" : ""}${floors}F`;
+  const estateScore =
+    floors * 10 + size * 8 + homelyRooms.length * 6 + countSectors(vessel.sectorsMask) * 4 + harvests;
+  return { storyBadge, sizeLabel, homelyRooms, harvests, estateScore };
+}
 
 const CAMERA_BUTTONS: Array<{ id: CameraPreset; label: string }> = [
   { id: "iso", label: "3D View" },
@@ -125,13 +162,28 @@ export function ExploreView({
       return true;
     });
 
-    if (filter === "rooms") {
+    if (filter === "estates") {
+      list = [...list].sort((a, b) => getEstateSummary(b).estateScore - getEstateSummary(a).estateScore);
+    } else if (filter === "rooms") {
       list = [...list].sort((a, b) => countSectors(b.sectorsMask) - countSectors(a.sectorsMask));
     } else if (filter === "science") {
       list = [...list].sort((a, b) => b.workUnits - a.workUnits);
     }
     return list;
   }, [state.vessels, filter, searchId]);
+
+  const townStage = useMemo(
+    () => getNeighborhoodGrowthStage(Math.max(1, state.totalSupply)),
+    [state.totalSupply]
+  );
+  const expansionBands = useMemo(
+    () => getExpansionBandCount(Math.max(0, state.totalSupply - 1) + 4),
+    [state.totalSupply]
+  );
+  const totalCollectionFolds = useMemo(
+    () => state.vessels.reduce((sum, v) => sum + (v.workUnits || 0), 0),
+    [state.vessels]
+  );
 
   if (selectedVessel) {
     const traits = deriveTraitsFromSeed(selectedVessel.seed);
@@ -379,20 +431,45 @@ export function ExploreView({
                 <strong>${selectedVessel.valueUsd}</strong>
               </div>
               <div className="mini-stat">
-                <span>Detail level</span>
-                <strong>Level {tier} of 5</strong>
+                <span>Town District</span>
+                <strong>{getDistrictLabelForToken(selectedVessel.tokenId)}</strong>
+              </div>
+              <div className="mini-stat">
+                <span>Architecture</span>
+                <strong>
+                  {getEstateSummary(selectedVessel).storyBadge} · {getEstateSummary(selectedVessel).sizeLabel}
+                </strong>
               </div>
               <div className="mini-stat">
                 <span>Coin rate</span>
                 <strong>{miningRate} ALCH / hr</strong>
               </div>
-              <div className="mini-stat">
-                <span>Rooms built</span>
-                <strong>{countSectors(selectedVessel.sectorsMask)} of 6</strong>
-              </div>
             </div>
 
-            <div className="single-section-label">Rooms in this lab</div>
+            {(() => {
+              const estInfo = getEstateSummary(selectedVessel);
+              return (
+                <>
+                  <div className="single-section-label">
+                    Architect Estate &amp; Homely Rooms ({estInfo.homelyRooms.length}/6 built ·{" "}
+                    {estInfo.harvests} garden harvests)
+                  </div>
+                  <div className="wing-tags">
+                    {EXTRA_ROOM_DEFS.map((rm) => {
+                      const built = estInfo.homelyRooms.includes(rm.id);
+                      return (
+                        <span key={rm.id} className={`wing-tag ${built ? "built" : ""}`}>
+                          {built ? "● " : "○ "}
+                          {rm.name}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </>
+              );
+            })()}
+
+            <div className="single-section-label">Lab Wings ({countSectors(selectedVessel.sectorsMask)}/6)</div>
             <div className="wing-tags">
               {LAB_SECTORS.map((sec) => {
                 const built = hasSector(selectedVessel.sectorsMask, sec.id);
@@ -483,19 +560,48 @@ export function ExploreView({
           Open any lab to spin it in 3D, check its rooms, or download its live protein fold.
         </p>
         {state.chainSynced !== false && (
-          <div className="gallery-meta-line">
-            <span>{state.totalSupply.toLocaleString()} {state.totalSupply === 1 ? "lab" : "labs"}</span>
-            <span>·</span>
-            <span>
-              {ethToUsd(state.globalDonatedEth).toLocaleString("en-US", {
-                style: "currency",
-                currency: "USD",
-                maximumFractionDigits: 2
-              })}{" "}
-              to research
-            </span>
-            <span>·</span>
-            <span>0% tax ALCH</span>
+          <div className="explore-town-strip" aria-label="Alchemia Town live collection overview">
+            <div className="explore-town-stat">
+              <span>Network</span>
+              <strong>
+                <span
+                  className={`mode-dot ${state.connectedMode === "simulation" ? "is-example" : "is-testnet"}`}
+                  style={{ display: "inline-block", marginRight: 6 }}
+                />
+                {state.connectedMode === "simulation"
+                  ? "Example Mode"
+                  : state.connectedMode === "mainnet"
+                    ? "Ethereum Mainnet"
+                    : "Base Sepolia Testnet"}
+              </strong>
+            </div>
+            <div className="explore-town-stat">
+              <span>Town Stage</span>
+              <strong>
+                Stage {townStage.level}/5 · {townStage.title}
+              </strong>
+            </div>
+            <div className="explore-town-stat">
+              <span>Minted Homes</span>
+              <strong>
+                {state.totalSupply.toLocaleString()} {state.totalSupply === 1 ? "lab" : "labs"}
+                {expansionBands > 0 ? ` · ${expansionBands} outer ring${expansionBands === 1 ? "" : "s"}` : ""}
+              </strong>
+            </div>
+            <div className="explore-town-stat">
+              <span>Research Funded</span>
+              <strong>
+                {ethToUsd(state.globalDonatedEth).toLocaleString("en-US", {
+                  style: "currency",
+                  currency: "USD",
+                  maximumFractionDigits: 2
+                })}
+              </strong>
+            </div>
+            <div className="explore-town-stat">
+              <span>Verified Folds</span>
+              <strong>{totalCollectionFolds.toLocaleString()} units</strong>
+            </div>
           </div>
         )}
       </header>
@@ -505,7 +611,8 @@ export function ExploreView({
           {(
             [
               { id: "all", label: "All" },
-              { id: "rooms", label: "Most Rooms" },
+              { id: "estates", label: "Top Estates" },
+              { id: "rooms", label: "Most Wings" },
               { id: "science", label: "Top Science" },
               { id: "cats", label: "Cats" },
               { id: "dogs", label: "Dogs" }
@@ -552,6 +659,8 @@ export function ExploreView({
             const tier = complexityTierFromUsd(vessel.valueUsd);
             const builtCount = countSectors(vessel.sectorsMask);
             const rate = computeMiningRatePerHour(tier, vessel.sectorsMask, vessel.workUnits);
+            const districtName = getDistrictLabelForToken(vessel.tokenId);
+            const estInfo = getEstateSummary(vessel);
 
             return (
               <article
@@ -586,12 +695,15 @@ export function ExploreView({
 
                   <div className="explore-swatch-top">
                     <span className="swatch-pill">#{vessel.tokenId}</span>
+                    <span className="swatch-pill">
+                      <Layers size={10} /> {estInfo.storyBadge}
+                    </span>
                     <span className="swatch-pill">${vessel.valueUsd}</span>
                   </div>
 
                   <div className="explore-swatch-bottom">
                     <span className="swatch-pill">
-                      <Building2 size={11} /> {builtCount}/6 rooms
+                      <Building2 size={11} /> {builtCount}/6 wings
                     </span>
                     <span className="swatch-pill">
                       <Coins size={11} /> {rate}/hr
@@ -610,9 +722,27 @@ export function ExploreView({
                     </span>
                   </div>
                   <div className="explore-card-meta">
+                    <MapPin size={10} style={{ verticalAlign: "-1px", marginRight: 3 }} />
+                    {districtName} ·{" "}
                     {tier >= 4 || hasSector(vessel.sectorsMask, 3)
                       ? "Cat & Dog"
                       : traits.familiar.name}
+                  </div>
+                  <div className="explore-estate-pills">
+                    <span>
+                      <Home size={10} /> {estInfo.sizeLabel}
+                    </span>
+                    {estInfo.homelyRooms.length > 0 && (
+                      <span>
+                        <Sparkles size={10} /> {estInfo.homelyRooms.length} cozy{" "}
+                        {estInfo.homelyRooms.length === 1 ? "room" : "rooms"}
+                      </span>
+                    )}
+                    {estInfo.harvests > 0 && (
+                      <span>
+                        <Flower2 size={10} /> {estInfo.harvests} blooms
+                      </span>
+                    )}
                   </div>
                   <div className="room-pip-strip" aria-label={`${builtCount} of 6 rooms built`}>
                     {LAB_SECTORS.map((s) => (
@@ -628,8 +758,22 @@ export function ExploreView({
                     ))}
                   </div>
                   <div className="explore-card-foot">
-                    <span>Level {tier}</span>
-                    <span>{vessel.workUnits} folds saved</span>
+                    <span>
+                      Lv.{tier} · {vessel.workUnits} folds
+                    </span>
+                    <button
+                      type="button"
+                      className="explore-visit-mini clickable"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (vessel.ownedByUser) onOpenInMyLabs(vessel);
+                        else if (onVisitHomeInMyLabs) onVisitHomeInMyLabs(vessel);
+                        else onSelectVessel(vessel);
+                      }}
+                    >
+                      <DoorOpen size={11} />
+                      {vessel.ownedByUser ? "My Lab" : "Visit 3D"}
+                    </button>
                   </div>
                 </div>
               </article>

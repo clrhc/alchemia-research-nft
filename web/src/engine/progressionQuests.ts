@@ -7,7 +7,7 @@
  * claimable Lab Sparks, Researcher XP, Rank Level-Ups, and unlockable Titles.
  */
 
-export type QuestChainId = "architect" | "science" | "botany" | "companion" | "town";
+export type QuestChainId = "architect" | "science" | "botany" | "alchemy" | "companion" | "town";
 export type AchievementRarity = "Common" | "Rare" | "Epic" | "Legendary";
 
 export type ProgressionCounterKey =
@@ -22,7 +22,13 @@ export type ProgressionCounterKey =
   | "vehicleWaves"
   | "parkVisits"
   | "floorChanges"
-  | "proofsAnchored";
+  | "proofsAnchored"
+  | "elixirsBrewed"
+  | "starlightCrafted"
+  | "goldenHarvests"
+  | "petTricks"
+  | "favorsFulfilled"
+  | "bountiesClaimed";
 
 export interface ProgressionCounters {
   furnishActions: number;
@@ -37,6 +43,12 @@ export interface ProgressionCounters {
   parkVisits: number;
   floorChanges: number;
   proofsAnchored: number;
+  elixirsBrewed: number;
+  starlightCrafted: number;
+  goldenHarvests: number;
+  petTricks: number;
+  favorsFulfilled: number;
+  bountiesClaimed: number;
 }
 
 /** Live world snapshot merged with cumulative counters to evaluate every quest & achievement */
@@ -71,7 +83,7 @@ export interface QuestStepDef {
   rewardSparks: number;
   rewardXp: number;
   accent: string;
-  actionHint: "builder" | "research" | "gardens" | "pet" | "town";
+  actionHint: "builder" | "research" | "gardens" | "alchemy" | "pet" | "town";
   measure: (counters: ProgressionCounters, live: ProgressionLiveMetrics) => number;
 }
 
@@ -129,6 +141,7 @@ export const QUEST_CHAIN_META: Record<QuestChainId, { label: string; accent: str
   architect: { label: "Architect Homebuilder", accent: "#6366f1" },
   science: { label: "Open-Science Researcher", accent: "#38bdf8" },
   botany: { label: "Botanical Gardener", accent: "#10b981" },
+  alchemy: { label: "Master Alchemist", accent: "#a855f7" },
   companion: { label: "Familiar Caretaker", accent: "#f472b6" },
   town: { label: "Neighborhood Socialite", accent: "#f59e0b" }
 };
@@ -272,7 +285,48 @@ export const QUEST_STEPS: readonly QuestStepDef[] = [
     measure: (_, l) => l.uniqueSpeciesHarvested
   },
 
-  // Chain 4: Familiar Caretaker
+  // Chain 4: Master Alchemist (Botanical Brewing & Elixirs)
+  {
+    id: "q-alch-1",
+    chainId: "alchemy",
+    stepNumber: 1,
+    title: "First Botanical Brew",
+    desc: "Brew your first botanical tea, mining tonic, pet ambrosia, or flower bouquet.",
+    target: 1,
+    rewardSparks: 10,
+    rewardXp: 30,
+    accent: "#a855f7",
+    actionHint: "alchemy",
+    measure: (c) => c.elixirsBrewed
+  },
+  {
+    id: "q-alch-2",
+    chainId: "alchemy",
+    stepNumber: 2,
+    title: "Golden Apothecary",
+    desc: "Brew 3 botanical elixirs or harvest a rare 2× Golden Bloom from your gardens.",
+    target: 3,
+    rewardSparks: 20,
+    rewardXp: 55,
+    accent: "#a855f7",
+    actionHint: "alchemy",
+    measure: (c) => c.elixirsBrewed + c.goldenHarvests * 3
+  },
+  {
+    id: "q-alch-3",
+    chainId: "alchemy",
+    stepNumber: 3,
+    title: "Philosopher's Starlight",
+    desc: "Craft the legendary Philosopher's Starlight Elixir or brew 6 total botanical recipes.",
+    target: 6,
+    rewardSparks: 40,
+    rewardXp: 100,
+    accent: "#a855f7",
+    actionHint: "alchemy",
+    measure: (c) => c.elixirsBrewed + c.starlightCrafted * 6
+  },
+
+  // Chain 5: Familiar Caretaker
   {
     id: "q-pet-1",
     chainId: "companion",
@@ -456,6 +510,50 @@ export const ACHIEVEMENT_DEFS: readonly AchievementDef[] = [
     measure: (_, l) => l.totalStationUpgrades
   },
   {
+    id: "ach-brewer",
+    title: "Master Elixir Brewer",
+    desc: "Craft 3 botanical elixirs, bouquets, or treats at the Alchemy Brewing Bench.",
+    rarity: "Rare",
+    target: 3,
+    rewardSparks: 18,
+    rewardXp: 50,
+    accent: "#a855f7",
+    measure: (c) => c.elixirsBrewed
+  },
+  {
+    id: "ach-golden",
+    title: "Golden Bloom Alchemist",
+    desc: "Harvest a rare 2× shimmering Golden Bloom from your home or park gardens.",
+    rarity: "Epic",
+    target: 1,
+    rewardSparks: 24,
+    rewardXp: 65,
+    accent: "#f59e0b",
+    measure: (c) => c.goldenHarvests
+  },
+  {
+    id: "ach-tricks",
+    title: "Familiar Trick Trainer",
+    desc: "Perform 4 trained tricks with your 3D cat or dog companion.",
+    rarity: "Rare",
+    target: 4,
+    rewardSparks: 16,
+    rewardXp: 45,
+    accent: "#f472b6",
+    measure: (c) => c.petTricks
+  },
+  {
+    id: "ach-benefactor",
+    title: "Alchemia Town Benefactor",
+    desc: "Fulfill 3 daily bounties or neighbor favor requests across Alchemia Town.",
+    rarity: "Epic",
+    target: 3,
+    rewardSparks: 26,
+    rewardXp: 75,
+    accent: "#10b981",
+    measure: (c) => c.favorsFulfilled + c.bountiesClaimed
+  },
+  {
     id: "ach-legend",
     title: "Alchemia Town Legend",
     desc: "Claim 10 total quests and achievement badges across your journey.",
@@ -485,7 +583,13 @@ export function createInitialProgressionState(): ProgressionState {
       vehicleWaves: 0,
       parkVisits: 0,
       floorChanges: 0,
-      proofsAnchored: 0
+      proofsAnchored: 0,
+      elixirsBrewed: 0,
+      starlightCrafted: 0,
+      goldenHarvests: 0,
+      petTricks: 0,
+      favorsFulfilled: 0,
+      bountiesClaimed: 0
     },
     claimedQuestIds: [],
     claimedAchievementIds: [],
@@ -584,12 +688,31 @@ export function getResearcherRank(xp: number): ResearcherRankInfo {
   };
 }
 
+export function awardBonusProgressionXp(
+  state: ProgressionState,
+  xpDelta: number,
+  sparksDelta = 0
+): { nextState: ProgressionState; leveledUp: boolean; newRank: ResearcherRankInfo } {
+  const prevRank = getResearcherRank(state.xp);
+  const nextState: ProgressionState = {
+    ...state,
+    xp: state.xp + Math.max(0, Math.round(xpDelta)),
+    totalSparksClaimed: state.totalSparksClaimed + Math.max(0, Math.round(sparksDelta))
+  };
+  const newRank = getResearcherRank(nextState.xp);
+  return {
+    nextState,
+    leveledUp: newRank.level > prevRank.level,
+    newRank
+  };
+}
+
 export function evaluateQuestChains(
   state: ProgressionState,
   live: ProgressionLiveMetrics
 ): EvaluatedQuestChain[] {
   const claimedSet = new Set(state.claimedQuestIds);
-  const chainOrder: QuestChainId[] = ["architect", "science", "botany", "companion", "town"];
+  const chainOrder: QuestChainId[] = ["architect", "science", "botany", "alchemy", "companion", "town"];
 
   return chainOrder.map((chainId) => {
     const steps = QUEST_STEPS.filter((q) => q.chainId === chainId);

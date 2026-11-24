@@ -175,6 +175,96 @@ class AlchemiaSoundEngine {
     this.playGlassBell(1318.51, 0.024, 0.44, 0.11);
   }
 
+  /** Sparkling rising alchemical bubble + crystal triad when brewing an elixir */
+  public playBrewElixir() {
+    this.userUnlocked = true;
+    const ctx = this.getContext(true);
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    [420, 580, 760].forEach((startFreq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const t = now + i * 0.055;
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(startFreq, t);
+      osc.frequency.exponentialRampToValueAtTime(startFreq * 1.65, t + 0.08);
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.linearRampToValueAtTime(0.045, t + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.12);
+    });
+    this.playGlassBell(1046.5, 0.055, 0.48, 0.16);
+    this.playGlassBell(1318.51, 0.05, 0.52, 0.23);
+    this.playGlassBell(1567.98, 0.045, 0.62, 0.3);
+  }
+
+  /** Celebratory major-9th crystal arpeggio for quests, bounties & achievements */
+  public playQuestFanfare() {
+    this.userUnlocked = true;
+    const notes = [587.33, 739.99, 880.0, 1174.66, 1318.51];
+    notes.forEach((freq, i) => {
+      this.playGlassBell(freq, 0.052, 0.56, i * 0.065);
+    });
+  }
+
+  /** Warm harmonic chord swell when earning a new Researcher Rank */
+  public playRankUp() {
+    this.userUnlocked = true;
+    const chord = [523.25, 659.25, 783.99, 987.77, 1046.5, 1318.51];
+    chord.forEach((freq, i) => {
+      this.playGlassBell(freq, 0.054, 0.78, i * 0.07);
+    });
+  }
+
+  /** Delicate pentatonic harp/piano cascade for the Piano Conservatory room */
+  public playMusicSalonMelody() {
+    this.userUnlocked = true;
+    const melody = [523.25, 659.25, 783.99, 1046.5, 987.77, 1318.51];
+    melody.forEach((freq, i) => {
+      this.playGlassBell(freq, 0.05, 0.62, i * 0.11);
+    });
+  }
+
+  /** Cute friendly dual-tone electric EV "beep-beep!" */
+  public playVehicleBeep() {
+    this.userUnlocked = true;
+    const ctx = this.getContext(true);
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    [0, 0.14].forEach((offset, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const t = now + offset;
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(idx === 0 ? 698.46 : 880, t);
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.linearRampToValueAtTime(0.05, t + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.095);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.11);
+    });
+  }
+
+  /** Shimmering high harmonic twinkle for Golden Harvests & Daily Treasure Chests */
+  public playGoldenSparkle() {
+    this.userUnlocked = true;
+    [1318.51, 1567.98, 2093.0, 2637.02].forEach((freq, i) => {
+      this.playGlassBell(freq, 0.045, 0.45, i * 0.055);
+    });
+  }
+
+  /** Translucent breeze chime when shifting Alchemia Town weather */
+  public playWeatherChime() {
+    this.userUnlocked = true;
+    this.playGlassBell(783.99, 0.04, 0.55, 0);
+    this.playGlassBell(1174.66, 0.036, 0.6, 0.09);
+  }
+
   /**
    * Subtle surface-aware porcelain / terrazzo footstep tap with randomized pitch & gain
    * synced directly to the character's heel-strike cycle.

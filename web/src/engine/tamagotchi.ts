@@ -93,6 +93,57 @@ export const PET_COLOR_SWATCHES: ReadonlyArray<{ id: string; label: string; hex:
   { id: "sakura", label: "Sakura Blush", hex: "#f9a8d4" }
 ];
 
+export type PetTrickId = "spin-bow" | "fetch-spark" | "helix-boop" | "garden-sniff";
+
+export interface PetTrickDef {
+  id: PetTrickId;
+  name: string;
+  desc: string;
+  minLevel: number;
+  cooldownSec: number;
+  accent: string;
+  perkLabel: string;
+}
+
+export const PET_TRICKS: readonly PetTrickDef[] = [
+  {
+    id: "spin-bow",
+    name: "Twirl & Bow",
+    desc: "Cheerful double-spin that delights everyone nearby",
+    minLevel: 1,
+    cooldownSec: 20,
+    accent: "#f472b6",
+    perkLabel: "+12 Mood · +2 Sparks"
+  },
+  {
+    id: "fetch-spark",
+    name: "Fetch Spark",
+    desc: "Sniffs out hidden shimmering sparks around the garden",
+    minLevel: 1,
+    cooldownSec: 35,
+    accent: "#f59e0b",
+    perkLabel: "Finds +4–6 Sparks!"
+  },
+  {
+    id: "helix-boop",
+    name: "Helix Boop",
+    desc: "Boops the molecular screen to wiggle your live protein fold",
+    minLevel: 2,
+    cooldownSec: 40,
+    accent: "#38bdf8",
+    perkLabel: "Wiggles Protein · +3 Sparks"
+  },
+  {
+    id: "garden-sniff",
+    name: "Garden Helper",
+    desc: "Trots out and waters a thirsty garden bed automatically",
+    minLevel: 3,
+    cooldownSec: 45,
+    accent: "#10b981",
+    perkLabel: "Waters 1 Bed · +3 Sparks"
+  }
+];
+
 export interface CompanionVitals {
   energy: number; // 0..100 (Food)
   mood: number; // 0..100 (Happy)
@@ -107,6 +158,9 @@ export interface CompanionVitals {
   backGear?: PetBackGearId;
   outfitColor?: string;
   sleeping: boolean;
+  trickMastery?: number;
+  trickCooldowns?: Partial<Record<PetTrickId, number>>;
+  lastChestClaimDay?: string;
   lastUpdatedMs: number;
 }
 
@@ -327,4 +381,139 @@ export function companionMoodLabel(v: CompanionVitals): string {
   if (avg >= 62) return "Happy";
   if (avg >= 40) return "Calm";
   return "Sleepy";
+}
+
+export function getTrickCooldownLeftSec(
+  vitals: CompanionVitals,
+  trickId: PetTrickId,
+  nowMs = Date.now()
+): number {
+  const def = PET_TRICKS.find((t) => t.id === trickId);
+  if (!def) return 0;
+  const lastMs = vitals.trickCooldowns?.[trickId] ?? 0;
+  if (!lastMs) return 0;
+  const elapsedSec = (nowMs - lastMs) / 1000;
+  return Math.max(0, Math.ceil(def.cooldownSec - elapsedSec));
+}
+
+export interface PetTrickOutcome {
+  nextVitals: CompanionVitals;
+  performed: boolean;
+  reason?: "locked" | "cooldown";
+  cooldownLeftSec: number;
+  sparksFound: number;
+  triggerFoldWiggle: boolean;
+  triggerGardenWater: boolean;
+  trick: PetTrickDef;
+}
+
+export function performPetTrick(
+  current: CompanionVitals,
+  trickId: PetTrickId,
+  nowMs = Date.now()
+): PetTrickOutcome {
+  const trick = PET_TRICKS.find((t) => t.id === trickId) || PET_TRICKS[0];
+  if (current.level < trick.minLevel) {
+    return {
+      nextVitals: current,
+      performed: false,
+      reason: "locked",
+      cooldownLeftSec: 0,
+      sparksFound: 0,
+      triggerFoldWiggle: false,
+      triggerGardenWater: false,
+      trick
+    };
+  }
+  const cdLeft = getTrickCooldownLeftSec(current, trick.id, nowMs);
+  if (cdLeft > 0) {
+    return {
+      nextVitals: current,
+      performed: false,
+      reason: "cooldown",
+      cooldownLeftSec: cdLeft,
+      sparksFound: 0,
+      triggerFoldWiggle: false,
+      triggerGardenWater: false,
+      trick
+    };
+  }
+
+  const next = applyGentleDecay(current, nowMs);
+  next.sleeping = false;
+  next.mood = Math.min(100, next.mood + (trick.id === "spin-bow" ? 16 : 12));
+  next.curiosity = Math.min(100, next.curiosity + (trick.id === "helix-boop" ? 18 : 12));
+  next.energy = Math.max(15, next.energy - 3);
+  next.careStreak += 1;
+  next.level = 1 + Math.floor(next.careStreak / 6);
+  next.trickMastery = (next.trickMastery ?? 0) + 1;
+  next.trickCooldowns = {
+    ...(next.trickCooldowns ?? {}),
+    [trick.id]: nowMs
+  };
+  next.lastUpdatedMs = nowMs;
+
+  const sparksFound =
+    trick.id === "fetch-spark"
+      ? 4 + ((next.trickMastery + next.level) % 3) // 4..6 sparks!
+      : trick.id === "spin-bow"
+        ? 2
+        : 3;
+
+  return {
+    nextVitals: next,
+    performed: true,
+    cooldownLeftSec: trick.cooldownSec,
+    sparksFound,
+    triggerFoldWiggle: trick.id === "helix-boop",
+    triggerGardenWater: trick.id === "garden-sniff",
+    trick
+  };
+}
+
+export function canClaimDailyPetChest(vitals: CompanionVitals, nowMs = Date.now()): boolean {
+  return vitals.lastChestClaimDay !== todayKey(nowMs);
+}
+
+export function claimDailyPetChest(
+  current: CompanionVitals,
+  nowMs = Date.now()
+): { nextVitals: CompanionVitals; claimed: boolean; sparksAwarded: number } {
+  const today = todayKey(nowMs);
+  if (current.lastChestClaimDay === today) {
+    return { nextVitals: current, claimed: false, sparksAwarded: 0 };
+  }
+  const streak = Math.max(1, current.dailyStreak || 1);
+  const sparksAwarded = 8 + Math.min(14, streak * 2);
+  const next: CompanionVitals = {
+    ...applyGentleDecay(current, nowMs),
+    sleeping: false,
+    energy: Math.min(100, current.energy + 20),
+    mood: 100,
+    curiosity: Math.min(100, current.curiosity + 20),
+    lastChestClaimDay: today,
+    lastUpdatedMs: nowMs
+  };
+  return { nextVitals: next, claimed: true, sparksAwarded };
+}
+
+/**
+ * Feeds crafted Gourmet Pet Ambrosia: zero spark cost, 100% refill across all vitals + 2 Care XP!
+ */
+export function feedGourmetAmbrosia(
+  current: CompanionVitals,
+  nowMs = Date.now()
+): CompanionVitals {
+  const next = applyGentleDecay(current, nowMs);
+  const careStreak = next.careStreak + 2;
+  return {
+    ...next,
+    sleeping: false,
+    energy: 100,
+    mood: 100,
+    curiosity: 100,
+    careStreak,
+    level: 1 + Math.floor(careStreak / 6),
+    lastUpdatedMs: nowMs
+  };
 }

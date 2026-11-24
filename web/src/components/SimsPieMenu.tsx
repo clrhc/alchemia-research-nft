@@ -51,6 +51,10 @@ interface SimsPieMenuProps {
 }
 
 function pickActionIcon(id: string) {
+  if (id.includes("bouquet")) return Flower2;
+  if (id === "open-alchemy") return Sparkles;
+  if (id === "pet-trick") return Zap;
+  if (id === "pet-ambrosia") return Cookie;
   if (id === "garden-water") return Droplets;
   if (id.startsWith("garden-plant-")) return Sprout;
   if (id === "garden-harvest" || id === "open-garden") return Flower2;

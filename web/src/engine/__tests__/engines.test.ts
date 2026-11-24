@@ -17,11 +17,17 @@ import {
   PET_BACK_GEAR_OPTIONS,
   PET_COLOR_SWATCHES,
   PET_OUTFIT_OPTIONS,
+  PET_TRICKS,
   applyGentleDecay,
   applyTamagotchiAction,
+  canClaimDailyPetChest,
+  claimDailyPetChest,
   companionBoostMultiplier,
   companionMoodLabel,
   cycleCompanionAccessory,
+  feedGourmetAmbrosia,
+  getTrickCooldownLeftSec,
+  performPetTrick,
   randomizeCompanionWardrobe,
   setCompanionBackGear,
   setCompanionOutfit,
@@ -144,6 +150,7 @@ import {
 import {
   GARDEN_PLOT_DEFS,
   PLANT_SPECIES,
+  bloomAllPlantedPlots,
   computePlotGrowth,
   createInitialGardenState,
   fertilizeGardenPlot,
@@ -151,8 +158,34 @@ import {
   loadGardenState,
   plantSeedInPlot,
   saveGardenState,
-  waterGardenPlot
+  waterGardenPlot,
+  waterRandomGrowingPlot
 } from "../gardenState";
+import {
+  ALCHEMY_RECIPES,
+  addHarvestedBotanicals,
+  canCraftRecipe,
+  computeElixirFocusMultiplier,
+  computeElixirMiningMultiplier,
+  consumeCraftedItem,
+  craftAlchemyRecipe,
+  createInitialAlchemyState,
+  getActiveElixirBuffs
+} from "../alchemyCrafting";
+import {
+  DAILY_BOUNTY_POOL,
+  TOWN_WEATHERS,
+  claimDailyBounty,
+  computeTownFriendshipSynergy,
+  createInitialDailyBountyState,
+  evaluateDailyTownBounties,
+  getAutoTownWeather,
+  getDailyTownBounties,
+  getNeighborDailyFavor,
+  isNeighborFavorFulfilled,
+  markNeighborFavorFulfilled,
+  recordDailyBountyAction
+} from "../townEvents";
 import {
   BAR_STYLES,
   FLOOR_STYLES,
@@ -171,6 +204,7 @@ import {
   computeSimsMood,
   computeStationUpgradeBonuses,
   defaultLabDecor,
+  deleteHomeBlueprintSlot,
   deriveNeighborLabDecor,
   getNeighborSimsStatus,
   getNextUpgradeCost,
@@ -179,9 +213,11 @@ import {
   moveItemInDecor,
   initialSimsVibes,
   loadGuestbookEntries,
+  loadHomeBlueprintSlots,
   loadLabDecor,
   randomizeLabDecor,
   sanitizeLabDecor,
+  saveHomeBlueprintSlot,
   saveLabDecor,
   upgradeStationInDecor,
   type SimsObjectTarget
@@ -956,12 +992,38 @@ describe("Living Minted NFT Neighborhood & Sims Interactivity", () => {
     expect(computePlotGrowth(bloomed.plots["home-2"], t0 + 6_000).readyToHarvest).toBe(true);
 
     // Harvesting awards sparks, increments Almanac counts & clears plot for replanting
-    const harvested = harvestGardenPlot(bloomed, "home-2", t0 + 7_000);
+    const harvested = harvestGardenPlot(bloomed, "home-2", t0 + 7_000, { forceGolden: false });
     expect(harvested.harvested?.id).toBe("orchid");
     expect(harvested.sparksEarned).toBe(7);
+    expect(harvested.isGolden).toBe(false);
+    expect(harvested.yieldCount).toBe(1);
     expect(harvested.nextState.totalHarvests).toBe(1);
     expect(harvested.nextState.harvestedCounts.orchid).toBe(1);
     expect(harvested.nextState.plots["home-2"].speciesId).toBeNull();
+
+    // Rare Golden Harvest yields 2x petals, 1.5x rounded sparks & Golden Almanac star!
+    const replanted = fertilizeGardenPlot(
+      plantSeedInPlot(harvested.nextState, "home-2", "lotus", t0 + 8_000),
+      "home-2",
+      t0 + 8_000
+    );
+    const golden = harvestGardenPlot(replanted, "home-2", t0 + 9_000, { forceGolden: true });
+    expect(golden.isGolden).toBe(true);
+    expect(golden.yieldCount).toBe(2);
+    expect(golden.sparksEarned).toBe(14); // ceil(9 * 1.5)
+    expect(golden.nextState.goldenHarvests).toBe(1);
+    expect(golden.nextState.goldenSpecies?.lotus).toBe(1);
+
+    // Weather growth multiplier accelerates plant progress & bulk Crystal Bloom blooms all planted beds
+    const rainBed = plantSeedInPlot(golden.nextState, "home-3", "lavender", t0 + 10_000);
+    const normalGrow = computePlotGrowth(rainBed.plots["home-3"], t0 + 20_000, 1.0);
+    const rainGrow = computePlotGrowth(rainBed.plots["home-3"], t0 + 20_000, 1.5);
+    expect(rainGrow.progress).toBeGreaterThan(normalGrow.progress);
+    const autoWater = waterRandomGrowingPlot(rainBed, t0 + 20_000);
+    expect(autoWater.wateredPlotId).not.toBeNull();
+    const bloomAll = bloomAllPlantedPlots(rainBed, t0 + 20_000);
+    expect(bloomAll.bloomedPlotIds).toContain("home-3");
+    expect(computePlotGrowth(bloomAll.nextState.plots["home-3"], t0 + 20_000).readyToHarvest).toBe(true);
 
     // Persistence round-trip
     saveGardenState(314, harvested.nextState);
@@ -1242,9 +1304,9 @@ describe("Living Minted NFT Neighborhood & Sims Interactivity", () => {
     expect(testState.chainId).toBe(84532);
   });
 
-  it("tracks multi-step progression quest chains, 10 achievement badges, researcher XP ranks & claimable spark rewards", () => {
-    expect(QUEST_STEPS).toHaveLength(15); // 5 chains × 3 progressive steps
-    expect(ACHIEVEMENT_DEFS).toHaveLength(10);
+  it("tracks multi-step progression quest chains, 14 achievement badges, researcher XP ranks & claimable spark rewards", () => {
+    expect(QUEST_STEPS).toHaveLength(18); // 6 chains × 3 progressive steps (incl. Master Alchemist)
+    expect(ACHIEVEMENT_DEFS).toHaveLength(14);
     expect(RESEARCHER_RANKS).toHaveLength(8);
 
     const baseMetrics = {
@@ -1310,5 +1372,131 @@ describe("Living Minted NFT Neighborhood & Sims Interactivity", () => {
     expect(bulk.leveledUp).toBe(true);
     expect(bulk.newRank.level).toBeGreaterThanOrEqual(4);
     expect(bulk.newRank.unlockedTitles.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("interconnects Botanical Alchemy brewing, timed Elixir buffs, Town Weather, UTC Daily Bounties, Neighbor Favors, Pet Tricks & Blueprint Slots", () => {
+    // 1. Botanical Alchemy Brewing Bench (6 recipes, Warm Kitchenette 2x yield, timed buffs)
+    expect(ALCHEMY_RECIPES).toHaveLength(6);
+    const now = Date.parse("2026-11-23T15:00:00Z");
+    let pouch = createInitialAlchemyState();
+    expect(canCraftRecipe(pouch, "mint-focus-tea")).toBe(true);
+
+    // Kitchenette grants +1 bonus spark and can produce a 2x batch!
+    const teaBrew = craftAlchemyRecipe(pouch, "mint-focus-tea", {
+      hasKitchen: true,
+      forceKitchenDouble: true
+    });
+    expect(teaBrew.crafted).toBe(true);
+    expect(teaBrew.yieldCount).toBe(2);
+    expect(teaBrew.kitchenBonusSparks).toBe(1);
+    pouch = teaBrew.nextState;
+    expect(pouch.crafted["mint-focus-tea"]).toBe(2);
+
+    const sipped = consumeCraftedItem(pouch, "mint-focus-tea", now);
+    expect(sipped.consumed).toBe(true);
+    expect(sipped.buffActivated?.id).toBe("focus");
+    expect(computeElixirFocusMultiplier(sipped.nextState, now + 60_000)).toBe(1.4);
+    expect(getActiveElixirBuffs(sipped.nextState, now + 11 * 60_000)).toHaveLength(0);
+
+    // Add rare flowers & brew Philosopher's Starlight Elixir (+35% Mining & Focus!)
+    let rarePouch = addHarvestedBotanicals(sipped.nextState, "lotus", 1, true);
+    rarePouch = addHarvestedBotanicals(rarePouch, "orchid", 1, false);
+    rarePouch = addHarvestedBotanicals(rarePouch, "sakura", 1, false);
+    expect(rarePouch.goldenBloomsCollected).toBe(1);
+    const starBrew = craftAlchemyRecipe(rarePouch, "starlight-elixir");
+    expect(starBrew.crafted).toBe(true);
+    expect(starBrew.nextState.starlightCrafted).toBe(1);
+    const starUsed = consumeCraftedItem(starBrew.nextState, "starlight-elixir", now);
+    expect(computeElixirMiningMultiplier(starUsed.nextState, now + 1000)).toBe(1.35);
+    expect(computeElixirFocusMultiplier(starUsed.nextState, now + 1000)).toBe(1.75); // 1 + 0.40 + 0.35
+
+    // 2. Dynamic Town Weather, Rotating UTC Daily Bounties & Neighbor Favors + Friendship Synergy
+    expect(TOWN_WEATHERS).toHaveLength(4);
+    expect(TOWN_WEATHERS.some((w) => w.autoWatersGardens && w.gardenGrowthMult === 1.5)).toBe(true);
+    expect(TOWN_WEATHERS.some((w) => w.id === getAutoTownWeather(now).id)).toBe(true);
+
+    expect(DAILY_BOUNTY_POOL.length).toBeGreaterThanOrEqual(7);
+    const day1 = getDailyTownBounties(Date.parse("2026-11-23T09:00:00Z"));
+    const day1Late = getDailyTownBounties(Date.parse("2026-11-23T23:55:00Z"));
+    expect(day1).toHaveLength(3);
+    expect(day1.map((b) => b.id)).toEqual(day1Late.map((b) => b.id));
+
+    let dbState = createInitialDailyBountyState(now);
+    const firstBounty = day1[0];
+    dbState = recordDailyBountyAction(dbState, firstBounty.metric, firstBounty.target, now);
+    const evalB = evaluateDailyTownBounties(dbState, now);
+    expect(evalB[0].readyToClaim).toBe(true);
+    const claimedB = claimDailyBounty(dbState, firstBounty.id, now);
+    expect(claimedB.claimed).toBe(true);
+    expect(claimedB.sparksAwarded).toBe(firstBounty.rewardSparks);
+    expect(claimDailyBounty(claimedB.nextState, firstBounty.id, now).claimed).toBe(false);
+
+    // Neighbor Daily Favor & Best-Friend Synergy Bonus
+    const fav = getNeighborDailyFavor(2, "0xabc12345", now);
+    expect(["bouquet", "spark", "joke", "chat"]).toContain(fav.kind);
+    expect(isNeighborFavorFulfilled(dbState, 2, now)).toBe(false);
+    const fulfilledDb = markNeighborFavorFulfilled(dbState, 2, now);
+    expect(isNeighborFavorFulfilled(fulfilledDb, 2, now)).toBe(true);
+
+    const synergy = computeTownFriendshipSynergy({
+      2: { tokenId: 2, score: 82, interactions: 6, lastInteractionMs: now }, // Best Friend (+6%)
+      3: { tokenId: 3, score: 62, interactions: 4, lastInteractionMs: now }, // Good Friend (+3%)
+      4: { tokenId: 4, score: 95, interactions: 10, lastInteractionMs: now } // Soulmate (+6%)
+    });
+    expect(synergy.bestFriendCount).toBe(2);
+    expect(synergy.goodFriendCount).toBe(1);
+    expect(synergy.bonusPct).toBe(15);
+    expect(synergy.miningMultiplier).toBe(1.15);
+
+    // 3. Trainable Pet Tricks, Cooldowns, Daily Chest & Gourmet Ambrosia
+    expect(PET_TRICKS).toHaveLength(4);
+    const lv1Pet: CompanionVitals = {
+      energy: 50,
+      mood: 50,
+      curiosity: 50,
+      level: 1,
+      careStreak: 2,
+      dailyStreak: 3,
+      lastCareDay: "2026-11-23",
+      petName: "Mochi",
+      accessory: "bowtie",
+      sleeping: false,
+      lastUpdatedMs: now
+    };
+    // Lv.3 trick is locked for Lv.1 pet
+    expect(performPetTrick(lv1Pet, "garden-sniff", now).reason).toBe("locked");
+    // Lv.1 Fetch Spark succeeds & enters cooldown
+    const fetchRes = performPetTrick(lv1Pet, "fetch-spark", now);
+    expect(fetchRes.performed).toBe(true);
+    expect(fetchRes.sparksFound).toBeGreaterThanOrEqual(4);
+    expect(getTrickCooldownLeftSec(fetchRes.nextVitals, "fetch-spark", now + 5_000)).toBe(30);
+    expect(performPetTrick(fetchRes.nextVitals, "fetch-spark", now + 5_000).reason).toBe("cooldown");
+    // Lv.3 pet triggers Garden Helper water flag
+    const lv3Garden = performPetTrick({ ...lv1Pet, level: 3 }, "garden-sniff", now);
+    expect(lv3Garden.performed).toBe(true);
+    expect(lv3Garden.triggerGardenWater).toBe(true);
+    // Daily Companion Chest & Gourmet Pet Ambrosia
+    expect(canClaimDailyPetChest(lv1Pet, now)).toBe(true);
+    const chestRes = claimDailyPetChest(lv1Pet, now);
+    expect(chestRes.claimed).toBe(true);
+    expect(chestRes.sparksAwarded).toBe(14); // 8 + 3*2
+    expect(canClaimDailyPetChest(chestRes.nextVitals, now)).toBe(false);
+    const ambrosiaPet = feedGourmetAmbrosia(lv1Pet, now);
+    expect(ambrosiaPet.energy).toBe(100);
+    expect(ambrosiaPet.mood).toBe(100);
+    expect(ambrosiaPet.curiosity).toBe(100);
+
+    // 4. Architect Home Blueprint Save / Load / Delete Slots
+    const styled = {
+      ...defaultLabDecor(),
+      floorStyle: "marble" as const,
+      seatingStyle: "egg-chair" as const
+    };
+    const savedSlots = saveHomeBlueprintSlot(515, 0, styled, "Crystal Study");
+    expect(savedSlots[0]?.name).toBe("Crystal Study");
+    expect(savedSlots[0]?.decor.seatingStyle).toBe("egg-chair");
+    expect(loadHomeBlueprintSlots(515)[0]?.decor.floorStyle).toBe("marble");
+    const clearedSlots = deleteHomeBlueprintSlot(515, 0);
+    expect(clearedSlots[0]).toBeNull();
   });
 });

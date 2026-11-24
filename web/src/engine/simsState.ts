@@ -585,6 +585,7 @@ export type NeighborSocialAction =
   | "chat"
   | "joke"
   | "spark"
+  | "bouquet"
   | "collaborate"
   | "toast"
   | "visit"
@@ -1062,6 +1063,14 @@ const SOCIAL_ACTION_CONFIG: Record<
     moodletLabel: "Generous Spark",
     vibeDelta: { social: 16, focus: 8, fun: 8 }
   },
+  bouquet: {
+    delta: 25,
+    npcMood: "Inspired",
+    npcActivity: "Arranging your Blossom Bouquet!",
+    playerMood: "Social",
+    moodletLabel: "Bouquet Gifter",
+    vibeDelta: { social: 24, fun: 16, energy: 8 }
+  },
   collaborate: {
     delta: 15,
     npcMood: "Focused",
@@ -1147,20 +1156,24 @@ export function getSimsPieActions(
     maxFloors?: number;
     hasBasement?: boolean;
     gardenPlotStatus?: "empty" | "growing" | "ready";
+    hasBouquet?: boolean;
+    hasAmbrosia?: boolean;
   }
 ): SimsPieAction[] {
   switch (target.kind) {
     case "pet":
       return [
         { id: "pet-cuddle", label: "Pet", sublabel: "+1 spark", accent: "#f472b6" },
-        { id: "pet-feed", label: "Drop Treats", sublabel: options?.standalone ? "Yum" : "5 sparks", accent: "#10b981" },
+        options?.hasAmbrosia
+          ? { id: "pet-ambrosia", label: "Feed Ambrosia", sublabel: "100% Free!", accent: "#10b981" }
+          : { id: "pet-feed", label: "Drop Treats", sublabel: options?.standalone ? "Yum" : "5 sparks", accent: "#10b981" },
         { id: "pet-play", label: "Toss Ball", sublabel: "+2 sparks", accent: "#38bdf8" },
+        { id: "pet-trick", label: "Pet Trick!", sublabel: "+Sparks", accent: "#f59e0b" },
         {
           id: "pet-nap",
           label: options?.petSleeping ? "Wake Up" : "Cozy Nap",
           accent: "#8b5cf6"
         },
-        { id: "pet-style", label: "Dress Up", accent: "#f59e0b" },
         { id: "open-pet", label: "Pet Panel", accent: "#64748b" }
       ];
     case "flask":
@@ -1181,6 +1194,7 @@ export function getSimsPieActions(
     case "espresso":
       return [
         { id: "espresso-brew", label: "Brew Elixir", sublabel: "Energized!", accent: "#f59e0b" },
+        { id: "open-alchemy", label: "Alchemy Bench", sublabel: "6 Recipes", accent: "#a855f7" },
         { id: "espresso-share", label: "Toast Science", sublabel: "+Social", accent: "#f472b6" },
         { id: "move-bar", label: "Move Bar", sublabel: "Free place", accent: "#64748b" },
         { id: "open-builder", label: "Swap Bar", accent: "#8b5cf6" }
@@ -1312,6 +1326,9 @@ export function getSimsPieActions(
     case "neighbor-lab":
       return [
         { id: "neighbor-enter", label: "Enter Home", sublabel: "Visit inside", accent: "#10b981" },
+        ...(options?.hasBouquet
+          ? [{ id: "neighbor-bouquet", label: "Gift Bouquet", sublabel: "+25 Friend", accent: "#f472b6" }]
+          : []),
         { id: "neighbor-visit", label: "Walk Outside", accent: "#38bdf8" },
         { id: "neighbor-spark", label: "Gift Spark", sublabel: "+14 Friend", accent: "#f59e0b" },
         { id: "neighbor-inspect", label: "Inspect Lab", accent: "#6366f1" },
@@ -1320,6 +1337,9 @@ export function getSimsPieActions(
     case "neighbor-npc":
       return [
         { id: "neighbor-chat", label: "Friendly Chat", sublabel: "+8 Friend", accent: "#f472b6" },
+        ...(options?.hasBouquet
+          ? [{ id: "neighbor-bouquet", label: "Gift Bouquet", sublabel: "+25 Friend", accent: "#ec4899" }]
+          : []),
         { id: "neighbor-joke", label: "Tell Joke", sublabel: "+11 Playful", accent: "#a855f7" },
         { id: "neighbor-spark", label: "Gift Spark", sublabel: "+14 Friend", accent: "#f59e0b" },
         { id: "neighbor-enter", label: "Enter Home", sublabel: "Visit inside", accent: "#10b981" },
@@ -1328,6 +1348,9 @@ export function getSimsPieActions(
     case "visiting-host":
       return [
         { id: "host-chat", label: "Friendly Chat", sublabel: "+8 Friend", accent: "#f472b6" },
+        ...(options?.hasBouquet
+          ? [{ id: "host-bouquet", label: "Gift Bouquet", sublabel: "+25 Friend", accent: "#ec4899" }]
+          : []),
         { id: "host-joke", label: "Tell Joke", sublabel: "+11 Playful", accent: "#a855f7" },
         { id: "host-spark", label: "Gift Spark", sublabel: "+14 Friend", accent: "#f59e0b" },
         { id: "host-fold", label: "Help Fold", sublabel: "+15 Friend", accent: "#38bdf8" },
@@ -1457,4 +1480,128 @@ export function addGuestbookEntry(
     }
   }
   return next;
+}
+
+// ============================================================================
+// Home Architect Blueprint Save / Load Slots (3 Custom Layout Presets per Lab)
+// ============================================================================
+
+export interface HomeBlueprintSlot {
+  slotIndex: 0 | 1 | 2;
+  name: string;
+  savedAtMs: number;
+  decor: Pick<
+    LabDecorConfig,
+    | "floorStyle"
+    | "patioDecor"
+    | "seatingStyle"
+    | "barStyle"
+    | "rugStyle"
+    | "hobbyProp"
+    | "plantPack"
+    | "lightingFixture"
+    | "wallStyle"
+    | "customLayout"
+  >;
+}
+
+const BLUEPRINT_STORAGE_PREFIX = "alchemia_home_blueprints_v1_";
+const memoryBlueprintSlots = new Map<number, Array<HomeBlueprintSlot | null>>();
+
+export function loadHomeBlueprintSlots(tokenId: number): Array<HomeBlueprintSlot | null> {
+  const cached = memoryBlueprintSlots.get(tokenId);
+  if (cached) return [...cached];
+  const empty: Array<HomeBlueprintSlot | null> = [null, null, null];
+  if (typeof window === "undefined") {
+    memoryBlueprintSlots.set(tokenId, empty);
+    return [...empty];
+  }
+  try {
+    const raw = window.localStorage.getItem(`${BLUEPRINT_STORAGE_PREFIX}${tokenId}`);
+    if (!raw) {
+      memoryBlueprintSlots.set(tokenId, empty);
+      return [...empty];
+    }
+    const parsed = JSON.parse(raw) as Array<HomeBlueprintSlot | null>;
+    const normalized: Array<HomeBlueprintSlot | null> = [0, 1, 2].map((idx) => {
+      const s = Array.isArray(parsed) ? parsed[idx] : null;
+      if (!s || typeof s !== "object" || !s.decor) return null;
+      const clean = sanitizeLabDecor(s.decor);
+      return {
+        slotIndex: idx as 0 | 1 | 2,
+        name: typeof s.name === "string" && s.name.trim() ? s.name.trim().slice(0, 22) : `Blueprint ${idx + 1}`,
+        savedAtMs: typeof s.savedAtMs === "number" ? s.savedAtMs : Date.now(),
+        decor: {
+          floorStyle: clean.floorStyle,
+          patioDecor: clean.patioDecor,
+          seatingStyle: clean.seatingStyle,
+          barStyle: clean.barStyle,
+          rugStyle: clean.rugStyle,
+          hobbyProp: clean.hobbyProp,
+          plantPack: clean.plantPack,
+          lightingFixture: clean.lightingFixture,
+          wallStyle: clean.wallStyle,
+          customLayout: clean.customLayout
+        }
+      };
+    });
+    memoryBlueprintSlots.set(tokenId, normalized);
+    return [...normalized];
+  } catch {
+    memoryBlueprintSlots.set(tokenId, empty);
+    return [...empty];
+  }
+}
+
+export function saveHomeBlueprintSlot(
+  tokenId: number,
+  slotIndex: 0 | 1 | 2,
+  decor: LabDecorConfig,
+  label?: string
+): Array<HomeBlueprintSlot | null> {
+  const slots = loadHomeBlueprintSlots(tokenId);
+  const clean = sanitizeLabDecor(decor);
+  slots[slotIndex] = {
+    slotIndex,
+    name: (label?.trim() || `Blueprint ${slotIndex + 1}`).slice(0, 22),
+    savedAtMs: Date.now(),
+    decor: {
+      floorStyle: clean.floorStyle,
+      patioDecor: clean.patioDecor,
+      seatingStyle: clean.seatingStyle,
+      barStyle: clean.barStyle,
+      rugStyle: clean.rugStyle,
+      hobbyProp: clean.hobbyProp,
+      plantPack: clean.plantPack,
+      lightingFixture: clean.lightingFixture,
+      wallStyle: clean.wallStyle,
+      customLayout: clean.customLayout
+    }
+  };
+  memoryBlueprintSlots.set(tokenId, slots);
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(`${BLUEPRINT_STORAGE_PREFIX}${tokenId}`, JSON.stringify(slots));
+    } catch {
+      // safe inside sandboxed NFT iframes
+    }
+  }
+  return [...slots];
+}
+
+export function deleteHomeBlueprintSlot(
+  tokenId: number,
+  slotIndex: 0 | 1 | 2
+): Array<HomeBlueprintSlot | null> {
+  const slots = loadHomeBlueprintSlots(tokenId);
+  slots[slotIndex] = null;
+  memoryBlueprintSlots.set(tokenId, slots);
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(`${BLUEPRINT_STORAGE_PREFIX}${tokenId}`, JSON.stringify(slots));
+    } catch {
+      // ignore
+    }
+  }
+  return [...slots];
 }

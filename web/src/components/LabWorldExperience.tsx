@@ -13,6 +13,7 @@ import {
   Building2,
   Camera,
   Check,
+  CloudRain,
   CloudSnow,
   Coffee,
   Coins,
@@ -30,6 +31,7 @@ import {
   Flower2,
   Footprints,
   Gamepad2,
+  Gift,
   Grid2x2,
   Heart,
   HeartHandshake,
@@ -54,6 +56,7 @@ import {
   Plus,
   RotateCcw,
   RotateCw,
+  Save,
   Send,
   ShieldCheck,
   Shirt,
@@ -66,6 +69,7 @@ import {
   Sunset,
   Tag,
   Timer,
+  Trash2,
   Trees,
   Trophy,
   UserRound,
@@ -73,6 +77,7 @@ import {
   Volume2,
   VolumeX,
   Wallet,
+  Wand2,
   X,
   Zap
 } from "lucide-react";
@@ -136,6 +141,7 @@ import {
   GARDEN_PLOT_DEFS,
   PLANT_SPECIES,
   PLANT_SPECIES_BY_ID,
+  bloomAllPlantedPlots,
   computePlotGrowth,
   fertilizeGardenPlot,
   harvestGardenPlot,
@@ -143,9 +149,42 @@ import {
   plantSeedInPlot,
   saveGardenState,
   waterGardenPlot,
+  waterRandomGrowingPlot,
   type GardenWorldState,
   type PlantSpeciesId
 } from "../engine/gardenState";
+import {
+  ALCHEMY_RECIPES,
+  addHarvestedBotanicals,
+  canCraftRecipe,
+  computeElixirFocusMultiplier,
+  computeElixirMiningMultiplier,
+  consumeCraftedItem,
+  countTotalBotanicals,
+  craftAlchemyRecipe,
+  getActiveElixirBuffs,
+  loadAlchemyState,
+  saveAlchemyState,
+  type AlchemyPouchState,
+  type ElixirId
+} from "../engine/alchemyCrafting";
+import {
+  TOWN_WEATHERS,
+  TOWN_WEATHER_BY_ID,
+  claimDailyBounty,
+  computeTownFriendshipSynergy,
+  evaluateDailyTownBounties,
+  getAutoTownWeather,
+  getNeighborDailyFavor,
+  isNeighborFavorFulfilled,
+  loadDailyBountyState,
+  markNeighborFavorFulfilled,
+  recordDailyBountyAction,
+  saveDailyBountyState,
+  type DailyBountyMetricKey,
+  type DailyBountyState,
+  type TownWeatherId
+} from "../engine/townEvents";
 import { declutterFloatingLabels, type DeclutterInput } from "../engine/spatialDeclutter";
 import { deriveTraitsFromSeed } from "../engine/prng";
 import {
@@ -166,17 +205,21 @@ import {
   applySimsVibeDelta,
   computeSimsMood,
   computeStationUpgradeBonuses,
+  deleteHomeBlueprintSlot,
   getNeighborSimsStatus,
   getNextUpgradeCost,
   getSimsPieActions,
   initialSimsVibes,
   loadGuestbookEntries,
+  loadHomeBlueprintSlots,
   loadLabDecor,
   loadRelationshipsMap,
   moveItemInDecor,
   randomizeLabDecor,
+  saveHomeBlueprintSlot,
   saveLabDecor,
   upgradeStationInDecor,
+  type HomeBlueprintSlot,
   type LabDecorConfig,
   type LabGuestbookEntry,
   type MoodShiftAction,
@@ -199,6 +242,7 @@ import {
   type OnboardingStepId
 } from "../engine/onboarding";
 import {
+  awardBonusProgressionXp,
   claimAchievementReward,
   claimAllReadyRewards,
   claimQuestReward,
@@ -233,11 +277,17 @@ import {
   PET_BACK_GEAR_OPTIONS,
   PET_COLOR_SWATCHES,
   PET_OUTFIT_OPTIONS,
+  PET_TRICKS,
   applyTamagotchiAction,
+  canClaimDailyPetChest,
+  claimDailyPetChest,
   companionBoostMultiplier,
   companionMoodLabel,
   cycleCompanionAccessory,
+  feedGourmetAmbrosia,
+  getTrickCooldownLeftSec,
   loadCompanionVitals,
+  performPetTrick,
   randomizeCompanionWardrobe,
   saveCompanionVitals,
   setCompanionAccessory,
@@ -250,6 +300,7 @@ import {
   type PetAccessory,
   type PetBackGearId,
   type PetOutfitId,
+  type PetTrickId,
   type TamagotchiAction
 } from "../engine/tamagotchi";
 import { complexityTierFromUsd, usdToEth, type AppNetworkMode } from "../web3/config";
@@ -528,12 +579,20 @@ export function LabWorldExperience({
   const [movingItem, setMovingItem] = useState<MovableItemId | null>(null);
   const [moveSnapGrid, setMoveSnapGrid] = useState<boolean>(true);
   const [questsDrawerOpen, setQuestsDrawerOpen] = useState(false);
-  const [questsSubTab, setQuestsSubTab] = useState<"quests" | "achievements">("quests");
+  const [questsSubTab, setQuestsSubTab] = useState<"quests" | "daily" | "achievements">("quests");
   const [progression, setProgression] = useState<ProgressionState>(() => loadProgressionState());
+  const [dailyBounties, setDailyBounties] = useState<DailyBountyState>(() => loadDailyBountyState());
   const [gardenState, setGardenState] = useState<GardenWorldState>(() =>
     loadGardenState(activeVessel.tokenId)
   );
-  const [townSubTab, setTownSubTab] = useState<"town" | "gardens">("town");
+  const [alchemyState, setAlchemyState] = useState<AlchemyPouchState>(() =>
+    loadAlchemyState(activeVessel.tokenId)
+  );
+  const [blueprintSlots, setBlueprintSlots] = useState<Array<HomeBlueprintSlot | null>>(() =>
+    loadHomeBlueprintSlots(activeVessel.tokenId)
+  );
+  const [townWeatherId, setTownWeatherId] = useState<TownWeatherId>(() => getAutoTownWeather().id);
+  const [townSubTab, setTownSubTab] = useState<"town" | "gardens" | "alchemy">("town");
   const [neighborhoodDrawerOpen, setNeighborhoodDrawerOpen] = useState(false);
   const neighborhoodDrawerOpenRef = useRef(false);
   neighborhoodDrawerOpenRef.current = neighborhoodDrawerOpen;
@@ -772,6 +831,8 @@ export function LabWorldExperience({
     setActiveFloor(1);
     setMovingItem(null);
     setGardenState(loadGardenState(activeVessel.tokenId));
+    setAlchemyState(loadAlchemyState(activeVessel.tokenId));
+    setBlueprintSlots(loadHomeBlueprintSlots(activeVessel.tokenId));
   }, [activeVessel.tokenId, activeVessel.seed, isVisiting]);
 
   useEffect(() => {
@@ -848,9 +909,78 @@ export function LabWorldExperience({
     }
   }, [dailyDone, liveSnap, dailyChallenge, onAwardPlayBonus]);
 
-  const bumpProgression = useCallback((key: ProgressionCounterKey, delta = 1) => {
-    setProgression((prev) => saveProgressionState(recordProgressionAction(prev, key, delta)));
+  const bumpDailyMetric = useCallback((metric: DailyBountyMetricKey, delta = 1) => {
+    setDailyBounties((prev) => saveDailyBountyState(recordDailyBountyAction(prev, metric, delta)));
   }, []);
+
+  const bumpProgression = useCallback(
+    (key: ProgressionCounterKey, delta = 1) => {
+      setProgression((prev) => saveProgressionState(recordProgressionAction(prev, key, delta)));
+      if (key === "furnishActions") bumpDailyMetric("furnish", delta);
+      else if (key === "scienceActions" || key === "protonPops") bumpDailyMetric("science", delta);
+      else if (key === "socialActions" || key === "neighborVisits") bumpDailyMetric("social", delta);
+      else if (key === "elixirsBrewed") bumpDailyMetric("brews", delta);
+      else if (key === "petTricks") bumpDailyMetric("petTricks", delta);
+    },
+    [bumpDailyMetric]
+  );
+
+  // Sync lightingMood & atmosphereMode when player switches Dynamic Town Weather
+  const activeWeather = TOWN_WEATHER_BY_ID[townWeatherId];
+  const handleSelectWeather = useCallback(
+    (weatherId: TownWeatherId) => {
+      const w = TOWN_WEATHER_BY_ID[weatherId];
+      setTownWeatherId(weatherId);
+      setLightingMood(w.lightingMood);
+      setAtmosphereMode(w.atmosphereMode);
+      soundEngine.playWeatherChime();
+      if (w.autoWatersGardens) {
+        // Gentle Crystal Rain immediately waters growing outdoor garden beds!
+        setGardenState((prev) => {
+          let cur = prev;
+          const now = Date.now();
+          let watered = 0;
+          for (const def of GARDEN_PLOT_DEFS) {
+            const r = waterGardenPlot(cur, def.id, now);
+            if (r.boosted) {
+              cur = r.nextState;
+              watered++;
+            }
+          }
+          if (watered > 0) saveGardenState(activeVessel.tokenId, cur);
+          return cur;
+        });
+      }
+      setFeedback(`Town weather shifted to ${w.label} — ${w.perkLabel}`);
+    },
+    [activeVessel.tokenId]
+  );
+
+  // When Crystal Rain weather is active, periodically auto-water newly planted beds
+  useEffect(() => {
+    if (!activeWeather.autoWatersGardens) return;
+    const id = window.setInterval(() => {
+      setGardenState((prev) => {
+        const now = Date.now();
+        let cur = prev;
+        let changed = false;
+        for (const def of GARDEN_PLOT_DEFS) {
+          const p = cur.plots[def.id];
+          if (!p || !p.speciesId) continue;
+          const snap = computePlotGrowth(p, now, activeWeather.gardenGrowthMult);
+          if (snap.needsWater && !snap.readyToHarvest) {
+            const res = waterGardenPlot(cur, def.id, now);
+            if (res.boosted) {
+              cur = res.nextState;
+              changed = true;
+            }
+          }
+        }
+        return changed ? saveGardenState(activeVessel.tokenId, cur) : prev;
+      });
+    }, 18_000);
+    return () => window.clearInterval(id);
+  }, [activeWeather.autoWatersGardens, activeWeather.gardenGrowthMult, activeVessel.tokenId]);
 
   const markGoalDone = useCallback(
     (key: GoalKey) => {
@@ -1011,11 +1141,30 @@ export function LabWorldExperience({
       );
       setRelationsMap(outcome.nextMap);
       bumpProgression("socialActions");
-      setSimsVibes((v) => applySimsVibeDelta(v, outcome.playerVibeDelta));
+      setSimsVibes((v) =>
+        applySimsVibeDelta(v, {
+          ...outcome.playerVibeDelta,
+          social: (outcome.playerVibeDelta.social ?? 0) + activeWeather.socialBonus
+        })
+      );
       triggerPlayerMoodlet(outcome.playerMood, outcome.moodletLabel, npcProfile.name);
 
+      // Check if this action fulfills the neighbor's active Daily Favor Request!
+      const favor = getNeighborDailyFavor(tokenId, targetLab.seed);
+      const fulfilledFavorNow =
+        favor.kind === action && !isNeighborFavorFulfilled(dailyBounties, tokenId);
+      if (fulfilledFavorNow) {
+        setDailyBounties((prev) => saveDailyBountyState(markNeighborFavorFulfilled(prev, tokenId)));
+        setProgression((prev) => {
+          const withCounter = recordProgressionAction(prev, "favorsFulfilled");
+          const xpRes = awardBonusProgressionXp(withCounter, favor.rewardXp, favor.rewardSparks);
+          return saveProgressionState(xpRes.nextState);
+        });
+        onAwardPlayBonus?.(favor.rewardSparks);
+      }
+
       const emote: CharacterEmote =
-        action === "joke" ? "hop" : action === "spark" ? "spin" : "wave";
+        action === "joke" ? "hop" : action === "spark" || action === "bouquet" ? "spin" : "wave";
       const bubble =
         action === "joke"
           ? "sparkle"
@@ -1023,7 +1172,9 @@ export function LabWorldExperience({
             ? "dna"
             : action === "toast"
               ? "coffee"
-              : "heart";
+              : action === "bouquet"
+                ? "flower"
+                : "heart";
 
       setCharacterEmote((prev) => ({ emote, seq: (prev?.seq || 0) + 1 }));
       artworkRef.current?.syncNeighborNpcStatus(
@@ -1043,8 +1194,13 @@ export function LabWorldExperience({
       if (options?.awardSparks) {
         onAwardPlayBonus?.(options.awardSparks);
       }
-      if (outcome.leveledUp) {
-        soundEngine.playBuildRoom();
+      if (fulfilledFavorNow) {
+        soundEngine.playQuestFanfare();
+        setFeedback(
+          `Daily Favor Fulfilled for ${npcProfile.name}! +${outcome.delta} Friend · +${favor.rewardSparks} sparks & +${favor.rewardXp} XP!`
+        );
+      } else if (outcome.leveledUp) {
+        soundEngine.playQuestFanfare();
         setFeedback(
           `Relationship Up! You & ${npcProfile.name} are now ${outcome.status.tier}s (${outcome.status.score}/100) · Both feeling ${outcome.status.mood}!`
         );
@@ -1064,8 +1220,25 @@ export function LabWorldExperience({
       relationsMap,
       savedProfile?.trait,
       triggerPlayerMoodlet,
-      onAwardPlayBonus
+      onAwardPlayBonus,
+      activeWeather.socialBonus,
+      dailyBounties,
+      bumpProgression
     ]
+  );
+
+  const handleGiftBouquetToNeighbor = useCallback(
+    (tokenId: number) => {
+      const res = consumeCraftedItem(alchemyState, "blossom-bouquet", Date.now());
+      if (!res.consumed) {
+        setFeedback("Brew a Blossom Friendship Bouquet in the Alchemy tab first (1 Rose + 1 Sakura)!");
+        return;
+      }
+      setAlchemyState(saveAlchemyState(activeVessel.tokenId, res.nextState));
+      soundEngine.playGoldenSparkle();
+      performNeighborSocial(tokenId, "bouquet", { fireBeam: true, awardSparks: 8 });
+    },
+    [alchemyState, activeVessel.tokenId, performNeighborSocial]
   );
 
   const handleEnterNeighborHome = useCallback(
@@ -1572,42 +1745,54 @@ export function LabWorldExperience({
     () => evaluateAchievements(progression, progressionLiveMetrics),
     [progression, progressionLiveMetrics]
   );
+  const evaluatedDailyBounties = useMemo(
+    () => evaluateDailyTownBounties(dailyBounties, nowTick),
+    [dailyBounties, nowTick]
+  );
   const researcherRank = useMemo(() => getResearcherRank(progression.xp), [progression.xp]);
   const readyQuestCount = useMemo(
     () => questChains.filter((q) => q.readyToClaim).length,
     [questChains]
   );
+  const readyDailyCount = useMemo(
+    () => evaluatedDailyBounties.filter((b) => b.readyToClaim).length,
+    [evaluatedDailyBounties]
+  );
   const readyAchCount = useMemo(
     () => evaluatedAchievements.filter((a) => a.readyToClaim).length,
     [evaluatedAchievements]
   );
-  const readyRewardCount = readyQuestCount + readyAchCount;
+  const readyRewardCount = readyQuestCount + readyDailyCount + readyAchCount;
 
-  // Celebrate live whenever a new quest or achievement flips to Ready-to-Claim!
+  // Celebrate live whenever a new quest, daily bounty, or achievement flips to Ready-to-Claim!
   const prevReadyRewardsRef = useRef<number>(readyRewardCount);
   useEffect(() => {
     const prev = prevReadyRewardsRef.current;
     prevReadyRewardsRef.current = readyRewardCount;
     if (readyRewardCount > prev) {
       const readyQ = questChains.find((q) => q.readyToClaim);
+      const readyD = evaluatedDailyBounties.find((b) => b.readyToClaim);
       const readyA = evaluatedAchievements.find((a) => a.readyToClaim);
-      soundEngine.playBuildRoom();
+      soundEngine.playQuestFanfare();
       setFeedback(
         readyQ
           ? `Quest complete: "${readyQ.activeStep.title}"! Open Quests to claim +${readyQ.activeStep.rewardSparks} sparks.`
-          : readyA
-            ? `Achievement unlocked: "${readyA.def.title}"! Open Quests to claim +${readyA.def.rewardSparks} sparks.`
-            : `New reward ready to claim in Quests!`
+          : readyD
+            ? `Daily Bounty ready: "${readyD.def.title}"! Open Quests to claim +${readyD.def.rewardSparks} sparks.`
+            : readyA
+              ? `Achievement unlocked: "${readyA.def.title}"! Open Quests to claim +${readyA.def.rewardSparks} sparks.`
+              : `New reward ready to claim in Quests!`
       );
     }
-  }, [readyRewardCount, questChains, evaluatedAchievements]);
+  }, [readyRewardCount, questChains, evaluatedDailyBounties, evaluatedAchievements]);
 
   const handleClaimQuest = (questId: string) => {
     const res = claimQuestReward(progression, progressionLiveMetrics, questId);
     if (!res.claimed) return;
     setProgression(saveProgressionState(res.nextState));
     onAwardPlayBonus?.(res.sparksAwarded);
-    soundEngine.playBuildRoom();
+    if (res.leveledUp) soundEngine.playRankUp();
+    else soundEngine.playQuestFanfare();
     setCharacterEmote((prev) => ({ emote: "hop", seq: (prev?.seq || 0) + 1 }));
     triggerPlayerMoodlet("Inspired", `+${res.sparksAwarded} Quest Sparks!`, "Quest Board");
     setFeedback(
@@ -1622,7 +1807,8 @@ export function LabWorldExperience({
     if (!res.claimed) return;
     setProgression(saveProgressionState(res.nextState));
     onAwardPlayBonus?.(res.sparksAwarded);
-    soundEngine.playBuildRoom();
+    if (res.leveledUp) soundEngine.playRankUp();
+    else soundEngine.playQuestFanfare();
     setCharacterEmote((prev) => ({ emote: "spin", seq: (prev?.seq || 0) + 1 }));
     triggerPlayerMoodlet("Inspired", "Achievement Badge Claimed!", "Trophy Case");
     setFeedback(
@@ -1632,18 +1818,70 @@ export function LabWorldExperience({
     );
   };
 
-  const handleClaimAllRewards = () => {
-    const res = claimAllReadyRewards(progression, progressionLiveMetrics);
-    if (res.claimedCount === 0) return;
-    setProgression(saveProgressionState(res.nextState));
+  const handleClaimDailyBounty = (bountyId: string) => {
+    const res = claimDailyBounty(dailyBounties, bountyId, Date.now());
+    if (!res.claimed) return;
+    setDailyBounties(saveDailyBountyState(res.nextState));
+    const withCount = recordProgressionAction(progression, "bountiesClaimed");
+    const xpRes = awardBonusProgressionXp(withCount, res.xpAwarded, res.sparksAwarded);
+    setProgression(saveProgressionState(xpRes.nextState));
     onAwardPlayBonus?.(res.sparksAwarded);
-    soundEngine.playBuildRoom();
-    setCharacterEmote((prev) => ({ emote: "spin", seq: (prev?.seq || 0) + 1 }));
-    triggerPlayerMoodlet("Inspired", `Claimed ${res.claimedCount} Rewards!`, "Quest Board");
+    if (xpRes.leveledUp) soundEngine.playRankUp();
+    else soundEngine.playQuestFanfare();
+    setCharacterEmote((prev) => ({ emote: "hop", seq: (prev?.seq || 0) + 1 }));
+    triggerPlayerMoodlet("Inspired", "Daily Bounty Claimed!", "Town Board");
     setFeedback(
-      res.leveledUp
-        ? `Claimed ${res.claimedCount} rewards (+${res.sparksAwarded} sparks) & Ranked Up to Lv.${res.newRank.level} ${res.newRank.title}!`
-        : `Claimed ${res.claimedCount} rewards! +${res.sparksAwarded} sparks & +${res.xpAwarded} XP!`
+      xpRes.leveledUp
+        ? `Daily Bounty claimed & Ranked Up to Lv.${xpRes.newRank.level} ${xpRes.newRank.title} (+${res.sparksAwarded} sparks)!`
+        : `Daily Bounty claimed! +${res.sparksAwarded} sparks & +${res.xpAwarded} XP!`
+    );
+  };
+
+  const handleClaimAllRewards = () => {
+    let curDaily = dailyBounties;
+    let dailySparks = 0;
+    let dailyXp = 0;
+    let dailyClaimed = 0;
+    const now = Date.now();
+    for (const b of evaluateDailyTownBounties(curDaily, now)) {
+      if (b.readyToClaim) {
+        const r = claimDailyBounty(curDaily, b.def.id, now);
+        if (r.claimed) {
+          curDaily = r.nextState;
+          dailySparks += r.sparksAwarded;
+          dailyXp += r.xpAwarded;
+          dailyClaimed++;
+        }
+      }
+    }
+    let curProg = progression;
+    if (dailyClaimed > 0) {
+      setDailyBounties(saveDailyBountyState(curDaily));
+      curProg = recordProgressionAction(curProg, "bountiesClaimed", dailyClaimed);
+      curProg = awardBonusProgressionXp(curProg, dailyXp, dailySparks).nextState;
+    }
+
+    const prevLevel = getResearcherRank(progression.xp).level;
+    const res = claimAllReadyRewards(curProg, progressionLiveMetrics);
+    const totalCount = res.claimedCount + dailyClaimed;
+    if (totalCount === 0) return;
+
+    const finalState = res.nextState;
+    setProgression(saveProgressionState(finalState));
+    const totalSparks = res.sparksAwarded + dailySparks;
+    const totalXp = res.xpAwarded + dailyXp;
+    const newRank = getResearcherRank(finalState.xp);
+    const leveledUp = newRank.level > prevLevel;
+
+    onAwardPlayBonus?.(totalSparks);
+    if (leveledUp) soundEngine.playRankUp();
+    else soundEngine.playQuestFanfare();
+    setCharacterEmote((prev) => ({ emote: "spin", seq: (prev?.seq || 0) + 1 }));
+    triggerPlayerMoodlet("Inspired", `Claimed ${totalCount} Rewards!`, "Quest Board");
+    setFeedback(
+      leveledUp
+        ? `Claimed ${totalCount} rewards (+${totalSparks} sparks) & Ranked Up to Lv.${newRank.level} ${newRank.title}!`
+        : `Claimed ${totalCount} rewards! +${totalSparks} sparks & +${totalXp} XP!`
     );
   };
 
@@ -1656,11 +1894,13 @@ export function LabWorldExperience({
     setFeedback(`Equipped prestige title: ${title}!`);
   };
 
-  const handleJumpToQuestHint = (hint: "builder" | "research" | "gardens" | "pet" | "town") => {
+  const handleJumpToQuestHint = (
+    hint: "builder" | "research" | "gardens" | "alchemy" | "pet" | "town"
+  ) => {
     setQuestsDrawerOpen(false);
-    if (hint === "gardens") {
+    if (hint === "gardens" || hint === "alchemy") {
       setOpenStation(null);
-      setTownSubTab("gardens");
+      setTownSubTab(hint);
       setNeighborhoodDrawerOpen(true);
       soundEngine.playTap(1046.5);
     } else if (hint === "town") {
@@ -1673,10 +1913,189 @@ export function LabWorldExperience({
       navigateToStation(hint);
     }
   };
+
+  // Interconnected Live Multipliers: Pet + Station Upgrades + Botanical Elixirs + Weather + Neighbor Friendships!
+  const activeElixirBuffs = useMemo(
+    () => getActiveElixirBuffs(alchemyState, nowTick),
+    [alchemyState, nowTick]
+  );
+  const elixirMiningMult = useMemo(
+    () => computeElixirMiningMultiplier(alchemyState, nowTick),
+    [alchemyState, nowTick]
+  );
+  const elixirFocusMult = useMemo(
+    () => computeElixirFocusMultiplier(alchemyState, nowTick),
+    [alchemyState, nowTick]
+  );
+  const friendshipSynergy = useMemo(
+    () => computeTownFriendshipSynergy(relationsMap),
+    [relationsMap]
+  );
   const tamaBoost = Number((companionBoostMultiplier(vitals) + stationBonuses.petBoostBonus).toFixed(2));
   const baseRate = computeMiningRatePerHour(tier, activeVessel.sectorsMask, activeVessel.workUnits);
-  const effectiveMiningRate = Number((baseRate * tamaBoost * stationBonuses.miningMult).toFixed(1));
+  const effectiveMiningRate = Number(
+    (
+      baseRate *
+      tamaBoost *
+      stationBonuses.miningMult *
+      elixirMiningMult *
+      activeWeather.miningMult *
+      friendshipSynergy.miningMultiplier
+    ).toFixed(1)
+  );
   const builtCount = countSectors(activeVessel.sectorsMask);
+
+  // Botanical Alchemy Crafting & Elixir Consumption Handlers
+  const hasKitchenRoom = labDecor.extraRooms.includes("kitchen");
+  const hasPergolaRoom = labDecor.extraRooms.includes("pergola");
+
+  const handleBrewElixir = useCallback(
+    (recipeId: ElixirId) => {
+      const res = craftAlchemyRecipe(alchemyState, recipeId, { hasKitchen: hasKitchenRoom });
+      if (!res.crafted) {
+        setFeedback(`Gather more garden blooms to brew ${res.recipe.name}!`);
+        return;
+      }
+      setAlchemyState(saveAlchemyState(activeVessel.tokenId, res.nextState));
+      bumpProgression("elixirsBrewed");
+      if (recipeId === "starlight-elixir") bumpProgression("starlightCrafted");
+      if (res.kitchenBonusSparks > 0) onAwardPlayBonus?.(res.kitchenBonusSparks);
+      soundEngine.playBrewElixir();
+      setCharacterEmote((prev) => ({ emote: "hop", seq: (prev?.seq || 0) + 1 }));
+      setSimsVibes((v) => applySimsVibeDelta(v, { focus: 12, fun: 10 }));
+      setFeedback(
+        res.kitchenBonusTriggered
+          ? `Kitchen Double Batch! Brewed 2× ${res.recipe.name} (+1 Kitchen spark)!`
+          : `Brewed ${res.recipe.name}!${
+              res.kitchenBonusSparks > 0 ? " (+1 Warm Kitchenette spark)" : ""
+            }`
+      );
+    },
+    [alchemyState, hasKitchenRoom, activeVessel.tokenId, bumpProgression, onAwardPlayBonus]
+  );
+
+  const handleUseCraftedItem = useCallback(
+    (recipeId: ElixirId) => {
+      if (recipeId === "blossom-bouquet") {
+        setNeighborhoodDrawerOpen(false);
+        setConsoleSubTab("friends");
+        setOpenStation("console");
+        setFeedback("Pick any neighbor in your Friends tab to gift your Blossom Friendship Bouquet (+25 Friend)!");
+        return;
+      }
+      const now = Date.now();
+      const res = consumeCraftedItem(alchemyState, recipeId, now);
+      if (!res.consumed) return;
+      setAlchemyState(saveAlchemyState(activeVessel.tokenId, res.nextState));
+
+      if (recipeId === "crystal-fertilizer") {
+        const bloom = bloomAllPlantedPlots(gardenState, now);
+        setGardenState(saveGardenState(activeVessel.tokenId, bloom.nextState));
+        bloom.bloomedPlotIds.forEach((id) => artworkRef.current?.waterGardenPlotFX(id));
+        soundEngine.playGoldenSparkle();
+        setCharacterEmote((prev) => ({ emote: "spin", seq: (prev?.seq || 0) + 1 }));
+        setFeedback(
+          bloom.bloomedPlotIds.length > 0
+            ? `Crystal Bloom Elixir! ${bloom.bloomedPlotIds.length} garden beds burst into radiant full bloom!`
+            : "Sprinkled Crystal Bloom Elixir across the beds — plant new seeds anytime!"
+        );
+        return;
+      }
+
+      if (recipeId === "pet-ambrosia") {
+        const refilled = feedGourmetAmbrosia(vitals, now);
+        setVitals(refilled);
+        saveCompanionVitals(activeVessel.tokenId, refilled);
+        setTamaSignal((prev) => ({ action: "feed", seq: (prev?.seq || 0) + 1 }));
+        soundEngine.playGoldenSparkle();
+        bumpProgression("petCareActions");
+        setFeedback(`Served Gourmet Pet Ambrosia! Your companion's vitals are 100% full (+2 Care XP)!`);
+        return;
+      }
+
+      if (recipeId === "starlight-elixir") {
+        const bonusSparks = res.recipe.bonusSparks ?? 25;
+        const bonusXp = res.recipe.bonusXp ?? 40;
+        onAwardPlayBonus?.(bonusSparks);
+        const xpRes = awardBonusProgressionXp(progression, bonusXp, bonusSparks);
+        setProgression(saveProgressionState(xpRes.nextState));
+        artworkRef.current?.triggerCatalyticPulse(1.45);
+        if (xpRes.leveledUp) soundEngine.playRankUp();
+        else soundEngine.playGoldenSparkle();
+        setCharacterEmote((prev) => ({ emote: "spin", seq: (prev?.seq || 0) + 1 }));
+        setSimsVibes((v) => applySimsVibeDelta(v, { energy: 30, focus: 30, fun: 30, social: 20 }));
+        triggerPlayerMoodlet("Inspired", "Starlight Resonance (+35%)", "Master Alchemy");
+        setFeedback(
+          `Drank Philosopher's Starlight! +${bonusSparks} sparks, +${bonusXp} XP & +35% All-Synergy for 15m!`
+        );
+        return;
+      }
+
+      // Mint Focus Tea or Sunbeam Mining Tonic
+      soundEngine.playBrewElixir();
+      setCharacterEmote((prev) => ({ emote: "hop", seq: (prev?.seq || 0) + 1 }));
+      if (recipeId === "mint-focus-tea") {
+        setSimsVibes((v) => applySimsVibeDelta(v, { focus: 26, energy: 12 }));
+        triggerPlayerMoodlet("Focused", "Mint Focus Tea (+40%)", "Alchemy Bench");
+        setFeedback("Sipped Mint Focus Tea! +40% Focus gain active for 10 minutes.");
+      } else {
+        setSimsVibes((v) => applySimsVibeDelta(v, { energy: 26, fun: 12 }));
+        triggerPlayerMoodlet("Energized", "Sunbeam Mining (+25%)", "Alchemy Bench");
+        setFeedback("Drank Sunbeam Mining Tonic! +25% ALCH Mining Rate active for 10 minutes.");
+      }
+    },
+    [
+      alchemyState,
+      activeVessel.tokenId,
+      gardenState,
+      vitals,
+      progression,
+      onAwardPlayBonus,
+      bumpProgression,
+      triggerPlayerMoodlet
+    ]
+  );
+
+  // Home Architect Blueprint Save / Load / Delete Slots
+  const handleSaveBlueprintSlot = useCallback(
+    (slotIndex: 0 | 1 | 2) => {
+      const next = saveHomeBlueprintSlot(
+        activeVessel.tokenId,
+        slotIndex,
+        labDecor,
+        `Layout #${slotIndex + 1}`
+      );
+      setBlueprintSlots(next);
+      soundEngine.playTap(1174.66);
+      setFeedback(`Saved current home furnishings & furniture positions into Blueprint Slot ${slotIndex + 1}!`);
+    },
+    [activeVessel.tokenId, labDecor]
+  );
+
+  const handleLoadBlueprintSlot = useCallback(
+    (slotIndex: 0 | 1 | 2) => {
+      const slot = blueprintSlots[slotIndex];
+      if (!slot) return;
+      updateLabDecor({
+        ...labDecor,
+        ...slot.decor,
+        stationUpgrades: { ...labDecor.stationUpgrades }
+      });
+      soundEngine.playBuildRoom();
+      setFeedback(`Loaded Blueprint Slot ${slotIndex + 1} (${slot.name}) live in 3D!`);
+    },
+    [blueprintSlots, labDecor, updateLabDecor]
+  );
+
+  const handleDeleteBlueprintSlot = useCallback(
+    (slotIndex: 0 | 1 | 2) => {
+      const next = deleteHomeBlueprintSlot(activeVessel.tokenId, slotIndex);
+      setBlueprintSlots(next);
+      soundEngine.playTap(660);
+      setFeedback(`Cleared Blueprint Slot ${slotIndex + 1}.`);
+    },
+    [activeVessel.tokenId]
+  );
 
   const handleUpgradeStation = useCallback(
     (stationId: UpgradeableStationId) => {
@@ -1889,9 +2308,12 @@ export function LabWorldExperience({
   // ============================================================================
   const readyGardenCount = useMemo(
     () =>
-      GARDEN_PLOT_DEFS.filter((d) => computePlotGrowth(gardenState.plots[d.id], nowTick).readyToHarvest)
-        .length,
-    [gardenState, nowTick]
+      GARDEN_PLOT_DEFS.filter(
+        (d) =>
+          computePlotGrowth(gardenState.plots[d.id], nowTick, activeWeather.gardenGrowthMult)
+            .readyToHarvest
+      ).length,
+    [gardenState, nowTick, activeWeather.gardenGrowthMult]
   );
 
   const handlePlantSeed = useCallback(
@@ -1946,23 +2368,54 @@ export function LabWorldExperience({
 
   const handleHarvestPlot = useCallback(
     (plotId: string) => {
-      const res = harvestGardenPlot(gardenState, plotId, Date.now());
+      const res = harvestGardenPlot(gardenState, plotId, Date.now(), {
+        hasPergola: hasPergolaRoom,
+        weatherGoldenBonus: activeWeather.goldenChanceBonus,
+        growthMultiplier: activeWeather.gardenGrowthMult
+      });
       if (!res.harvested) return;
       const saved = saveGardenState(activeVessel.tokenId, res.nextState);
       setGardenState(saved);
+      setAlchemyState((prev) =>
+        saveAlchemyState(
+          activeVessel.tokenId,
+          addHarvestedBotanicals(prev, res.harvested!.id, res.yieldCount, res.isGolden)
+        )
+      );
+      bumpDailyMetric("harvests", 1);
+      if (res.isGolden) bumpProgression("goldenHarvests");
       artworkRef.current?.waterGardenPlotFX(plotId);
-      soundEngine.playBuildRoom();
+      if (res.isGolden) soundEngine.playGoldenSparkle();
+      else soundEngine.playBuildRoom();
       onAwardPlayBonus?.(res.sparksEarned);
       setSimsVibes((v) => applySimsVibeDelta(v, res.harvested!.vibeDelta));
       setCharacterEmote((prev) => ({ emote: "spin", seq: (prev?.seq || 0) + 1 }));
-      triggerPlayerMoodlet("Inspired", `Harvested ${res.harvested.name}!`, "Botanical Garden");
+      triggerPlayerMoodlet(
+        "Inspired",
+        res.isGolden ? `Golden ${res.harvested.name}! (2×)` : `Harvested ${res.harvested.name}!`,
+        "Botanical Garden"
+      );
       setFeedback(
-        `Harvested ${res.harvested.name}! ${res.harvested.moodPerk}${
-          onAwardPlayBonus ? ` · +${res.sparksEarned} sparks` : ""
-        }!`
+        res.isGolden
+          ? `Rare Golden Harvest! 2× ${res.harvested.name} added to Alchemy Pouch${
+              onAwardPlayBonus ? ` · +${res.sparksEarned} sparks` : ""
+            }!`
+          : `Harvested ${res.harvested.name} (added to Alchemy Pouch)! ${res.harvested.moodPerk}${
+              onAwardPlayBonus ? ` · +${res.sparksEarned} sparks` : ""
+            }!`
       );
     },
-    [activeVessel.tokenId, gardenState, onAwardPlayBonus, triggerPlayerMoodlet]
+    [
+      activeVessel.tokenId,
+      gardenState,
+      hasPergolaRoom,
+      activeWeather.goldenChanceBonus,
+      activeWeather.gardenGrowthMult,
+      onAwardPlayBonus,
+      triggerPlayerMoodlet,
+      bumpDailyMetric,
+      bumpProgression
+    ]
   );
 
   const handleWaterAllPlots = useCallback(() => {
@@ -1989,15 +2442,28 @@ export function LabWorldExperience({
 
   const handleHarvestAllPlots = useCallback(() => {
     let cur = gardenState;
+    let curAlchemy = alchemyState;
     let totalSparks = 0;
     let harvestedCount = 0;
+    let goldenCount = 0;
     const now = Date.now();
     for (const def of GARDEN_PLOT_DEFS) {
-      const res = harvestGardenPlot(cur, def.id, now);
+      const res = harvestGardenPlot(cur, def.id, now, {
+        hasPergola: hasPergolaRoom,
+        weatherGoldenBonus: activeWeather.goldenChanceBonus,
+        growthMultiplier: activeWeather.gardenGrowthMult
+      });
       if (res.harvested) {
         cur = res.nextState;
+        curAlchemy = addHarvestedBotanicals(
+          curAlchemy,
+          res.harvested.id,
+          res.yieldCount,
+          res.isGolden
+        );
         totalSparks += res.sparksEarned;
         harvestedCount++;
+        if (res.isGolden) goldenCount++;
         artworkRef.current?.waterGardenPlotFX(def.id);
       }
     }
@@ -2006,17 +2472,32 @@ export function LabWorldExperience({
       return;
     }
     setGardenState(saveGardenState(activeVessel.tokenId, cur));
+    setAlchemyState(saveAlchemyState(activeVessel.tokenId, curAlchemy));
+    bumpDailyMetric("harvests", harvestedCount);
+    if (goldenCount > 0) bumpProgression("goldenHarvests", goldenCount);
     onAwardPlayBonus?.(totalSparks);
-    soundEngine.playBuildRoom();
+    if (goldenCount > 0) soundEngine.playGoldenSparkle();
+    else soundEngine.playBuildRoom();
     setCharacterEmote((prev) => ({ emote: "spin", seq: (prev?.seq || 0) + 1 }));
     setSimsVibes((v) => applySimsVibeDelta(v, { energy: 16, focus: 16, fun: 16 }));
     triggerPlayerMoodlet("Inspired", "Grand Botanical Harvest!", "Alchemia Gardens");
     setFeedback(
       `Harvested ${harvestedCount} blooming ${harvestedCount === 1 ? "bed" : "beds"}${
-        onAwardPlayBonus ? ` · +${totalSparks} sparks` : ""
-      }!`
+        goldenCount > 0 ? ` (${goldenCount} Golden 2×!)` : ""
+      }${onAwardPlayBonus ? ` · +${totalSparks} sparks` : ""} — added to Alchemy Pouch!`
     );
-  }, [activeVessel.tokenId, gardenState, onAwardPlayBonus, triggerPlayerMoodlet]);
+  }, [
+    activeVessel.tokenId,
+    gardenState,
+    alchemyState,
+    hasPergolaRoom,
+    activeWeather.goldenChanceBonus,
+    activeWeather.gardenGrowthMult,
+    onAwardPlayBonus,
+    triggerPlayerMoodlet,
+    bumpDailyMetric,
+    bumpProgression
+  ]);
 
   const handleWalkToPark = useCallback((parkId: string) => {
     const park = TOWN_PARKS.find((p) => p.id === parkId) || TOWN_PARKS[0];
@@ -2104,6 +2585,58 @@ export function LabWorldExperience({
     setCharacterEmote((prev) => ({ emote: "wave", seq: (prev?.seq || 0) + 1 }));
     completeGuideStep("pet");
     bumpProgression("petCareActions");
+  };
+
+  const handlePerformPetTrick = (trickId: PetTrickId) => {
+    const res = performPetTrick(vitals, trickId, Date.now());
+    if (!res.performed) {
+      setFeedback(
+        res.reason === "locked"
+          ? `Reach Companion Lv.${res.trick.minLevel} to unlock ${res.trick.name}!`
+          : `${res.trick.name} is resting (${res.cooldownLeftSec}s left).`
+      );
+      return;
+    }
+    setVitals(res.nextVitals);
+    saveCompanionVitals(activeVessel.tokenId, res.nextVitals);
+    onAwardPlayBonus?.(res.sparksFound);
+    setTamaSignal((prev) => ({ action: "play", seq: (prev?.seq || 0) + 1 }));
+    setCharacterEmote((prev) => ({ emote: "hop", seq: (prev?.seq || 0) + 1 }));
+    bumpProgression("petTricks");
+    bumpProgression("petCareActions");
+    completeGuideStep("pet");
+
+    let extraNote = "";
+    if (res.triggerFoldWiggle) {
+      setFoldSignal((prev) => ({ action: "wiggle", seq: (prev?.seq || 0) + 1 }));
+      markGoalDone("fold");
+      extraNote = " · Wiggled live protein fold!";
+    }
+    if (res.triggerGardenWater) {
+      const w = waterRandomGrowingPlot(gardenState, Date.now());
+      if (w.wateredPlotId) {
+        setGardenState(saveGardenState(activeVessel.tokenId, w.nextState));
+        artworkRef.current?.waterGardenPlotFX(w.wateredPlotId);
+        extraNote = " · Auto-watered a thirsty garden bed!";
+      }
+    }
+    soundEngine.playGoldenSparkle();
+    setFeedback(
+      `${petDisplayName} performed ${res.trick.name}! +${res.sparksFound} sparks${extraNote}`
+    );
+  };
+
+  const handleClaimPetChest = () => {
+    const res = claimDailyPetChest(vitals, Date.now());
+    if (!res.claimed) return;
+    setVitals(res.nextVitals);
+    saveCompanionVitals(activeVessel.tokenId, res.nextVitals);
+    onAwardPlayBonus?.(res.sparksAwarded);
+    setTamaSignal((prev) => ({ action: "feed", seq: (prev?.seq || 0) + 1 }));
+    soundEngine.playGoldenSparkle();
+    setFeedback(
+      `Daily Companion Chest opened! +${res.sparksAwarded} sparks (${res.nextVitals.dailyStreak}d streak) & 100% Happy!`
+    );
   };
 
   const handleSavePetName = () => {
@@ -2199,6 +2732,25 @@ export function LabWorldExperience({
         handleTamagotchi("play");
         setSimsVibes((v) => applySimsVibeDelta(v, { social: 16, energy: -4 }));
         setCurrentActivity(`Playing fetch with ${petDisplayName}`);
+        break;
+      case "pet-trick":
+        handlePerformPetTrick(
+          getTrickCooldownLeftSec(vitals, "fetch-spark", Date.now()) === 0
+            ? "fetch-spark"
+            : "spin-bow"
+        );
+        setCurrentActivity(`Training ${petDisplayName}`);
+        break;
+      case "pet-ambrosia":
+        handleUseCraftedItem("pet-ambrosia");
+        setCurrentActivity(`Serving Ambrosia to ${petDisplayName}`);
+        break;
+      case "open-alchemy":
+        setOpenStation(null);
+        setQuestsDrawerOpen(false);
+        setTownSubTab("alchemy");
+        setNeighborhoodDrawerOpen(true);
+        soundEngine.playTap(1174.66);
         break;
       case "pet-nap":
         handleToggleSleep();
@@ -2438,7 +2990,8 @@ export function LabWorldExperience({
           onArrive: () => {
             setSimsVibes((v) => applySimsVibeDelta(v, cfg.delta));
             triggerPlayerMoodlet(cfg.mood, cfg.moodlet, roomDef?.name || target.label);
-            soundEngine.playBuildRoom();
+            if (roomId === "music") soundEngine.playMusicSalonMelody();
+            else soundEngine.playBuildRoom();
             setFeedback(cfg.msg);
           }
         });
@@ -2513,7 +3066,7 @@ export function LabWorldExperience({
           yaw: -1.65,
           floor: 1 as FloorNumber
         };
-        const focusGain = Math.round(24 * stationBonuses.focusMult);
+        const focusGain = Math.round(24 * stationBonuses.focusMult * elixirFocusMult);
         const sparkGain = 1 + stationBonuses.extraFoldSpark;
         setCameraMode("follow");
         setActiveFloor(a.floor);
@@ -2755,6 +3308,9 @@ export function LabWorldExperience({
       case "neighbor-spark":
         if ("tokenId" in target) handleSendNeighborSpark(target.tokenId);
         break;
+      case "neighbor-bouquet":
+        if ("tokenId" in target) handleGiftBouquetToNeighbor(target.tokenId);
+        break;
       case "neighbor-chat":
       case "neighbor-wave":
         if ("tokenId" in target) {
@@ -2788,6 +3344,9 @@ export function LabWorldExperience({
           artworkRef.current?.triggerCatalyticPulse(1.2);
           performNeighborSocial(visitingHome.tokenId, "spark", { awardSparks: 2 });
         }
+        break;
+      case "host-bouquet":
+        if (visitingHome) handleGiftBouquetToNeighbor(visitingHome.tokenId);
         break;
       case "host-fold":
         setFoldSignal((prev) => ({ action: "wiggle", seq: (prev?.seq || 0) + 1 }));
@@ -2825,8 +3384,7 @@ export function LabWorldExperience({
       case "vehicle-beep":
         if (target.kind === "vehicle") {
           artworkRef.current?.triggerVehicleHonk(target.vehicleId);
-          soundEngine.playTap(659.25);
-          window.setTimeout(() => soundEngine.playTap(880), 110);
+          soundEngine.playVehicleBeep();
           bumpProgression("vehicleWaves");
           setSimsVibes((prev) => applySimsVibeDelta(prev, { fun: 12, social: 4 }));
           setFeedback(`Beep beep! ${target.label} honked back along the boulevard!`);
@@ -3248,10 +3806,16 @@ export function LabWorldExperience({
             currentFloor: activeFloor,
             maxFloors: labDecor.houseFloors,
             hasBasement: labDecor.hasBasement,
+            hasBouquet: (alchemyState.crafted["blossom-bouquet"] ?? 0) > 0,
+            hasAmbrosia: (alchemyState.crafted["pet-ambrosia"] ?? 0) > 0,
             gardenPlotStatus:
               pieMenu.target.kind === "garden-plot"
                 ? (() => {
-                    const g = computePlotGrowth(gardenState.plots[pieMenu.target.plotId], nowTick);
+                    const g = computePlotGrowth(
+                      gardenState.plots[pieMenu.target.plotId],
+                      nowTick,
+                      activeWeather.gardenGrowthMult
+                    );
                     return g.stage === 0 ? "empty" : g.readyToHarvest ? "ready" : "growing";
                   })()
                 : undefined
@@ -3568,6 +4132,76 @@ export function LabWorldExperience({
             ))}
         </div>
       )}
+
+      {/* Compact Live Active Buffs, Weather Perk & Town Friendship Synergy Strip */}
+      {!creatorOpen &&
+        Boolean(savedProfile) &&
+        !movingItem &&
+        (activeElixirBuffs.length > 0 ||
+          townWeatherId !== "sunlit-breeze" ||
+          friendshipSynergy.bonusPct > 0) && (
+          <div className="active-buffs-hud" aria-label="Active world buffs">
+            {townWeatherId !== "sunlit-breeze" && (
+              <button
+                type="button"
+                className="active-buff-pill clickable"
+                style={{ "--buff-accent": activeWeather.accent } as React.CSSProperties}
+                onClick={() => {
+                  setOpenStation(null);
+                  setQuestsDrawerOpen(false);
+                  setTownSubTab("town");
+                  setNeighborhoodDrawerOpen(true);
+                }}
+                title={activeWeather.desc}
+              >
+                <CloudRain size={11} />
+                <span>
+                  {activeWeather.shortLabel} · {activeWeather.perkLabel}
+                </span>
+              </button>
+            )}
+            {activeElixirBuffs.map((buff) => {
+              const secLeft = Math.max(0, Math.ceil((buff.expiresAtMs - nowTick) / 1000));
+              const mm = Math.floor(secLeft / 60);
+              const ss = String(secLeft % 60).padStart(2, "0");
+              return (
+                <button
+                  key={buff.id}
+                  type="button"
+                  className="active-buff-pill clickable"
+                  style={{ "--buff-accent": buff.accent } as React.CSSProperties}
+                  onClick={() => {
+                    setOpenStation(null);
+                    setQuestsDrawerOpen(false);
+                    setTownSubTab("alchemy");
+                    setNeighborhoodDrawerOpen(true);
+                  }}
+                >
+                  <Wand2 size={11} />
+                  <span>
+                    {buff.label} · {mm}:{ss}
+                  </span>
+                </button>
+              );
+            })}
+            {friendshipSynergy.bonusPct > 0 && (
+              <button
+                type="button"
+                className="active-buff-pill clickable"
+                style={{ "--buff-accent": "#f472b6" } as React.CSSProperties}
+                onClick={() => {
+                  setNeighborhoodDrawerOpen(false);
+                  setQuestsDrawerOpen(false);
+                  setConsoleSubTab("friends");
+                  setOpenStation("console");
+                }}
+              >
+                <HeartHandshake size={11} />
+                <span>Town Friends +{friendshipSynergy.bonusPct}% ALCH</span>
+              </button>
+            )}
+          </div>
+        )}
 
       {/* Live 3D Free-Placement Move Mode Floating Top Banner */}
       {!creatorOpen && movingItem && (() => {
@@ -4124,7 +4758,7 @@ export function LabWorldExperience({
                   <div className="science-metric">
                     <span>Pet + Station</span>
                     <strong>
-                      {tamaBoost}x · +{Math.round((stationBonuses.miningMult - 1) * 100)}%
+                      {tamaBoost}× · +{Math.round((stationBonuses.miningMult - 1) * 100)}%
                     </strong>
                   </div>
                   <div className="science-metric">
@@ -4134,6 +4768,60 @@ export function LabWorldExperience({
                   <div className="science-metric">
                     <span>Shared to science</span>
                     <strong>{totalCoinsDonatedToResearch.toFixed(1)} ALCH</strong>
+                  </div>
+                </div>
+
+                {/* Live Interconnected World Synergy Breakdown */}
+                <div className="expand-section-card">
+                  <div className="furnish-header-row">
+                    <span className="single-kicker">Active Mining Synergy Stack</span>
+                    <strong style={{ fontSize: "0.74rem", color: "#4f46e5" }}>
+                      {effectiveMiningRate} ALCH/hr
+                    </strong>
+                  </div>
+                  <div className="wing-tags" style={{ marginTop: 6 }}>
+                    <span className="wing-tag built">● Pet {tamaBoost}×</span>
+                    <span className={`wing-tag ${stationBonuses.miningMult > 1 ? "built" : ""}`}>
+                      {stationBonuses.miningMult > 1 ? "● " : "○ "}Gear {stationBonuses.miningMult}×
+                    </span>
+                    <button
+                      type="button"
+                      className={`wing-tag clickable ${elixirMiningMult > 1 ? "built" : ""}`}
+                      style={{ border: "none" }}
+                      onClick={() => {
+                        setOpenStation(null);
+                        setTownSubTab("alchemy");
+                        setNeighborhoodDrawerOpen(true);
+                      }}
+                      title="Brew Sunbeam Mining Tonic or Starlight Elixir"
+                    >
+                      {elixirMiningMult > 1 ? "● " : "○ "}Elixir {elixirMiningMult}×
+                    </button>
+                    <button
+                      type="button"
+                      className={`wing-tag clickable ${activeWeather.miningMult > 1 ? "built" : ""}`}
+                      style={{ border: "none" }}
+                      onClick={() => {
+                        setOpenStation(null);
+                        setTownSubTab("town");
+                        setNeighborhoodDrawerOpen(true);
+                      }}
+                      title="Starlight Aurora weather boosts ALCH mining by +15%"
+                    >
+                      {activeWeather.miningMult > 1 ? "● " : "○ "}Sky {activeWeather.miningMult}×
+                    </button>
+                    <button
+                      type="button"
+                      className={`wing-tag clickable ${friendshipSynergy.bonusPct > 0 ? "built" : ""}`}
+                      style={{ border: "none" }}
+                      onClick={() => {
+                        setConsoleSubTab("friends");
+                        setOpenStation("console");
+                      }}
+                      title="Good & Best Friends across Alchemia Town boost ALCH yield up to +30%"
+                    >
+                      {friendshipSynergy.bonusPct > 0 ? "● " : "○ "}Friends +{friendshipSynergy.bonusPct}%
+                    </button>
                   </div>
                 </div>
 
@@ -4494,6 +5182,16 @@ export function LabWorldExperience({
                     <Cookie size={13} />
                     {onSpendCoinsForTreat ? "Feed (5 sparks)" : "Feed"}
                   </button>
+                  {(alchemyState.crafted["pet-ambrosia"] ?? 0) > 0 && (
+                    <button
+                      type="button"
+                      className="sector-btn clickable"
+                      onClick={() => handleUseCraftedItem("pet-ambrosia")}
+                      title="Crafted Gourmet Pet Ambrosia — 100% refill & +2 Care XP (Free!)"
+                    >
+                      <Sparkles size={13} /> Ambrosia (×{alchemyState.crafted["pet-ambrosia"]})
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="subtle-pill-btn clickable"
@@ -4579,6 +5277,63 @@ export function LabWorldExperience({
                         )}s`
                       : "Proton Catch"}
                   </button>
+                </div>
+
+                {/* Daily Companion Check-In Chest */}
+                {canClaimDailyPetChest(vitals, nowTick) && (
+                  <div className="pet-chest-banner">
+                    <div>
+                      <strong style={{ fontSize: "0.76rem", color: "#92400e", display: "block" }}>
+                        Daily Companion Chest Ready!
+                      </strong>
+                      <span className="tama-sub">
+                        {vitals.dailyStreak}d streak · +{8 + Math.min(14, (vitals.dailyStreak || 1) * 2)} sparks &amp; 100% Happy
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="sector-btn clickable"
+                      style={{ padding: "5px 10px", fontSize: "0.7rem" }}
+                      onClick={handleClaimPetChest}
+                    >
+                      <Gift size={11} /> Claim
+                    </button>
+                  </div>
+                )}
+
+                {/* Trainable Companion Tricks & Skills */}
+                <div className="expand-section-card">
+                  <div className="furnish-header-row">
+                    <span className="single-kicker">
+                      Trained Pet Tricks · Mastery {vitals.trickMastery ?? 0}
+                    </span>
+                    <span className="tama-sub">Lv.{vitals.level}</span>
+                  </div>
+                  <div className="pet-tricks-grid">
+                    {PET_TRICKS.map((trick) => {
+                      const locked = vitals.level < trick.minLevel;
+                      const cd = getTrickCooldownLeftSec(vitals, trick.id, nowTick);
+                      return (
+                        <button
+                          key={trick.id}
+                          type="button"
+                          disabled={locked || cd > 0}
+                          className="pet-trick-btn clickable"
+                          style={{ "--trick-accent": trick.accent } as React.CSSProperties}
+                          onClick={() => handlePerformPetTrick(trick.id)}
+                          title={trick.desc}
+                        >
+                          <strong>
+                            <span>{trick.name}</span>
+                            <span className="move-floor-badge">
+                              {locked ? `Lv.${trick.minLevel}` : cd > 0 ? `${cd}s` : "Ready"}
+                            </span>
+                          </strong>
+                          <small>{trick.perkLabel}</small>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <div className="badge-row">
@@ -4717,6 +5472,57 @@ export function LabWorldExperience({
                           </button>
                         ))}
                       </div>
+
+                      {!isVisiting && (
+                        <div className="expand-section-card">
+                          <div className="single-kicker">
+                            Saved Architect Blueprints (3 Custom Layout Slots)
+                          </div>
+                          <div className="blueprint-slots-grid">
+                            {([0, 1, 2] as const).map((idx) => {
+                              const slot = blueprintSlots[idx];
+                              return (
+                                <div key={idx} className="blueprint-slot-card">
+                                  <strong>{slot ? slot.name : `Empty Slot ${idx + 1}`}</strong>
+                                  <div className="blueprint-slot-btns">
+                                    <button
+                                      type="button"
+                                      className="subtle-pill-btn clickable"
+                                      style={{ padding: "3px 6px", fontSize: "0.64rem", flex: 1 }}
+                                      onClick={() => handleSaveBlueprintSlot(idx)}
+                                      title="Snapshot current decor & furniture placements"
+                                    >
+                                      <Save size={10} /> Save
+                                    </button>
+                                    {slot && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          className="sector-btn clickable"
+                                          style={{ padding: "3px 6px", fontSize: "0.64rem", flex: 1 }}
+                                          onClick={() => handleLoadBlueprintSlot(idx)}
+                                          title="Apply saved layout live in 3D"
+                                        >
+                                          Load
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="inline-icon-btn clickable"
+                                          onClick={() => handleDeleteBlueprintSlot(idx)}
+                                          title="Clear slot"
+                                          aria-label={`Clear Blueprint Slot ${idx + 1}`}
+                                        >
+                                          <Trash2 size={10} />
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
 
                       <div className="furnish-cat-strip" role="tablist" aria-label="Furniture categories">
                         {furnishCats.map((cat) => {
@@ -5853,11 +6659,25 @@ export function LabWorldExperience({
                   </div>
                 )}
 
-                {/* SUB-TAB 2: SIMS RELATIONSHIPS & NEIGHBOR STATUSES */}
+                {/* SUB-TAB 2: SIMS RELATIONSHIPS, NEIGHBOR FAVORS & TOWN SYNERGY */}
                 {consoleSubTab === "friends" && (
                   <div className="world-drawer-stack">
+                    <div className="town-growth-card">
+                      <div className="town-growth-head">
+                        <strong>
+                          Town Friendship Synergy · +{friendshipSynergy.bonusPct}% ALCH Mining
+                        </strong>
+                        <span>
+                          {friendshipSynergy.bestFriendCount} Best · {friendshipSynergy.goodFriendCount} Good
+                        </span>
+                      </div>
+                      <p className="town-growth-sub" style={{ marginBottom: 0 }}>
+                        Reach Good Friend (55+) for +3% or Best Friend (75+) for +6% live ALCH mining synergy
+                        (up to +30%). Fulfill Daily Favors for bonus Sparks &amp; XP!
+                      </p>
+                    </div>
                     <div className="single-kicker">
-                      Town Relationships &amp; Live Neighbor Moods ({neighbors.length} residents)
+                      Town Relationships &amp; Daily Favors ({neighbors.length} residents)
                     </div>
                     <div className="world-sector-list">
                       {neighbors
@@ -5865,10 +6685,12 @@ export function LabWorldExperience({
                         .map((lab) => ({
                           lab,
                           npc: deriveNeighborCharacterProfile(lab),
-                          status: getNeighborSimsStatus(lab.tokenId, lab.seed, relationsMap)
+                          status: getNeighborSimsStatus(lab.tokenId, lab.seed, relationsMap),
+                          favor: getNeighborDailyFavor(lab.tokenId, lab.seed, nowTick),
+                          favorDone: isNeighborFavorFulfilled(dailyBounties, lab.tokenId, nowTick)
                         }))
                         .sort((a, b) => b.status.score - a.status.score)
-                        .map(({ lab, npc, status }) => (
+                        .map(({ lab, npc, status, favor, favorDone }) => (
                           <div key={lab.tokenId} className="neighbor-card">
                             <div className="neighbor-card-head">
                               <span
@@ -5895,6 +6717,15 @@ export function LabWorldExperience({
                                   {status.mood} · {status.traitLabel} · {status.activity}
                                 </div>
                               </div>
+                            </div>
+
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                              <span className={`favor-pill ${favorDone ? "is-done" : ""}`}>
+                                {favorDone ? <Check size={10} /> : <Gift size={10} />}
+                                {favorDone
+                                  ? "Daily Favor Fulfilled!"
+                                  : `Favor: ${favor.prompt} (+${favor.rewardSparks}⚡)`}
+                              </span>
                             </div>
 
                             <div className="rel-meter-row">
@@ -5932,6 +6763,16 @@ export function LabWorldExperience({
                               >
                                 <Sparkles size={11} /> Spark
                               </button>
+                              {(alchemyState.crafted["blossom-bouquet"] ?? 0) > 0 && (
+                                <button
+                                  type="button"
+                                  className="sector-btn clickable"
+                                  onClick={() => handleGiftBouquetToNeighbor(lab.tokenId)}
+                                  title="Gift a crafted Blossom Friendship Bouquet (+25 Friend & +8 Sparks)"
+                                >
+                                  <Flower2 size={11} /> Bouquet ({alchemyState.crafted["blossom-bouquet"]})
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 className="sector-btn clickable"
@@ -6113,7 +6954,7 @@ export function LabWorldExperience({
 
           <div className="world-drawer-scroll">
             <div className="world-drawer-stack">
-              <div className="builder-subtabs" role="tablist" aria-label="Town & Parks view">
+              <div className="builder-subtabs builder-subtabs-3" role="tablist" aria-label="Town, Gardens & Alchemy">
                 <button
                   type="button"
                   role="tab"
@@ -6136,13 +6977,199 @@ export function LabWorldExperience({
                     soundEngine.playTap(1046.5);
                   }}
                 >
-                  <Flower2 size={12} /> Parks &amp; Gardens
+                  <Flower2 size={12} /> Gardens
                   {readyGardenCount > 0 ? ` (${readyGardenCount}!)` : ""}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={townSubTab === "alchemy"}
+                  className={`builder-subtab clickable ${townSubTab === "alchemy" ? "active" : ""}`}
+                  onClick={() => {
+                    setTownSubTab("alchemy");
+                    soundEngine.playTap(1174.66);
+                  }}
+                >
+                  <Wand2 size={12} /> Alchemy
                 </button>
               </div>
 
-              {townSubTab === "gardens" ? (
+              {townSubTab === "alchemy" ? (
                 <div className="world-drawer-stack">
+                  <div className="town-growth-card">
+                    <div className="town-growth-head">
+                      <strong>Botanical Alchemy Brewing Bench</strong>
+                      <span>{alchemyState.totalBrewed} brewed</span>
+                    </div>
+                    <p className="town-growth-sub" style={{ marginBottom: 4 }}>
+                      Turn harvested courtyard &amp; park flowers into Focus Teas, Mining Tonics, Neighbor
+                      Bouquets, Pet Ambrosia &amp; Starlight Elixirs!
+                    </p>
+                    <div className="wing-tags">
+                      <span className={`wing-tag ${hasKitchenRoom ? "built" : ""}`}>
+                        {hasKitchenRoom ? "● " : "○ "}Warm Kitchenette (+1⚡ &amp; 35% 2× Batch)
+                      </span>
+                      <span className="wing-tag built">
+                        ● Focus {elixirFocusMult}× · Mining {elixirMiningMult}×
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Botanical Herb Pouch Inventory */}
+                  <div className="expand-section-card">
+                    <div className="furnish-header-row">
+                      <span className="single-kicker">
+                        Botanical Pouch ({countTotalBotanicals(alchemyState)} petals ·{" "}
+                        {alchemyState.goldenBloomsCollected} Golden ★)
+                      </span>
+                      <button
+                        type="button"
+                        className="subtle-pill-btn clickable"
+                        style={{ padding: "3px 8px", fontSize: "0.66rem" }}
+                        onClick={() => setTownSubTab("gardens")}
+                      >
+                        <Flower2 size={10} /> Harvest More
+                      </button>
+                    </div>
+                    <div className="alchemy-pouch-grid">
+                      {PLANT_SPECIES.map((sp) => {
+                        const qty = alchemyState.flowers[sp.id] ?? 0;
+                        return (
+                          <div
+                            key={sp.id}
+                            className={`alchemy-herb-pill ${qty === 0 ? "is-empty" : ""}`}
+                            title={sp.name}
+                          >
+                            <span className="cause-dot" style={{ background: sp.petalHex }} />
+                            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {sp.id.slice(0, 4)}
+                            </span>
+                            <strong>×{qty}</strong>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Active Timed Buffs */}
+                  {activeElixirBuffs.length > 0 && (
+                    <div className="expand-section-card">
+                      <div className="single-kicker">Active Elixir Resonance</div>
+                      <div className="wing-tags" style={{ marginTop: 6 }}>
+                        {activeElixirBuffs.map((b) => {
+                          const left = Math.max(0, Math.ceil((b.expiresAtMs - nowTick) / 1000));
+                          return (
+                            <span key={b.id} className="wing-tag built">
+                              ● {b.label} ({Math.floor(left / 60)}m {left % 60}s)
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 6 Craftable Botanical Alchemy Recipes */}
+                  <div className="world-sector-list">
+                    {ALCHEMY_RECIPES.map((rec) => {
+                      const craftable = canCraftRecipe(alchemyState, rec.id);
+                      const ownedQty = alchemyState.crafted[rec.id] ?? 0;
+                      return (
+                        <div
+                          key={rec.id}
+                          className={`alchemy-recipe-card ${craftable ? "is-craftable" : ""}`}
+                        >
+                          <div className="expand-room-top">
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div className="neighbor-card-title">
+                                <strong>{rec.name}</strong>
+                                {ownedQty > 0 && (
+                                  <span className="move-floor-badge">In bag: ×{ownedQty}</span>
+                                )}
+                              </div>
+                              <div className="tama-sub">{rec.effectLabel}</div>
+                            </div>
+                            <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                              <button
+                                type="button"
+                                disabled={!craftable}
+                                className="sector-btn clickable"
+                                style={{ padding: "4px 9px", fontSize: "0.68rem" }}
+                                onClick={() => handleBrewElixir(rec.id)}
+                              >
+                                <Wand2 size={10} /> Brew
+                              </button>
+                              {ownedQty > 0 && (
+                                <button
+                                  type="button"
+                                  className="subtle-pill-btn clickable"
+                                  style={{ padding: "4px 8px", fontSize: "0.68rem" }}
+                                  onClick={() => handleUseCraftedItem(rec.id)}
+                                >
+                                  {rec.category === "gift"
+                                    ? "Gift"
+                                    : rec.category === "pet"
+                                      ? "Feed"
+                                      : rec.category === "garden"
+                                        ? "Bloom All"
+                                        : "Drink"}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          <div className="alchemy-ing-row">
+                            {Object.entries(rec.ingredients).map(([spId, need]) => {
+                              const sp = PLANT_SPECIES_BY_ID[spId as PlantSpeciesId];
+                              const have = alchemyState.flowers[spId as PlantSpeciesId] ?? 0;
+                              const ok = have >= (need ?? 0);
+                              return (
+                                <span
+                                  key={spId}
+                                  className={`alchemy-ing-chip ${ok ? "has-enough" : ""}`}
+                                >
+                                  <span
+                                    className="cause-dot"
+                                    style={{ background: sp.petalHex, width: 6, height: 6 }}
+                                  />
+                                  {sp.name.split(" ").slice(-1)[0]} {have}/{need}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : townSubTab === "gardens" ? (
+                <div className="world-drawer-stack">
+                  {/* Live Weather & Golden Harvest Botanical Bonus Bar */}
+                  <div className="town-growth-card">
+                    <div className="town-growth-head">
+                      <strong>
+                        {activeWeather.label} · {activeWeather.gardenGrowthMult}× Growth
+                      </strong>
+                      <span>
+                        {gardenState.goldenHarvests ?? 0} Golden ★ · {gardenState.totalHarvests} Harvests
+                      </span>
+                    </div>
+                    <div className="wing-tags" style={{ marginTop: 6 }}>
+                      <span className={`wing-tag ${hasPergolaRoom ? "built" : ""}`}>
+                        {hasPergolaRoom ? "● " : "○ "}Wisteria Arbor (+18% Golden 2×)
+                      </span>
+                      {(alchemyState.crafted["crystal-fertilizer"] ?? 0) > 0 && (
+                        <button
+                          type="button"
+                          className="sector-btn clickable"
+                          style={{ padding: "2px 8px", fontSize: "0.66rem" }}
+                          onClick={() => handleUseCraftedItem("crystal-fertilizer")}
+                        >
+                          <Sparkles size={10} /> Crystal Bloom All (×
+                          {alchemyState.crafted["crystal-fertilizer"]})
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
                   {/* 4 Walkable Botanical Town Parks */}
                   <div className="expand-section-card">
                     <div className="single-kicker">
@@ -6229,7 +7256,11 @@ export function LabWorldExperience({
                     <div className="world-sector-list" style={{ marginTop: 6 }}>
                       {GARDEN_PLOT_DEFS.map((def) => {
                         const plot = gardenState.plots[def.id];
-                        const snap = computePlotGrowth(plot, nowTick);
+                        const snap = computePlotGrowth(
+                          plot,
+                          nowTick,
+                          activeWeather.gardenGrowthMult
+                        );
                         const pct = Math.round(snap.progress * 100);
                         return (
                           <div key={def.id} className="garden-plot-card">
@@ -6317,10 +7348,16 @@ export function LabWorldExperience({
                     <div className="almanac-grid" style={{ marginTop: 6 }}>
                       {PLANT_SPECIES.map((sp) => {
                         const cnt = gardenState.harvestedCounts[sp.id] ?? 0;
+                        const goldenCnt = gardenState.goldenSpecies?.[sp.id] ?? 0;
                         return (
                           <div key={sp.id} className={`almanac-badge ${cnt > 0 ? "collected" : ""}`}>
                             <span className="cause-dot" style={{ background: sp.petalHex }} />
                             <span>{sp.name}</span>
+                            {goldenCnt > 0 && (
+                              <span className="almanac-golden-star" title={`${goldenCnt} Golden harvests`}>
+                                ★{goldenCnt}
+                              </span>
+                            )}
                             <strong>×{cnt}</strong>
                           </div>
                         );
@@ -6389,6 +7426,31 @@ export function LabWorldExperience({
                       ? `● ${activeExpansionBands} Outer Road Ring${activeExpansionBands === 1 ? "" : "s"} & Canal Bridges`
                       : "○ Outer Road Ring (22+)"}
                   </span>
+                </div>
+              </div>
+
+              {/* Dynamic Alchemia Town Weather & Live World Perks */}
+              <div className="expand-section-card">
+                <div className="furnish-header-row">
+                  <span className="single-kicker">Town Weather &amp; Atmosphere Perks</span>
+                  <span className="tama-sub">{activeWeather.label}</span>
+                </div>
+                <div className="weather-grid">
+                  {TOWN_WEATHERS.map((w) => (
+                    <button
+                      key={w.id}
+                      type="button"
+                      className={`weather-chip clickable ${townWeatherId === w.id ? "active" : ""}`}
+                      onClick={() => handleSelectWeather(w.id)}
+                      title={w.desc}
+                    >
+                      <strong>
+                        <span className="cause-dot" style={{ background: w.accent }} />
+                        {w.label}
+                      </strong>
+                      <small>{w.perkLabel}</small>
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -6838,7 +7900,7 @@ export function LabWorldExperience({
                 </div>
               </div>
 
-              <div className="builder-subtabs" role="tablist" aria-label="Quests or Achievements">
+              <div className="builder-subtabs builder-subtabs-3" role="tablist" aria-label="Quests, Daily Bounties or Badges">
                 <button
                   type="button"
                   role="tab"
@@ -6850,6 +7912,19 @@ export function LabWorldExperience({
                   }}
                 >
                   <Star size={12} /> Quests{readyQuestCount > 0 ? ` (${readyQuestCount}!)` : ""}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={questsSubTab === "daily"}
+                  className={`builder-subtab clickable ${questsSubTab === "daily" ? "active" : ""}`}
+                  onClick={() => {
+                    setQuestsSubTab("daily");
+                    soundEngine.playTap(1174.66);
+                  }}
+                >
+                  <Sparkles size={12} /> Daily
+                  {readyDailyCount > 0 ? ` (${readyDailyCount}!)` : ` (${evaluatedDailyBounties.filter((b) => b.claimed).length}/3)`}
                 </button>
                 <button
                   type="button"
@@ -6869,7 +7944,72 @@ export function LabWorldExperience({
                 </button>
               </div>
 
-              {questsSubTab === "quests" ? (
+              {questsSubTab === "daily" ? (
+                <div className="world-sector-list">
+                  <div className="tama-sub" style={{ padding: "0 2px" }}>
+                    Rotating UTC Town Bounties ({dailyBounties.dateKey}) — fresh missions every day!
+                  </div>
+                  {evaluatedDailyBounties.map((b) => (
+                    <div
+                      key={b.def.id}
+                      className={`quest-card ${b.readyToClaim ? "is-ready" : ""} ${
+                        b.claimed ? "is-complete" : ""
+                      }`}
+                    >
+                      <div className="quest-card-top">
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="quest-chain-kicker" style={{ color: b.def.accent }}>
+                            Daily Town Bounty
+                          </div>
+                          <strong>{b.def.title}</strong>
+                          <div className="tama-sub">{b.def.desc}</div>
+                        </div>
+                        <div style={{ flexShrink: 0 }}>
+                          {b.claimed ? (
+                            <span className="built-pill">
+                              <Check size={11} /> Done
+                            </span>
+                          ) : b.readyToClaim ? (
+                            <button
+                              type="button"
+                              className="sector-btn clickable"
+                              style={{ padding: "5px 10px", fontSize: "0.7rem" }}
+                              onClick={() => handleClaimDailyBounty(b.def.id)}
+                            >
+                              <Sparkles size={11} /> +{b.def.rewardSparks}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="subtle-pill-btn clickable"
+                              style={{ padding: "4px 9px", fontSize: "0.68rem" }}
+                              onClick={() => handleJumpToQuestHint(b.def.actionHint)}
+                            >
+                              Go <ArrowRight size={10} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="quest-progress-row">
+                        <div className="garden-progress-track" style={{ flex: 1, marginTop: 0 }}>
+                          <div
+                            className="garden-progress-fill"
+                            style={{
+                              width: `${b.claimed ? 100 : Math.max(6, b.pct)}%`,
+                              background: b.def.accent
+                            }}
+                          />
+                        </div>
+                        <span className="quest-meta-nums">
+                          {b.claimed
+                            ? "Claimed Today"
+                            : `${b.progress}/${b.target} · +${b.def.rewardSparks}⚡ +${b.def.rewardXp}xp`}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : questsSubTab === "quests" ? (
                 <div className="world-sector-list">
                   {questChains.map((chain) => (
                     <div

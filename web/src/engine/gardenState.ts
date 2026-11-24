@@ -177,6 +177,8 @@ export interface GardenPlotState {
 export interface GardenWorldState {
   plots: Record<string, GardenPlotState>;
   harvestedCounts: Partial<Record<PlantSpeciesId, number>>;
+  goldenSpecies?: Partial<Record<PlantSpeciesId, number>>;
+  goldenHarvests?: number;
   totalHarvests: number;
   selectedSeed: PlantSpeciesId;
 }
@@ -251,6 +253,8 @@ export function createInitialGardenState(nowMs = Date.now()): GardenWorldState {
   return {
     plots,
     harvestedCounts: {},
+    goldenSpecies: {},
+    goldenHarvests: 0,
     totalHarvests: 0,
     selectedSeed: "lavender"
   };
@@ -287,9 +291,24 @@ export function sanitizeGardenState(raw: Partial<GardenWorldState> | null | unde
     }
   }
 
+  const goldenSpecies: Partial<Record<PlantSpeciesId, number>> = {};
+  if (raw.goldenSpecies && typeof raw.goldenSpecies === "object") {
+    for (const sp of PLANT_SPECIES) {
+      const cnt = raw.goldenSpecies[sp.id];
+      if (typeof cnt === "number" && Number.isFinite(cnt) && cnt > 0) {
+        goldenSpecies[sp.id] = Math.floor(cnt);
+      }
+    }
+  }
+
   return {
     plots,
     harvestedCounts,
+    goldenSpecies,
+    goldenHarvests:
+      typeof raw.goldenHarvests === "number" && Number.isFinite(raw.goldenHarvests)
+        ? Math.max(0, Math.floor(raw.goldenHarvests))
+        : 0,
     totalHarvests:
       typeof raw.totalHarvests === "number" && Number.isFinite(raw.totalHarvests)
         ? Math.max(0, Math.floor(raw.totalHarvests))
@@ -339,7 +358,8 @@ export function saveGardenState(tokenId: number, state: GardenWorldState): Garde
 
 export function computePlotGrowth(
   plot: GardenPlotState | undefined,
-  nowMs = Date.now()
+  nowMs = Date.now(),
+  growthMultiplier = 1
 ): PlotGrowthSnapshot {
   if (!plot || !plot.speciesId) {
     return {
@@ -351,13 +371,14 @@ export function computePlotGrowth(
       secondsLeft: 0
     };
   }
+  const safeMult = Math.max(0.5, Number.isFinite(growthMultiplier) ? growthMultiplier : 1);
   const species = PLANT_SPECIES_BY_ID[plot.speciesId];
-  const elapsedSec = Math.max(0, (nowMs - plot.plantedAtMs) / 1000) + plot.boostSeconds;
+  const elapsedSec = Math.max(0, (nowMs - plot.plantedAtMs) / 1000) * safeMult + plot.boostSeconds;
   const progress = Math.max(0, Math.min(1, elapsedSec / species.growSeconds));
   const stage: 1 | 2 | 3 = progress >= 1 ? 3 : progress >= 0.42 ? 2 : 1;
   const readyToHarvest = progress >= 1;
   const needsWater = !readyToHarvest && nowMs - plot.lastWateredAtMs > 12_000;
-  const secondsLeft = Math.max(0, Math.ceil(species.growSeconds - elapsedSec));
+  const secondsLeft = Math.max(0, Math.ceil((species.growSeconds - elapsedSec) / safeMult));
   return { species, progress, stage, readyToHarvest, needsWater, secondsLeft };
 }
 
@@ -435,28 +456,66 @@ export function fertilizeGardenPlot(
   };
 }
 
+export interface HarvestOptions {
+  hasPergola?: boolean;
+  weatherGoldenBonus?: number;
+  growthMultiplier?: number;
+  forceGolden?: boolean;
+}
+
 export function harvestGardenPlot(
   state: GardenWorldState,
   plotId: string,
-  nowMs = Date.now()
-): { nextState: GardenWorldState; harvested: PlantSpeciesDef | null; sparksEarned: number } {
+  nowMs = Date.now(),
+  options?: HarvestOptions
+): {
+  nextState: GardenWorldState;
+  harvested: PlantSpeciesDef | null;
+  sparksEarned: number;
+  isGolden: boolean;
+  yieldCount: number;
+} {
   const cur = state.plots[plotId];
-  const snap = computePlotGrowth(cur, nowMs);
+  const snap = computePlotGrowth(cur, nowMs, options?.growthMultiplier ?? 1);
   if (!cur || !cur.speciesId || !snap.readyToHarvest || !snap.species) {
-    return { nextState: state, harvested: null, sparksEarned: 0 };
+    return { nextState: state, harvested: null, sparksEarned: 0, isGolden: false, yieldCount: 0 };
   }
   const sp = snap.species;
   const prevCount = state.harvestedCounts[sp.id] ?? 0;
+
+  // Golden Bloom Roll: 12% base + 8% if tended/watered + 18% with Wisteria Pergola + weather bonus!
+  const goldenChance = Math.min(
+    0.75,
+    0.12 +
+      (cur.waterCount > 0 ? 0.08 : 0) +
+      (options?.hasPergola ? 0.18 : 0) +
+      (options?.weatherGoldenBonus ?? 0)
+  );
+  const isGolden =
+    typeof options?.forceGolden === "boolean" ? options.forceGolden : Math.random() < goldenChance;
+  const yieldCount = isGolden ? 2 : 1;
+  const sparksEarned = isGolden ? Math.ceil(sp.harvestSparks * 1.5) : sp.harvestSparks;
+
+  const prevGoldenSpecies = state.goldenSpecies ?? {};
   return {
     harvested: sp,
-    sparksEarned: sp.harvestSparks,
+    sparksEarned,
+    isGolden,
+    yieldCount,
     nextState: {
       ...state,
       totalHarvests: state.totalHarvests + 1,
+      goldenHarvests: (state.goldenHarvests ?? 0) + (isGolden ? 1 : 0),
       harvestedCounts: {
         ...state.harvestedCounts,
-        [sp.id]: prevCount + 1
+        [sp.id]: prevCount + yieldCount
       },
+      goldenSpecies: isGolden
+        ? {
+            ...prevGoldenSpecies,
+            [sp.id]: (prevGoldenSpecies[sp.id] ?? 0) + 1
+          }
+        : prevGoldenSpecies,
       plots: {
         ...state.plots,
         [plotId]: {
@@ -469,4 +528,41 @@ export function harvestGardenPlot(
       }
     }
   };
+}
+
+/**
+ * Instantly blooms ALL currently planted, growing beds across home & park
+ * (powered by the crafted Crystal Bloom Elixir!).
+ */
+export function bloomAllPlantedPlots(
+  state: GardenWorldState,
+  nowMs = Date.now()
+): { nextState: GardenWorldState; bloomedPlotIds: string[] } {
+  const bloomedPlotIds: string[] = [];
+  let cur = state;
+  for (const def of GARDEN_PLOT_DEFS) {
+    const plot = cur.plots[def.id];
+    if (!plot || !plot.speciesId) continue;
+    if (computePlotGrowth(plot, nowMs).readyToHarvest) continue;
+    cur = fertilizeGardenPlot(cur, def.id, nowMs);
+    bloomedPlotIds.push(def.id);
+  }
+  return { nextState: cur, bloomedPlotIds };
+}
+
+/**
+ * Waters one growing garden plot automatically (used by the Lv.3 Garden Helper Pet Trick!).
+ */
+export function waterRandomGrowingPlot(
+  state: GardenWorldState,
+  nowMs = Date.now()
+): { nextState: GardenWorldState; wateredPlotId: string | null } {
+  for (const def of GARDEN_PLOT_DEFS) {
+    const plot = state.plots[def.id];
+    if (!plot || !plot.speciesId) continue;
+    if (computePlotGrowth(plot, nowMs).readyToHarvest) continue;
+    const res = waterGardenPlot(state, def.id, nowMs);
+    if (res.boosted) return { nextState: res.nextState, wateredPlotId: def.id };
+  }
+  return { nextState: state, wateredPlotId: null };
 }
