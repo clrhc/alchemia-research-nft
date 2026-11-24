@@ -216,6 +216,42 @@ export class HomeArchitecture3D {
       this.estateGroup.add(hedge);
     }
 
+    // Proper Residential Neighborhood Lot Perimeter Fence & Stone Corner Pillars (Plot #1!)
+    const lotHalf = 4.92;
+    const fenceRailMat = new THREE.MeshStandardMaterial({ color: "#f8fafc", roughness: 0.42 });
+    const postGeo = new THREE.BoxGeometry(0.16, 0.52, 0.16);
+    const cornerCoords: Array<[number, number]> = [
+      [-lotHalf, -lotHalf],
+      [lotHalf, -lotHalf],
+      [-lotHalf, lotHalf],
+      [lotHalf, lotHalf],
+      [-1.45, lotHalf],
+      [1.45, lotHalf]
+    ];
+    for (const [px, pz] of cornerCoords) {
+      const pillar = new THREE.Mesh(postGeo, deckMat);
+      pillar.position.set(px, 0.26, pz);
+      pillar.castShadow = true;
+      this.estateGroup.add(pillar);
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.05, 0.2), trimMat);
+      cap.position.set(px, 0.54, pz);
+      this.estateGroup.add(cap);
+    }
+    // North, West, East low residential lot fencing + twin front wing fences flanking open gate
+    const northFence = new THREE.Mesh(new THREE.BoxGeometry(lotHalf * 2, 0.34, 0.06), fenceRailMat);
+    northFence.position.set(0, 0.22, -lotHalf);
+    const westFence = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.34, lotHalf * 2), fenceRailMat);
+    westFence.position.set(-lotHalf, 0.22, 0);
+    const eastFence = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.34, lotHalf * 2), fenceRailMat);
+    eastFence.position.set(lotHalf, 0.22, 0);
+    this.estateGroup.add(northFence, westFence, eastFence);
+    for (const side of [-1, 1]) {
+      const wingW = lotHalf - 1.45;
+      const frontWing = new THREE.Mesh(new THREE.BoxGeometry(wingW, 0.34, 0.06), fenceRailMat);
+      frontWing.position.set(side * (1.45 + wingW * 0.5), 0.22, lotHalf);
+      this.estateGroup.add(frontWing);
+    }
+
     if (size >= 2) {
       // Lv. 2 Courtyard Residence: Wraparound Frosted-Glass Veranda Balustrades & Back Architectural Privacy Screens!
       const railH = 0.46;

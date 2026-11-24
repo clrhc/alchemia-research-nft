@@ -86,6 +86,7 @@ import {
   COMMUNITY_FOUNTAIN_POS,
   TOWN_PARKS,
   TOWN_PARK_CENTER,
+  TOWN_STREETS,
   buildNeighborhoodRoster,
   computeNeighborhoodPlacements,
   computeUpcomingBlueprintLots,
@@ -814,12 +815,24 @@ describe("Living Minted NFT Neighborhood & Sims Interactivity", () => {
     expect(GARDEN_PLOT_DEFS.filter((d) => d.zone === "home")).toHaveLength(4);
     expect(GARDEN_PLOT_DEFS.filter((d) => d.zone === "park")).toHaveLength(6);
 
-    // Ensure all 4 Town Parks sit cleanly separated from Ring 1 & Ring 2 neighbor houses!
+    // Ensure all 4 Town Parks sit cleanly separated from Ring 1 & Ring 2 neighbor houses,
+    // and every Ring 1 & Ring 2 house sits in its own 90-degree street-aligned residential plot!
+    expect(TOWN_STREETS.ns).toHaveLength(4);
+    expect(TOWN_STREETS.ew).toHaveLength(4);
     const roster = buildNeighborhoodRoster(1, [], 28);
     const placements = computeNeighborhoodPlacements(roster).filter((p) => p.ring <= 2);
+    for (let i = 0; i < placements.length; i++) {
+      const pl = placements[i];
+      // Every residential lot faces squarely onto its street (0, ±PI/2, or PI)
+      const quarterTurns = Math.round(pl.rotY / (Math.PI / 2));
+      expect(Math.abs(pl.rotY - quarterTurns * (Math.PI / 2))).toBeLessThan(0.001);
+      for (let j = i + 1; j < placements.length; j++) {
+        expect(Math.hypot(pl.x - placements[j].x, pl.z - placements[j].z)).toBeGreaterThanOrEqual(5.4);
+      }
+    }
     for (const park of TOWN_PARKS) {
       for (const pl of placements) {
-        expect(Math.hypot(park.x - pl.x, park.z - pl.z)).toBeGreaterThan(4.0);
+        expect(Math.hypot(park.x - pl.x, park.z - pl.z)).toBeGreaterThan(5.0);
       }
     }
 

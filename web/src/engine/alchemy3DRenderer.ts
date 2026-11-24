@@ -1254,16 +1254,6 @@ export class Alchemy3DRenderer {
     if (this.activeFloor >= 2) {
       return getUpperFloorY(this.activeFloor);
     }
-
-    // Gentle parabolic arch elevation when walking across any of the 4 Grand Canal Bridges!
-    const onNSBridge = Math.abs(x) <= 1.35 && Math.abs(z) >= 12.2 && Math.abs(z) <= 15.5;
-    const onEWBridge = Math.abs(z) <= 1.35 && Math.abs(x) >= 12.2 && Math.abs(x) <= 15.5;
-    if (onNSBridge || onEWBridge) {
-      const spanCoord = onNSBridge ? Math.abs(z) : Math.abs(x);
-      const u = Math.max(0, Math.min(1, (spanCoord - 12.2) / (15.5 - 12.2)));
-      return 0.05 + Math.sin(u * Math.PI) * 0.44;
-    }
-
     return getGroundElevationForFloor(1, x, z, this.labDecor.houseSize);
   }
 
@@ -1287,13 +1277,6 @@ export class Alchemy3DRenderer {
     const limit = this.neighborhoodWorld ? NEIGHBORHOOD_WALK_LIMIT : 4.2;
     let nx = Math.max(-limit, Math.min(limit, x));
     let nz = Math.max(-limit, Math.min(limit, z));
-
-    // Keep smoothly within circular canal ring when exploring the boulevard
-    const distFromOrigin = Math.hypot(nx, nz);
-    if (this.neighborhoodWorld && distFromOrigin > limit) {
-      nx = (nx / distFromOrigin) * limit;
-      nz = (nz / distFromOrigin) * limit;
-    }
 
     // Keep smoothly outside the central borosilicate glass reactor pedestal
     const centerR = Math.hypot(nx, nz);
@@ -1412,9 +1395,9 @@ export class Alchemy3DRenderer {
     this.moveGhostRing = ghostGrp;
     this.walkCampusGroup.add(ghostGrp);
 
-    // Invisible smooth floor plane covering the entire walkable neighborhood & canal-side suburbs!
+    // Invisible smooth floor plane covering the entire walkable orthogonal neighborhood grid!
     const floorHit = new THREE.Mesh(
-      new THREE.PlaneGeometry(58, 58),
+      new THREE.PlaneGeometry(68, 68),
       new THREE.MeshBasicMaterial({ visible: false })
     );
     floorHit.rotation.x = -Math.PI / 2;

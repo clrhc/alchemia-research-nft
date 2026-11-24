@@ -11,6 +11,7 @@ import { ResearcherAvatar3D } from "./character3D";
 import {
   COMMUNITY_FOUNTAIN_POS,
   TOWN_PARK_CENTER,
+  TOWN_STREETS,
   computeNeighborhoodPlacements,
   computeUpcomingBlueprintLots,
   deriveNeighborCharacterProfile,
@@ -282,24 +283,16 @@ export class NeighborhoodWorld3D {
   }
 
   private buildTownRoadsAndCanal() {
-    const roadTex = createPavedRoadTexture();
-    roadTex.repeat.set(8, 8);
-    const aveRoadTex = createPavedRoadTexture();
-    aveRoadTex.repeat.set(1.2, 26);
+    const nsRoadTex = createPavedRoadTexture();
+    nsRoadTex.repeat.set(1.2, 28);
     const ewRoadTex = createPavedRoadTexture();
-    ewRoadTex.repeat.set(26, 1.2);
+    ewRoadTex.repeat.set(28, 1.2);
     const gardenPathTex = createGardenPathTexture();
     gardenPathTex.repeat.set(6, 6);
-    this.ownedTextures.push(roadTex, aveRoadTex, ewRoadTex, gardenPathTex);
+    this.ownedTextures.push(nsRoadTex, ewRoadTex, gardenPathTex);
 
-    const pavedRingMat = new THREE.MeshStandardMaterial({
-      map: roadTex,
-      color: "#cbd5e1",
-      roughness: 0.72,
-      metalness: 0.08
-    });
     const nsPavedMat = new THREE.MeshStandardMaterial({
-      map: aveRoadTex,
+      map: nsRoadTex,
       color: "#cbd5e1",
       roughness: 0.72,
       metalness: 0.08
@@ -310,19 +303,25 @@ export class NeighborhoodWorld3D {
       roughness: 0.72,
       metalness: 0.08
     });
+    const intersectionMat = new THREE.MeshStandardMaterial({
+      color: "#7b8799",
+      roughness: 0.74,
+      metalness: 0.08
+    });
     const sidewalkMat = new THREE.MeshStandardMaterial({
       map: this.terrazzoTex,
       color: "#f4f7fb",
       roughness: 0.48
     });
-    const curbMat = new THREE.MeshStandardMaterial({
-      color: "#dce3ed",
-      roughness: 0.44
-    });
     const laneLineMat = new THREE.MeshBasicMaterial({
       color: "#f8fafc",
       transparent: true,
       opacity: 0.78
+    });
+    const stripeMat = new THREE.MeshBasicMaterial({
+      color: "#ffffff",
+      transparent: true,
+      opacity: 0.92
     });
     const metalMat = new THREE.MeshStandardMaterial({
       map: this.titaniumTex,
@@ -330,17 +329,15 @@ export class NeighborhoodWorld3D {
       roughness: 0.22,
       metalness: 0.88
     });
-    const bridgeGlassMat = new THREE.MeshPhysicalMaterial({
-      color: "#ffffff",
-      transmission: 0.82,
-      roughness: 0.08,
-      transparent: true,
-      opacity: 0.72
+    const signBoardMat = new THREE.MeshStandardMaterial({
+      color: "#475569",
+      roughness: 0.36,
+      metalness: 0.35
     });
 
     // Wide Sunlit Botanical Meadow Valley Parkland Terrain
     const ground = new THREE.Mesh(
-      new THREE.CircleGeometry(72, 72),
+      new THREE.CircleGeometry(86, 72),
       new THREE.MeshStandardMaterial({
         map: this.groundTex,
         roughness: 0.9,
@@ -352,7 +349,7 @@ export class NeighborhoodWorld3D {
     ground.receiveShadow = true;
     this.group.add(ground);
 
-    // GLSL Shimmering Reflecting Canal Ring (r = 12.8 .. 14.9)
+    // Outer Scenic Reflecting Canal Perimeter framing the entire planned neighborhood (r = 30.2 .. 32.0)
     this.canalMat = new THREE.ShaderMaterial({
       vertexShader: CANAL_VERT,
       fragmentShader: CANAL_FRAG,
@@ -363,227 +360,139 @@ export class NeighborhoodWorld3D {
         uWaterCrest: { value: new THREE.Color("#e0f2fe") }
       }
     });
-    const canal = new THREE.Mesh(new THREE.RingGeometry(12.8, 14.9, 108, 4), this.canalMat);
+    const canal = new THREE.Mesh(new THREE.RingGeometry(30.2, 32.0, 96, 4), this.canalMat);
     canal.rotation.x = -Math.PI / 2;
-    canal.position.y = -0.006;
+    canal.position.y = -0.008;
     this.group.add(canal);
 
-    // Canal stone embankments & waterside walking promenades
-    const innerEdge = new THREE.Mesh(new THREE.RingGeometry(12.22, 12.82, 96), sidewalkMat);
-    innerEdge.rotation.x = -Math.PI / 2;
-    innerEdge.position.y = 0.012;
-    const outerEdge = new THREE.Mesh(new THREE.RingGeometry(14.88, 15.48, 96), sidewalkMat);
-    outerEdge.rotation.x = -Math.PI / 2;
-    outerEdge.position.y = 0.012;
-    this.group.add(innerEdge, outerEdge);
+    // ---- PROPER ORTHOGONAL NEIGHBORHOOD PAVED STREET GRID (4 N-S × 4 E-W Streets!) ----
+    const streetLen = 60;
+    const roadW = TOWN_STREETS.roadWidth; // 2.2m
+    const walkW = TOWN_STREETS.sidewalkTotalWidth; // 3.3m (0.55m sidewalks each side)
 
-    // Ring Road 1: Paved Cobblestone Inner Plaza Boulevard (r = 5.05 .. 6.35) + Honed Sidewalks!
-    const innerSidewalk = new THREE.Mesh(new THREE.RingGeometry(4.82, 6.62, 80), sidewalkMat);
-    innerSidewalk.rotation.x = -Math.PI / 2;
-    innerSidewalk.position.y = 0.003;
-    innerSidewalk.receiveShadow = true;
-    const innerRingRoad = new THREE.Mesh(new THREE.RingGeometry(5.12, 6.28, 80), pavedRingMat);
-    innerRingRoad.rotation.x = -Math.PI / 2;
-    innerRingRoad.position.y = 0.01;
-    innerRingRoad.receiveShadow = true;
-    this.group.add(innerSidewalk, innerRingRoad);
+    for (const sx of TOWN_STREETS.ns) {
+      const sw = new THREE.Mesh(new THREE.BoxGeometry(walkW, 0.016, streetLen), sidewalkMat);
+      sw.position.set(sx, 0.004, 0);
+      sw.receiveShadow = true;
+      const road = new THREE.Mesh(new THREE.BoxGeometry(roadW, 0.022, streetLen), nsPavedMat);
+      road.position.set(sx, 0.012, 0);
+      road.receiveShadow = true;
+      this.group.add(sw, road);
 
-    // Paved circular plaza apron surrounding the Community Research Fountain
-    const fountainPlaza = new THREE.Mesh(new THREE.CircleGeometry(2.35, 36), sidewalkMat);
-    fountainPlaza.rotation.x = -Math.PI / 2;
-    fountainPlaza.position.set(COMMUNITY_FOUNTAIN_POS[0], 0.014, COMMUNITY_FOUNTAIN_POS[1]);
-    fountainPlaza.receiveShadow = true;
-    this.group.add(fountainPlaza);
-
-    // Ring Road 2: Paved Outer Canal-Side Suburb Boulevard (r = 16.9 .. 18.8) + Twin Sidewalks!
-    const suburbSidewalk = new THREE.Mesh(new THREE.RingGeometry(16.55, 19.15, 96), sidewalkMat);
-    suburbSidewalk.rotation.x = -Math.PI / 2;
-    suburbSidewalk.position.y = 0.003;
-    suburbSidewalk.receiveShadow = true;
-    const suburbBoulevard = new THREE.Mesh(new THREE.RingGeometry(16.95, 18.75, 96), pavedRingMat);
-    suburbBoulevard.rotation.x = -Math.PI / 2;
-    suburbBoulevard.position.y = 0.01;
-    suburbBoulevard.receiveShadow = true;
-    this.group.add(suburbSidewalk, suburbBoulevard);
-
-    // Subtle glowing blue lane guide around the Suburb Boulevard for the Hover-Shuttle
-    const shuttleTrack = new THREE.Mesh(
-      new THREE.RingGeometry(17.8, 17.9, 96),
-      new THREE.MeshBasicMaterial({ color: "#93c5fd", transparent: true, opacity: 0.5 })
-    );
-    shuttleTrack.rotation.x = -Math.PI / 2;
-    shuttleTrack.position.y = 0.016;
-    this.group.add(shuttleTrack);
-
-    // Ring Road 3: Paved Outer Skyline City Parkway (r = 26.1 .. 27.6)
-    const cityParkwayCurb = new THREE.Mesh(new THREE.RingGeometry(25.85, 27.85, 96), curbMat);
-    cityParkwayCurb.rotation.x = -Math.PI / 2;
-    cityParkwayCurb.position.y = 0.002;
-    const cityParkway = new THREE.Mesh(new THREE.RingGeometry(26.15, 27.55, 96), pavedRingMat);
-    cityParkway.rotation.x = -Math.PI / 2;
-    cityParkway.position.y = 0.008;
-    this.group.add(cityParkwayCurb, cityParkway);
-
-    // 4 Grand Paved Cardinal Avenues (N, S, E, W) with Raised Alabaster Sidewalks & Dashed Centerlines!
-    const nsSidewalk = new THREE.Mesh(new THREE.BoxGeometry(2.55, 0.016, 54), sidewalkMat);
-    nsSidewalk.position.set(0, 0.004, 0);
-    nsSidewalk.receiveShadow = true;
-    const nsAvenue = new THREE.Mesh(new THREE.BoxGeometry(1.78, 0.022, 54), nsPavedMat);
-    nsAvenue.position.set(0, 0.012, 0);
-    nsAvenue.receiveShadow = true;
-
-    const ewSidewalk = new THREE.Mesh(new THREE.BoxGeometry(54, 0.016, 2.55), sidewalkMat);
-    ewSidewalk.position.set(0, 0.004, 0);
-    ewSidewalk.receiveShadow = true;
-    const ewAvenue = new THREE.Mesh(new THREE.BoxGeometry(54, 0.022, 1.78), ewPavedMat);
-    ewAvenue.position.set(0, 0.012, 0);
-    ewAvenue.receiveShadow = true;
-    this.group.add(nsSidewalk, nsAvenue, ewSidewalk, ewAvenue);
-
-    // Crisp dashed silver-white lane markings along the 4 Cardinal Boulevards
-    const dashGeoNS = new THREE.PlaneGeometry(0.08, 0.72);
-    const dashGeoEW = new THREE.PlaneGeometry(0.72, 0.08);
-    for (const d of [-23, -20.5, -10.2, -8.2, 8.2, 10.2, 20.5, 23]) {
-      const nsd = new THREE.Mesh(dashGeoNS, laneLineMat);
-      nsd.rotation.x = -Math.PI / 2;
-      nsd.position.set(0, 0.026, d);
-      const ewd = new THREE.Mesh(dashGeoEW, laneLineMat);
-      ewd.rotation.x = -Math.PI / 2;
-      ewd.position.set(d, 0.026, 0);
-      this.group.add(nsd, ewd);
+      // Dashed white center lane dashes between intersections
+      for (let z = -27; z <= 27; z += 2.6) {
+        if (TOWN_STREETS.ew.some((ez) => Math.abs(z - ez) < 2.2)) continue;
+        const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.08, 0.9), laneLineMat);
+        dash.rotation.x = -Math.PI / 2;
+        dash.position.set(sx, 0.026, z);
+        this.group.add(dash);
+      }
     }
 
-    // Crisp minimalist pedestrian crosswalk stripes at Inner Plaza, Canal Bridges & Suburb Intersections!
-    const stripeMat = new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.9 });
-    for (const dist of [6.65, 16.55, 19.15]) {
-      for (const sign of [-1, 1]) {
-        for (const sx of [-0.62, -0.22, 0.22, 0.62]) {
-          const nsStripe = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.46), stripeMat);
-          nsStripe.rotation.x = -Math.PI / 2;
-          nsStripe.position.set(sx, 0.026, sign * dist);
-          const ewStripe = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.16), stripeMat);
-          ewStripe.rotation.x = -Math.PI / 2;
-          ewStripe.position.set(sign * dist, 0.026, sx);
-          this.group.add(nsStripe, ewStripe);
+    for (const sz of TOWN_STREETS.ew) {
+      const sw = new THREE.Mesh(new THREE.BoxGeometry(streetLen, 0.016, walkW), sidewalkMat);
+      sw.position.set(0, 0.004, sz);
+      sw.receiveShadow = true;
+      const road = new THREE.Mesh(new THREE.BoxGeometry(streetLen, 0.022, roadW), ewPavedMat);
+      road.position.set(0, 0.012, sz);
+      road.receiveShadow = true;
+      this.group.add(sw, road);
+
+      for (let x = -27; x <= 27; x += 2.6) {
+        if (TOWN_STREETS.ns.some((ex) => Math.abs(x - ex) < 2.2)) continue;
+        const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.08), laneLineMat);
+        dash.rotation.x = -Math.PI / 2;
+        dash.position.set(x, 0.026, sz);
+        this.group.add(dash);
+      }
+    }
+
+    // Crisp 4-Way Paved Intersections, Zebra Pedestrian Crosswalks & Corner Street Signs!
+    const boxGeo = new THREE.BoxGeometry(roadW + 0.04, 0.024, roadW + 0.04);
+    const nsStripeGeo = new THREE.PlaneGeometry(0.18, 0.48);
+    const ewStripeGeo = new THREE.PlaneGeometry(0.48, 0.18);
+
+    for (const sx of TOWN_STREETS.ns) {
+      for (const sz of TOWN_STREETS.ew) {
+        const box = new THREE.Mesh(boxGeo, intersectionMat);
+        box.position.set(sx, 0.014, sz);
+        box.receiveShadow = true;
+        this.group.add(box);
+
+        // 4-way zebra crosswalk stripes around every intersection!
+        for (const side of [-1, 1]) {
+          for (const off of [-0.66, -0.22, 0.22, 0.66]) {
+            const s1 = new THREE.Mesh(nsStripeGeo, stripeMat);
+            s1.rotation.x = -Math.PI / 2;
+            s1.position.set(sx + off, 0.028, sz + side * 1.48);
+            const s2 = new THREE.Mesh(ewStripeGeo, stripeMat);
+            s2.rotation.x = -Math.PI / 2;
+            s2.position.set(sx + side * 1.48, 0.028, sz + off);
+            this.group.add(s1, s2);
+          }
+        }
+
+        // Cute brushed-silver neighborhood street-name corner post at the 4 inner square corners!
+        if (Math.abs(sx) < 10 && Math.abs(sz) < 10) {
+          const post = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.038, 1.85, 8), metalMat);
+          post.position.set(sx + (sx > 0 ? -1.48 : 1.48), 0.92, sz + (sz > 0 ? -1.48 : 1.48));
+          const bladeA = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.12, 0.03), signBoardMat);
+          bladeA.position.set(post.position.x, 1.76, post.position.z);
+          const bladeB = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.12, 0.56), signBoardMat);
+          bladeB.position.set(post.position.x, 1.62, post.position.z);
+          this.group.add(post, bladeA, bladeB);
         }
       }
     }
 
-    const bridgeDirs: Array<{ x: number; z: number; rotY: number }> = [
-      { x: 0, z: 13.85, rotY: 0 },
-      { x: 0, z: -13.85, rotY: Math.PI },
-      { x: 13.85, z: 0, rotY: Math.PI / 2 },
-      { x: -13.85, z: 0, rotY: -Math.PI / 2 }
-    ];
-
-    // 4 Grand Arched Alabaster & Glass Canal Bridges!
-    for (const bd of bridgeDirs) {
-      const bGroup = new THREE.Group();
-      bGroup.position.set(bd.x, 0, bd.z);
-      bGroup.rotation.y = bd.rotY;
-
-      // Segmented arched walkway deck spanning z = -1.45 .. +1.45 in local coords
-      const segs = 9;
-      for (let s = 0; s < segs; s++) {
-        const u = (s + 0.5) / segs;
-        const localZ = (u - 0.5) * 3.1;
-        const archY = Math.sin(u * Math.PI) * 0.42;
-        const slope = Math.cos(u * Math.PI) * 0.36;
-        const plank = new THREE.Mesh(new THREE.BoxGeometry(2.15, 0.1, 0.42), sidewalkMat);
-        plank.position.set(0, archY + 0.05, localZ);
-        plank.rotation.x = -slope;
-        plank.receiveShadow = true;
-        bGroup.add(plank);
-      }
-
-      // Sleek curved titanium & frosted-glass balustrades on both bridge sides
-      for (const side of [-1.04, 1.04]) {
-        const railCurve = new THREE.CatmullRomCurve3([
-          new THREE.Vector3(side, 0.52, -1.5),
-          new THREE.Vector3(side, 0.94, 0),
-          new THREE.Vector3(side, 0.52, 1.5)
-        ]);
-        const rail = new THREE.Mesh(new THREE.TubeGeometry(railCurve, 16, 0.03, 8, false), metalMat);
-        bGroup.add(rail);
-
-        const glassPanel = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.42, 2.7), bridgeGlassMat);
-        glassPanel.position.set(side, 0.56, 0);
-        bGroup.add(glassPanel);
-
-        // Glowing corner bridge lanterns
-        for (const endZ of [-1.52, 1.52]) {
-          const post = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.72, 8), metalMat);
-          post.position.set(side, 0.36, endZ);
-          bGroup.add(post);
-          const cap = new THREE.Mesh(
-            new THREE.SphereGeometry(0.075, 10, 10),
-            new THREE.MeshStandardMaterial({
-              color: "#fffbeb",
-              emissive: "#fbbf24",
-              emissiveIntensity: 0.6
-            })
-          );
-          cap.position.set(side, 0.76, endZ);
-          bGroup.add(cap);
-        }
-      }
-
-      // Crosswalk bars just before & after each bridge
-      for (const cwZ of [-2.1, 2.1]) {
-        for (const sx of [-0.62, -0.22, 0.22, 0.62]) {
-          const stripe = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 0.52), stripeMat);
-          stripe.rotation.x = -Math.PI / 2;
-          stripe.position.set(sx, 0.028, cwZ);
-          bGroup.add(stripe);
-        }
-      }
-
-      this.group.add(bGroup);
-    }
+    // Welcoming Paved Town Square Plaza connecting your Home Front Gate (z = 4.9) to Community Fountain & Main St (z = 8.4)!
+    const townSquare = new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.02, 4.4), sidewalkMat);
+    townSquare.position.set(0, 0.012, 5.65);
+    townSquare.receiveShadow = true;
+    this.group.add(townSquare);
   }
 
   private buildInstancedTownParks() {
-    // 145+ stylized multi-species botanical trees (Sage Oaks, Sakura Blossoms & Slender Cypresses!)
-    // lining every boulevard, canal promenade, avenue sidewalk & town greenbelt!
-    // Kind: 0 = Lush Sage Tree, 1 = Blooming Sakura Tree, 2 = Slender Botanical Cypress
+    // 140+ multi-species boulevard trees (Sage Oaks, Pink Sakura & Slender Cypresses!)
+    // lined cleanly along the straight sidewalk tree-lawns & block greenbelts!
     const treePositions: Array<[number, number, number, 0 | 1 | 2]> = [];
 
-    // 1. Tree-lined Cardinal Avenues (N, S, E, W boulevard sidewalk trees!)
-    for (const dist of [7.6, 10.6, 20.6, 23.8]) {
-      for (const side of [-1.85, 1.85]) {
-        treePositions.push([side, dist, 0.88, dist === 7.6 ? 1 : 2]);
-        treePositions.push([side, -dist, 0.88, dist === 10.6 ? 1 : 2]);
-        treePositions.push([dist, side, 0.88, dist === 7.6 ? 1 : 0]);
-        treePositions.push([-dist, side, 0.88, dist === 10.6 ? 1 : 0]);
-      }
+    // 1. Boulevard shade trees lining Willow Ln (-6.8), Maple Ln (+6.8), West Park (-21.2) & East Park (+21.2)
+    const nsTreeZs = [-25.5, -17.4, -14.2, -10.4, -3.2, 1.2, 4.8, 12.2, 15.8, 18.6, 25.5];
+    for (const sx of TOWN_STREETS.ns) {
+      const innerOffset = sx < 0 ? 2.1 : -2.1;
+      nsTreeZs.forEach((z, idx) => {
+        // Keep your center Home Lot edges tidy & avoid driveways
+        if (Math.abs(sx) < 10 && z > -5.5 && z < 7.5) return;
+        treePositions.push([sx + innerOffset, z, 0.88 + (idx % 3) * 0.16, (idx % 3) as 0 | 1 | 2]);
+      });
     }
 
-    // 2. Canal inner embankment grove (skipping cardinal bridges & pocket parks at diagonals)
-    for (let i = 0; i < 28; i++) {
-      const a = (i / 28) * Math.PI * 2 + 0.11;
-      const x = Math.cos(a) * 11.75;
-      const z = Math.sin(a) * 11.75;
-      if (Math.abs(x) < 2.2 || Math.abs(z) < 2.2) continue;
-      if (Math.abs(Math.abs(x) - Math.abs(z)) < 1.65) continue; // keep diagonal pocket parks airy
-      treePositions.push([x, z, 0.88 + (i % 3) * 0.18, (i % 3) as 0 | 1 | 2]);
+    // 2. Boulevard shade trees lining Oakwood St (-6.8), Main St (+8.4), North Orchard (-21.2) & South Blossom (+21.6)
+    const ewTreeXs = [-25.5, -17.6, -13.6, -9.8, -5.8, 0.0, 5.8, 9.8, 13.6, 17.6, 25.5];
+    for (const sz of TOWN_STREETS.ew) {
+      const sideOffset = sz < 0 ? 2.1 : -2.1;
+      ewTreeXs.forEach((x, idx) => {
+        if (Math.abs(x) < 5.2 && sz > -9 && sz < 10) return; // keep Home Lot & Fountain Square airy
+        if (TOWN_STREETS.ns.some((nsx) => Math.abs(x - nsx) < 2.4)) return;
+        treePositions.push([x, sz + sideOffset, 0.9 + (idx % 3) * 0.16, ((idx + 1) % 3) as 0 | 1 | 2]);
+      });
     }
 
-    // 3. Canal outer embankment park belt (between canal r=15.5 and Suburb Boulevard r=16.55)
-    for (let i = 0; i < 32; i++) {
-      const a = (i / 32) * Math.PI * 2 + 0.08;
-      const x = Math.cos(a) * 16.0;
-      const z = Math.sin(a) * 16.0;
-      if (Math.abs(x) < 2.4 || Math.abs(z) < 2.4) continue;
-      treePositions.push([x, z, 0.96 + (i % 3) * 0.2, i % 3 === 0 ? 1 : i % 4 === 0 ? 2 : 0]);
+    // 3. Scenic North & South Neighborhood Greenbelt Park Trees (behind Oakwood & Main St inner blocks!)
+    for (const x of [-4.6, -1.6, 1.6, 4.6]) {
+      treePositions.push([x, -16.8, 1.05, Math.abs(x) > 3 ? 1 : 0]);
+      treePositions.push([x, 17.8, 1.05, Math.abs(x) > 3 ? 1 : 2]);
     }
 
-    // 4. Outer suburb greenbelt lining the City Parkway (r = 25.1)
-    for (let i = 0; i < 40; i++) {
-      const a = (i / 40) * Math.PI * 2 + 0.07;
-      const x = Math.cos(a) * 25.1;
-      const z = Math.sin(a) * 25.1;
-      if (Math.abs(x) < 2.5 || Math.abs(z) < 2.5) continue;
-      treePositions.push([x, z, 1.08 + (i % 3) * 0.24, i % 4 === 0 ? 1 : i % 3 === 0 ? 2 : 0]);
+    // 4. Outer Canal Perimeter Greenbelt Grove framing the neighborhood edge
+    for (let i = 0; i < 36; i++) {
+      const a = (i / 36) * Math.PI * 2 + 0.08;
+      const x = Math.cos(a) * 29.1;
+      const z = Math.sin(a) * 29.1;
+      if (TOWN_STREETS.ns.some((sx) => Math.abs(x - sx) < 2.4)) continue;
+      if (TOWN_STREETS.ew.some((sz) => Math.abs(z - sz) < 2.4)) continue;
+      treePositions.push([x, z, 1.06 + (i % 3) * 0.2, (i % 3) as 0 | 1 | 2]);
     }
 
     const count = treePositions.length;
@@ -660,22 +569,25 @@ export class NeighborhoodWorld3D {
     cypressCanopies.frustumCulled = false;
     this.group.add(trunks, sageCanopies, blossomCanopies, cypressCanopies);
 
-    // Instanced Blooming Boulevard Shrubs & Flower Clusters lining Inner Ring & Canal Walkways!
-    const shrubCoords: Array<[number, number, boolean]> = [];
-    for (let i = 0; i < 20; i++) {
-      const a = (i / 20) * Math.PI * 2 + 0.16;
-      const x = Math.cos(a) * 6.95;
-      const z = Math.sin(a) * 6.95;
-      if (Math.abs(x) < 1.85 || Math.abs(z) < 1.85) continue;
-      shrubCoords.push([x, z, i % 2 === 0]);
-    }
-    for (let i = 0; i < 24; i++) {
-      const a = (i / 24) * Math.PI * 2 + 0.14;
-      const x = Math.cos(a) * 19.55;
-      const z = Math.sin(a) * 19.55;
-      if (Math.abs(x) < 2.2 || Math.abs(z) < 2.2) continue;
-      shrubCoords.push([x, z, i % 3 === 0]);
-    }
+    // Instanced Blooming Sidewalk Flower Shrubs along Main St, Oakwood St & Block Corners!
+    const shrubCoords: Array<[number, number, boolean]> = [
+      [-4.8, 6.2, true],
+      [4.8, 6.2, false],
+      [-5.1, -4.9, true],
+      [5.1, -4.9, false],
+      [-8.7, -5.0, true],
+      [8.7, -5.0, false],
+      [-8.7, 6.5, false],
+      [8.7, 6.5, true],
+      [-5.0, 10.2, true],
+      [5.0, 10.2, false],
+      [-5.0, -8.6, false],
+      [5.0, -8.6, true],
+      [-10.2, 10.2, true],
+      [10.2, 10.2, false],
+      [-10.2, -10.2, false],
+      [10.2, -10.2, true]
+    ];
 
     const shrubGeo = new THREE.IcosahedronGeometry(0.28, 0);
     const shrubMat = new THREE.MeshStandardMaterial({ color: "#4ade80", roughness: 0.72, flatShading: true });
@@ -683,9 +595,9 @@ export class NeighborhoodWorld3D {
     const pinkBloomMat = new THREE.MeshStandardMaterial({ color: "#f472b6", emissive: "#ec4899", emissiveIntensity: 0.18 });
     const violetBloomMat = new THREE.MeshStandardMaterial({ color: "#a78bfa", emissive: "#8b5cf6", emissiveIntensity: 0.18 });
 
-    const shrubsMesh = new THREE.InstancedMesh(shrubGeo, shrubMat, Math.max(1, shrubCoords.length));
-    const pinkMesh = new THREE.InstancedMesh(bloomTopGeo, pinkBloomMat, Math.max(1, shrubCoords.length));
-    const violetMesh = new THREE.InstancedMesh(bloomTopGeo, violetBloomMat, Math.max(1, shrubCoords.length));
+    const shrubsMesh = new THREE.InstancedMesh(shrubGeo, shrubMat, shrubCoords.length);
+    const pinkMesh = new THREE.InstancedMesh(bloomTopGeo, pinkBloomMat, shrubCoords.length);
+    const violetMesh = new THREE.InstancedMesh(bloomTopGeo, violetBloomMat, shrubCoords.length);
 
     let pIdx = 0;
     let vIdx = 0;
@@ -725,14 +637,20 @@ export class NeighborhoodWorld3D {
     const glowTex = createRadialGlowTexture("#fde68a");
     this.ownedTextures.push(glowTex);
 
+    // Place streetlamps cleanly on the sidewalk corners of all 16 grid intersections + block midpoints!
     const lampCoords: Array<[number, number]> = [];
-    for (const a of [0.35, 1.05, 1.95, 2.7, 3.6, 4.35, 5.15, 5.9]) {
-      lampCoords.push([Math.cos(a) * 5.0, Math.sin(a) * 5.0]);
+    for (const sx of TOWN_STREETS.ns) {
+      for (const sz of TOWN_STREETS.ew) {
+        lampCoords.push([sx + (sx > 0 ? 1.52 : -1.52), sz + (sz > 0 ? 1.52 : -1.52)]);
+      }
     }
-    for (let i = 0; i < 12; i++) {
-      const a = (i / 12) * Math.PI * 2 + 0.26;
-      lampCoords.push([Math.cos(a) * 16.85, Math.sin(a) * 16.85]);
-    }
+    lampCoords.push(
+      [-5.25, 0.8],
+      [5.25, 0.8],
+      [0, -5.25],
+      [-5.25, 6.8],
+      [5.25, 6.8]
+    );
 
     for (const [lx, lz] of lampCoords) {
       const g = new THREE.Group();
@@ -1047,26 +965,44 @@ export class NeighborhoodWorld3D {
       g.position.set(lot.x, 0.03, lot.z);
       g.rotation.y = lot.rotY;
 
-      const padGeo = new THREE.PlaneGeometry(3.4, 3.4);
-      const pad = new THREE.Mesh(padGeo, padMat);
+      // Full-size 5.3m × 5.1m Surveyed Residential Neighborhood Lot waiting for next NFT mint!
+      const lotW = 5.3;
+      const lotD = 5.1;
+      const lawnPad = new THREE.Mesh(
+        new THREE.PlaneGeometry(lotW, lotD),
+        new THREE.MeshStandardMaterial({ color: "#bbf7d0", roughness: 0.88 })
+      );
+      lawnPad.rotation.x = -Math.PI / 2;
+      g.add(lawnPad);
+
+      const pad = new THREE.Mesh(new THREE.PlaneGeometry(3.8, 3.6), padMat);
       pad.rotation.x = -Math.PI / 2;
+      pad.position.y = 0.012;
       g.add(pad);
 
       const frame = new THREE.LineSegments(
-        new THREE.EdgesGeometry(new THREE.BoxGeometry(3.4, 0.08, 3.4)),
+        new THREE.EdgesGeometry(new THREE.BoxGeometry(lotW, 0.14, lotD)),
         edgeMat
       );
-      frame.position.y = 0.04;
+      frame.position.y = 0.07;
       g.add(frame);
 
-      // 4 Glowing Corner Survey Stakes
-      for (const sx of [-1.62, 1.62]) {
-        for (const sz of [-1.62, 1.62]) {
-          const stake = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.48, 8), pylonMat);
-          stake.position.set(sx, 0.24, sz);
+      // 4 Glowing Corner Property Survey Stakes
+      for (const sx of [-lotW / 2 + 0.08, lotW / 2 - 0.08]) {
+        for (const sz of [-lotD / 2 + 0.08, lotD / 2 - 0.08]) {
+          const stake = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.54, 8), pylonMat);
+          stake.position.set(sx, 0.27, sz);
           g.add(stake);
         }
       }
+
+      // Cute Real-Estate Lawn Signpost facing the Street Sidewalk (+Z)
+      const signPost = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.032, 0.036, 0.85, 8),
+        new THREE.MeshStandardMaterial({ color: "#cbd5e1", metalness: 0.85, roughness: 0.22 })
+      );
+      signPost.position.set(0, 0.42, lotD / 2 - 0.35);
+      g.add(signPost);
 
       const beaconRing = new THREE.Mesh(
         new THREE.RingGeometry(0.55, 0.72, 24),
@@ -1278,10 +1214,11 @@ export class NeighborhoodWorld3D {
         g.add(dome);
       }
     } else {
-      // Full-Detail Walkable Neighborhood Estate with Yard Gardens, Hedges & Mini-Greenhouses!
+      // Full-Detail Walkable Subdivided Neighborhood Plot (5.4m × 5.2m) with Fence, Driveway, Mailbox & Mini-Greenhouse!
       const yardLawnMat = new THREE.MeshStandardMaterial({ color: "#bbf7d0", roughness: 0.85 });
       const hedgeMat = new THREE.MeshStandardMaterial({ color: "#4ade80", roughness: 0.7 });
       const woodBedMat = new THREE.MeshStandardMaterial({ color: "#c8a986", roughness: 0.68 });
+      const fenceMat = new THREE.MeshStandardMaterial({ color: "#f8fafc", roughness: 0.44 });
       const flowerColors = ["#f472b6", "#a78bfa", "#fbbf24", "#38bdf8", "#fb7185"];
       const yardBloomCol = flowerColors[lab.tokenId % flowerColors.length];
       const yardBloomMat = new THREE.MeshStandardMaterial({
@@ -1291,38 +1228,66 @@ export class NeighborhoodWorld3D {
         roughness: 0.45
       });
 
-      const lawnSize = pl.ring === 2 ? 4.85 : 4.25;
-      const lawn = new THREE.Mesh(new THREE.BoxGeometry(lawnSize, 0.05, lawnSize), yardLawnMat);
+      // Crisp Subdivided Rectangular Residential Yard Lot (5.4m wide × 5.2m deep)
+      const lotW = 5.4;
+      const lotD = 5.2;
+      const lawn = new THREE.Mesh(new THREE.BoxGeometry(lotW, 0.05, lotD), yardLawnMat);
       lawn.position.y = 0.025;
       lawn.receiveShadow = true;
       g.add(lawn);
 
-      // Paved Front Garden Walkway connecting home entrance to the Boulevard!
-      const walkLen = pl.ring === 2 ? 2.25 : 1.15;
-      const walkway = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.055, walkLen), stoneMat);
-      walkway.position.set(0, 0.032, pl.ring === 2 ? 2.6 : 2.15);
+      // Subtle Architectural Property-Line Curb & 3-Sided White-Silver Residential Yard Fence (Left, Right, Back)!
+      const backFence = new THREE.Mesh(new THREE.BoxGeometry(lotW, 0.36, 0.06), fenceMat);
+      backFence.position.set(0, 0.22, -lotD / 2 + 0.05);
+      const leftFence = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.36, lotD), fenceMat);
+      leftFence.position.set(-lotW / 2 + 0.05, 0.22, 0);
+      const rightFence = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.36, lotD), fenceMat);
+      rightFence.position.set(lotW / 2 - 0.05, 0.22, 0);
+      g.add(backFence, leftFence, rightFence);
+
+      const postGeo = new THREE.BoxGeometry(0.14, 0.46, 0.14);
+      for (const px of [-lotW / 2 + 0.06, lotW / 2 - 0.06]) {
+        for (const pz of [-lotD / 2 + 0.06, 0, lotD / 2 - 0.06]) {
+          const fp = new THREE.Mesh(postGeo, stoneMat);
+          fp.position.set(px, 0.25, pz);
+          g.add(fp);
+        }
+      }
+
+      // Straight Paved Stone Front Driveway / Walkway connecting front steps directly onto the Street Sidewalk (+Z)!
+      const walkway = new THREE.Mesh(new THREE.BoxGeometry(1.24, 0.056, 1.55), stoneMat);
+      walkway.position.set(0, 0.032, 2.25);
       walkway.receiveShadow = true;
       g.add(walkway);
 
+      // Curbside Architectural Mailbox beside every neighbor's sidewalk entrance!
+      const mbPost = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.035, 0.62, 8), metalMat);
+      mbPost.position.set(0.92, 0.31, 2.52);
+      const mbBox = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.14, 0.28), stoneMat);
+      mbBox.position.set(0.92, 0.64, 2.52);
+      const mbFlag = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.14, 0.06), elixirMat);
+      mbFlag.position.set(1.03, 0.7, 2.52);
+      g.add(mbPost, mbBox, mbFlag);
+
       // Raised Front Yard Flowerbeds + Trimmed Boxwood Hedges flanking every neighbor's porch!
-      for (const sx of [-1.18, 1.18]) {
-        const planter = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.18, 0.44), woodBedMat);
-        planter.position.set(sx, 0.12, 1.98);
+      for (const sx of [-1.36, 1.36]) {
+        const planter = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.18, 0.44), woodBedMat);
+        planter.position.set(sx, 0.12, 2.1);
         g.add(planter);
         for (let b = -1; b <= 1; b++) {
           const bloom = new THREE.Mesh(new THREE.IcosahedronGeometry(0.11, 0), yardBloomMat);
-          bloom.position.set(sx + b * 0.24, 0.26, 1.98);
+          bloom.position.set(sx + b * 0.26, 0.26, 2.1);
           g.add(bloom);
         }
-        const shrub = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 8), hedgeMat);
-        shrub.position.set(sx * 1.48, 0.2, 1.88);
+        const shrub = new THREE.Mesh(new THREE.SphereGeometry(0.24, 8, 8), hedgeMat);
+        shrub.position.set(sx * 1.52, 0.2, 2.02);
         g.add(shrub);
       }
 
-      // Cozy Backyard / Sideyard Glass Mini-Greenhouse on ~65% of neighbor homes!
+      // Cozy Sideyard Glass Mini-Greenhouse nestled inside the fenced lot on ~65% of neighbor homes!
       if (lab.tokenId % 3 !== 0 || hasSector(lab.sectorsMask, 2)) {
         const gh = new THREE.Group();
-        gh.position.set(1.88, 0.05, -0.55);
+        gh.position.set(2.05, 0.05, -0.55);
         const ghBase = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.24, 1.12), woodBedMat);
         ghBase.position.y = 0.12;
         gh.add(ghBase);
@@ -1340,17 +1305,6 @@ export class NeighborhoodWorld3D {
         ghFlower.position.set(0, 0.64, 0.12);
         gh.add(ghFlower);
         g.add(gh);
-      }
-
-      if (pl.ring === 2) {
-        // Cute architectural curb mailbox with glowing seed-accent flag!
-        const mbPost = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.035, 0.62, 8), metalMat);
-        mbPost.position.set(0.95, 0.31, 2.55);
-        const mbBox = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.14, 0.28), stoneMat);
-        mbBox.position.set(0.95, 0.64, 2.55);
-        const mbFlag = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.14, 0.06), elixirMat);
-        mbFlag.position.set(1.06, 0.7, 2.55);
-        g.add(mbPost, mbBox, mbFlag);
       }
 
       const slab = new THREE.Mesh(new THREE.BoxGeometry(3.45, 0.16, 3.45), stoneMat);
@@ -1460,8 +1414,8 @@ export class NeighborhoodWorld3D {
         g.add(crown);
       }
 
-      // Floating Plot Plaque Signpost ("Lab #4 · 3/6 Rooms")
-      const plaqueTex = this.createPlotPlaqueTexture(lab, pal.liquidMid);
+      // Floating Plot Plaque Signpost with Street Address ("Lab #4 · Maple Lane")
+      const plaqueTex = this.createPlotPlaqueTexture(lab, pal.liquidMid, pl.districtName);
       const plaque = new THREE.Sprite(
         new THREE.SpriteMaterial({ map: plaqueTex, transparent: true, depthWrite: false })
       );
@@ -1526,7 +1480,11 @@ export class NeighborhoodWorld3D {
     };
   }
 
-  private createPlotPlaqueTexture(lab: NeighborLabSummary, accent: string): THREE.CanvasTexture {
+  private createPlotPlaqueTexture(
+    lab: NeighborLabSummary,
+    accent: string,
+    streetName?: string
+  ): THREE.CanvasTexture {
     const canvas = document.createElement("canvas");
     canvas.width = 320;
     canvas.height = 120;
@@ -1545,13 +1503,17 @@ export class NeighborhoodWorld3D {
     ctx.arc(38, 44, 8, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.font = "700 30px 'Inter', sans-serif";
+    ctx.font = "700 28px 'Inter', sans-serif";
     ctx.fillStyle = "#1a1f2c";
-    ctx.fillText(`Lab #${lab.tokenId}`, 58, 54);
+    ctx.fillText(`Lab #${lab.tokenId}`, 58, 52);
 
-    ctx.font = "600 18px 'JetBrains Mono', monospace";
+    ctx.font = "600 16px 'JetBrains Mono', monospace";
     ctx.fillStyle = "#64748b";
-    ctx.fillText(`$${lab.valueUsd} · ${countSectors(lab.sectorsMask)}/6 rooms`, 34, 88);
+    ctx.fillText(
+      streetName ? `${streetName} · ${countSectors(lab.sectorsMask)}/6` : `$${lab.valueUsd} · ${countSectors(lab.sectorsMask)}/6 rooms`,
+      34,
+      88
+    );
 
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
@@ -1617,19 +1579,14 @@ export class NeighborhoodWorld3D {
       const homeX = pl.visitX;
       const homeZ = pl.visitZ;
 
-      // Ring 1 NPCs tend yard gardens & stroll inner plaza; Ring 2 NPCs stroll Suburb Boulevard & Botanical Park!
-      let patrolX = homeX * 0.68 + (i % 2 === 0 ? 0.9 : -0.9);
-      let patrolZ = homeZ * 0.68 + 1.1;
-      if (pl.ring === 2) {
-        if (i % 3 === 0) {
-          // Stroll right over to the Grand Botanical Park Conservatory!
-          patrolX = TOWN_PARK_CENTER[0] - 2.2 + (i % 2) * 1.6;
-          patrolZ = TOWN_PARK_CENTER[1] - 2.4;
-        } else {
-          const ang = Math.atan2(homeZ, homeX) + (i % 2 === 0 ? 0.16 : -0.16);
-          patrolX = Math.cos(ang) * 18.0;
-          patrolZ = Math.sin(ang) * 18.0;
-        }
+      // Stroll smoothly along the paved sidewalk right in front of their own residential street block!
+      const isFacingEW = Math.abs(Math.sin(pl.rotY)) > 0.5;
+      let patrolX = homeX + (isFacingEW ? 0 : i % 2 === 0 ? 3.8 : -3.8);
+      let patrolZ = homeZ + (isFacingEW ? (i % 2 === 0 ? 4.2 : -4.2) : 0);
+      if (pl.ring === 2 && i % 3 === 0) {
+        // Occasional neighbor strolls straight to the Grand Botanical Park Conservatory entrance!
+        patrolX = TOWN_PARK_CENTER[0] - 2.6;
+        patrolZ = TOWN_PARK_CENTER[1] - 4.4;
       }
 
       avatar.root.position.set(homeX, 0.04, homeZ);
@@ -1701,13 +1658,24 @@ export class NeighborhoodWorld3D {
     if (this.fountainSpire) this.fountainSpire.rotation.y = t * 0.65;
     if (this.fountainHalo) this.fountainHalo.rotation.z = t * 0.85;
 
-    // Hover-Shuttle gliding smoothly around the Suburb Boulevard (r = 17.85) once 10+ labs minted!
+    // Hover-Shuttle gliding smoothly around the 4 Perimeter Park Boulevards once 10+ labs minted!
     if (this.shuttleGroup && this.shuttleVisible) {
-      this.shuttleAngle += dt * 0.14;
-      const sx = Math.cos(this.shuttleAngle) * 17.85;
-      const sz = Math.sin(this.shuttleAngle) * 17.85;
+      this.shuttleAngle = (this.shuttleAngle + dt * 0.045) % 1;
+      const seg = this.shuttleAngle * 4;
+      const idx = Math.floor(seg);
+      const frac = seg - idx;
+      const corners: ReadonlyArray<[number, number]> = [
+        [21.2, -21.2],
+        [21.2, 21.6],
+        [-21.2, 21.6],
+        [-21.2, -21.2]
+      ];
+      const a = corners[idx];
+      const b = corners[(idx + 1) % 4];
+      const sx = a[0] + (b[0] - a[0]) * frac;
+      const sz = a[1] + (b[1] - a[1]) * frac;
       this.shuttleGroup.position.set(sx, 0.08 + Math.sin(t * 3.2) * 0.04, sz);
-      this.shuttleGroup.rotation.y = -this.shuttleAngle;
+      this.shuttleGroup.rotation.y = Math.atan2(b[0] - a[0], b[1] - a[1]);
     }
 
     // Pulse Upcoming Blueprint Lots gently

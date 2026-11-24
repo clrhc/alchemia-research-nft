@@ -152,35 +152,37 @@ export class TownGardens3D {
     const park = new THREE.Group();
     park.position.set(cx, 0, cz);
 
-    // Circular manicured botanical park meadow + stone curb ring
-    const meadow = new THREE.Mesh(new THREE.CylinderGeometry(5.1, 5.2, 0.05, 40), lawnMat);
+    // Rectangular City-Block Botanical Park Lawn + Honed Stone Curb Framing the Entire Block!
+    const meadow = new THREE.Mesh(new THREE.BoxGeometry(9.6, 0.05, 9.2), lawnMat);
     meadow.position.y = 0.012;
     meadow.receiveShadow = true;
     park.add(meadow);
 
-    const stoneBorder = new THREE.Mesh(new THREE.RingGeometry(4.92, 5.18, 40), stoneMat);
-    stoneBorder.rotation.x = -Math.PI / 2;
-    stoneBorder.position.y = 0.042;
+    const stoneBorder = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(9.64, 0.07, 9.24)),
+      new THREE.LineBasicMaterial({ color: "#cbd5e1", transparent: true, opacity: 0.9 })
+    );
+    stoneBorder.position.y = 0.025;
     park.add(stoneBorder);
 
-    // Winding stepping-stone promenade ring + cross paths connecting to Suburb Boulevard!
+    // Winding stepping-stone promenade ring + paved North & West park entrances connecting to Main St & Maple Ln!
     const loopPath = new THREE.Mesh(new THREE.RingGeometry(2.45, 3.25, 40), pathMat);
     loopPath.rotation.x = -Math.PI / 2;
     loopPath.position.y = 0.043;
     loopPath.receiveShadow = true;
     park.add(loopPath);
 
-    // Entrance avenue connecting SE Suburb Boulevard (r=17.8) straight into the Park Conservatory
-    const entryWalk = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.04, 5.2), pathMat);
-    entryWalk.position.set(-2.2, 0.032, -2.2);
-    entryWalk.rotation.y = Math.PI / 4;
-    entryWalk.receiveShadow = true;
-    park.add(entryWalk);
+    const entryWalkNorth = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.04, 4.6), pathMat);
+    entryWalkNorth.position.set(0, 0.036, -3.1);
+    entryWalkNorth.receiveShadow = true;
+    const entryWalkWest = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.04, 1.45), pathMat);
+    entryWalkWest.position.set(-3.1, 0.036, 0);
+    entryWalkWest.receiveShadow = true;
+    park.add(entryWalkNorth, entryWalkWest);
 
-    // Blooming Rose Archway welcoming visitors at the park entrance!
+    // Blooming Rose Archway welcoming visitors at the North Main St park entrance!
     const archGroup = new THREE.Group();
-    archGroup.position.set(-3.4, 0.04, -3.4);
-    archGroup.rotation.y = Math.PI / 4;
+    archGroup.position.set(0, 0.04, -4.35);
     const archTube = new THREE.Mesh(
       new THREE.TorusGeometry(0.98, 0.045, 10, 28, Math.PI),
       metalMat
@@ -761,64 +763,65 @@ export class TownGardens3D {
   }
 
   // ============================================================================
-  // 5. 4 INNER-TOWN POCKET FLOWER PARKS & MINI BELL-CLOCHE GARDENS (±8.1, ±8.1)
+  // 5. 4 STREET-SIDE NEIGHBORHOOD POCKET FLOWER PARKS & GLASS CLOCHES
+  //    Tucked neatly along the West & East Park Blvd greenbelts behind the inner blocks!
   // ============================================================================
   private buildInnerPocketFlowerParks() {
     const { stoneMat, woodMat, glassMat, hedgeMat } = this.makeSharedMaterials();
-    const corners: Array<{ x: number; z: number; name: string; col: string }> = [
-      { x: 8.1, z: 8.1, name: "South-East Canal Flower Garden", col: "#f472b6" },
-      { x: -8.1, z: 8.1, name: "South-West Tulip Pocket Park", col: "#fbbf24" },
-      { x: -8.1, z: -8.1, name: "North-West Fern Pocket Park", col: "#34d399" },
-      { x: 8.1, z: -8.1, name: "North-East Lavender Pocket Park", col: "#a78bfa" }
+    const spots: Array<{ x: number; z: number; rotY: number; name: string; col: string }> = [
+      { x: 16.8, z: 3.6, rotY: Math.PI / 2, name: "Maple East Blossom Pocket Park", col: "#f472b6" },
+      { x: 16.8, z: -2.2, rotY: Math.PI / 2, name: "East Park Lavender Cloche Garden", col: "#a78bfa" },
+      { x: -16.8, z: 3.6, rotY: -Math.PI / 2, name: "Willow West Tulip Pocket Park", col: "#fbbf24" },
+      { x: -16.8, z: -2.2, rotY: -Math.PI / 2, name: "West Park Fern Cloche Garden", col: "#34d399" }
     ];
 
-    for (const c of corners) {
+    for (const c of spots) {
       const g = new THREE.Group();
       g.position.set(c.x, 0, c.z);
-      g.rotation.y = Math.atan2(-c.x, -c.z);
+      g.rotation.y = c.rotY;
 
-      const pad = new THREE.Mesh(new THREE.CylinderGeometry(1.58, 1.68, 0.06, 20), stoneMat);
+      const pad = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.06, 3.2), stoneMat);
       pad.position.y = 0.03;
       pad.receiveShadow = true;
       g.add(pad);
 
       // Curved garden hedge backdrop + miniature glass plant cloche greenhouse!
-      const hedge = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.42, 0.34), hedgeMat);
-      hedge.position.set(0, 0.24, -1.05);
+      const hedge = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.42, 0.34), hedgeMat);
+      hedge.position.set(0, 0.24, -1.15);
       g.add(hedge);
 
       const clocheBase = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.5, 0.24, 14), stoneMat);
-      clocheBase.position.set(-0.52, 0.16, -0.35);
+      clocheBase.position.set(-0.56, 0.16, -0.35);
       g.add(clocheBase);
       const clocheDome = new THREE.Mesh(
         new THREE.SphereGeometry(0.44, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55),
         glassMat
       );
-      clocheDome.position.set(-0.52, 0.28, -0.35);
+      clocheDome.position.set(-0.56, 0.28, -0.35);
       g.add(clocheDome);
       const innerBloom = new THREE.Mesh(
         new THREE.IcosahedronGeometry(0.2, 0),
         new THREE.MeshStandardMaterial({ color: c.col, emissive: c.col, emissiveIntensity: 0.35 })
       );
-      innerBloom.position.set(-0.52, 0.42, -0.35);
+      innerBloom.position.set(-0.56, 0.42, -0.35);
       g.add(innerBloom);
 
       // Cozy pocket park timber bench + flower clusters
       const bench = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.22, 0.34), woodMat);
-      bench.position.set(0.48, 0.16, -0.25);
+      bench.position.set(0.52, 0.16, -0.25);
       g.add(bench);
 
       this.addFlowerClusters(g, [
-        [-0.95, 0.55, c.col],
-        [0.95, 0.55, "#ffffff"],
+        [-1.05, 0.65, c.col],
+        [1.05, 0.65, "#ffffff"],
         [0.0, 0.95, c.col]
       ]);
 
       this.tagTarget(g, {
         kind: "park-bench",
         label: c.name,
-        worldX: c.x * 0.84,
-        worldZ: c.z * 0.84
+        worldX: c.x > 0 ? c.x + 2.2 : c.x - 2.2,
+        worldZ: c.z
       });
       this.parksGroup.add(g);
     }

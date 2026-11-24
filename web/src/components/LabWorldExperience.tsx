@@ -118,6 +118,7 @@ import {
 import {
   COMMUNITY_FOUNTAIN_POS,
   TOWN_PARKS,
+  TOWN_STREETS,
   buildNeighborhoodRoster,
   computeNeighborhoodPlacements,
   computeUpcomingBlueprintLots,
@@ -1292,7 +1293,7 @@ export function LabWorldExperience({
     }
 
     // Update live Architectural Blueprint Mini-Map Radar (dual-scale: Lab Close-Up or Full Growing Town!)
-    const radarSpan = radarIsDistrictRef.current ? 26.8 : 4.75;
+    const radarSpan = radarIsDistrictRef.current ? 29.5 : 4.75;
     const mapCoord = (v: number) => Math.max(8, Math.min(104, 56 + (v / radarSpan) * 44));
     if (radarPlayerRef.current) {
       const rx = mapCoord(telemetry.charX);
@@ -6618,33 +6619,54 @@ export function LabWorldExperience({
           <svg viewBox="0 0 112 112" className="world-minimap-svg">
             {radarIsDistrict ? (
               <>
-                {/* Full Growing Town Radar (r = 26.8): Outer Parkway, Canal Ring, 4 Bridges, Ring 1 + Ring 2 Homes & Open Lots */}
-                <circle
-                  cx="56"
-                  cy="56"
-                  r="46"
-                  fill="rgba(241,245,251,0.34)"
+                {/* Proper Orthogonal Neighborhood Street Grid Radar (span = 29.5) */}
+                <rect
+                  x="10"
+                  y="10"
+                  width="92"
+                  height="92"
+                  rx="10"
+                  fill="rgba(220,247,228,0.45)"
                   stroke="rgba(148,163,184,0.38)"
                   strokeWidth="1"
                 />
-                {/* Shimmering Blue Canal Ring (r ≈ 13.85 / 26.8 * 44 ≈ 22.7) */}
-                <circle
-                  cx="56"
-                  cy="56"
-                  r="23"
-                  fill="rgba(224,242,254,0.22)"
-                  stroke="rgba(56,189,248,0.62)"
-                  strokeWidth="2.8"
-                />
-                {/* 4 Cardinal Avenues & Canal Bridges */}
-                <line x1="12" y1="56" x2="100" y2="56" stroke="rgba(255,255,255,0.85)" strokeWidth="1.6" />
-                <line x1="56" y1="12" x2="56" y2="100" stroke="rgba(255,255,255,0.85)" strokeWidth="1.6" />
-                {/* Active Center Lab */}
-                <circle
-                  cx="56"
-                  cy="56"
-                  r="5.2"
-                  fill="rgba(91,141,239,0.28)"
+                {/* 4 North-South & 4 East-West Paved Neighborhood Streets */}
+                {TOWN_STREETS.ns.map((sx) => {
+                  const px = 56 + (sx / 29.5) * 44;
+                  return (
+                    <line
+                      key={`ns-${sx}`}
+                      x1={px}
+                      y1="10"
+                      x2={px}
+                      y2="102"
+                      stroke="rgba(100,116,139,0.52)"
+                      strokeWidth="2.4"
+                    />
+                  );
+                })}
+                {TOWN_STREETS.ew.map((sz) => {
+                  const py = 56 + (sz / 29.5) * 44;
+                  return (
+                    <line
+                      key={`ew-${sz}`}
+                      x1="10"
+                      y1={py}
+                      x2="102"
+                      y2={py}
+                      stroke="rgba(100,116,139,0.52)"
+                      strokeWidth="2.4"
+                    />
+                  );
+                })}
+                {/* Active Center Home Plot #1 */}
+                <rect
+                  x={56 - 6.5}
+                  y={56 - 6.5}
+                  width="13"
+                  height="13"
+                  rx="2.2"
+                  fill="rgba(91,141,239,0.34)"
                   stroke="#5b8def"
                   strokeWidth="1.2"
                   className="clickable"
@@ -6652,65 +6674,80 @@ export function LabWorldExperience({
                   onClick={handleReturnHome}
                 >
                   <title>
-                    {isVisiting ? `Return Home (Lab #${vessel.tokenId})` : `Home Lab #${vessel.tokenId}`}
+                    {isVisiting ? `Return Home (Lab #${vessel.tokenId})` : `Home Plot · Lab #${vessel.tokenId}`}
                   </title>
-                </circle>
-                {/* Community Fountain Dot */}
+                </rect>
+                {/* Community Fountain Square Dot */}
                 <circle
-                  cx={56 + (COMMUNITY_FOUNTAIN_POS[0] / 26.8) * 44}
-                  cy={56 + (COMMUNITY_FOUNTAIN_POS[1] / 26.8) * 44}
-                  r="2.4"
+                  cx={56 + (COMMUNITY_FOUNTAIN_POS[0] / 29.5) * 44}
+                  cy={56 + (COMMUNITY_FOUNTAIN_POS[1] / 29.5) * 44}
+                  r="2.2"
                   fill="#0ea5e9"
                   stroke="#ffffff"
                   strokeWidth="0.8"
                 >
                   <title>Community Research Fountain</title>
                 </circle>
-                {/* Surveyed Next-Mint Open Blueprint Lots (dashed cyan rings) */}
+                {/* Surveyed Next-Mint Open Residential Lots (dashed cyan squares) */}
                 {upcomingBlueprintLots
                   .filter((lot) => lot.ring === 1 || lot.ring === 2)
-                  .map((lot) => (
-                    <circle
-                      key={`lot-${lot.plotIndex}`}
-                      cx={56 + (lot.x / 26.8) * 44}
-                      cy={56 + (lot.z / 26.8) * 44}
-                      r="2.8"
-                      fill="none"
-                      stroke="#0ea5e9"
-                      strokeWidth="1"
-                      strokeDasharray="1.6 1.2"
-                    >
-                      <title>Next Mint · Lot #{lot.lotNumber}</title>
-                    </circle>
-                  ))}
-                {/* 4 Clickable Emerald Town Parks on District Radar */}
-                {TOWN_PARKS.map((park) => (
-                  <circle
-                    key={park.id}
-                    cx={56 + (park.x / 26.8) * 44}
-                    cy={56 + (park.z / 26.8) * 44}
-                    r={park.id === "conservatory" ? 4.4 : 3.4}
-                    fill="#34d399"
-                    stroke="#ffffff"
-                    strokeWidth="1.1"
-                    className="clickable"
-                    style={{ cursor: "pointer" }}
-                    onClick={() => handleWalkToPark(park.id)}
-                  >
-                    <title>Walk to {park.name}</title>
-                  </circle>
-                ))}
-                {/* Clickable Ring 1 + Ring 2 Walkable Neighbor Homes! */}
-                {[...ring1Placements, ...ring2Placements].map((pl) => {
-                  const nx = 56 + (pl.x / 26.8) * 44;
-                  const ny = 56 + (pl.z / 26.8) * 44;
-                  const col = deriveTraitsFromSeed(pl.lab.seed).palette.liquidMid;
+                  .map((lot) => {
+                    const lx = 56 + (lot.x / 29.5) * 44;
+                    const ly = 56 + (lot.z / 29.5) * 44;
+                    return (
+                      <rect
+                        key={`lot-${lot.plotIndex}`}
+                        x={lx - 3}
+                        y={ly - 3}
+                        width="6"
+                        height="6"
+                        rx="1.2"
+                        fill="rgba(224,242,254,0.45)"
+                        stroke="#0ea5e9"
+                        strokeWidth="1"
+                        strokeDasharray="1.6 1.1"
+                      >
+                        <title>Next Mint · Lot #{lot.lotNumber} ({lot.districtName})</title>
+                      </rect>
+                    );
+                  })}
+                {/* 4 Clickable Emerald City-Block Town Parks on District Radar */}
+                {TOWN_PARKS.map((park) => {
+                  const px = 56 + (park.x / 29.5) * 44;
+                  const py = 56 + (park.z / 29.5) * 44;
                   return (
-                    <circle
+                    <rect
+                      key={park.id}
+                      x={px - 6.2}
+                      y={py - 6.2}
+                      width="12.4"
+                      height="12.4"
+                      rx="2.6"
+                      fill="rgba(52,211,153,0.72)"
+                      stroke="#ffffff"
+                      strokeWidth="1.1"
+                      className="clickable"
+                      style={{ cursor: "pointer" }}
+                      onClick={() => handleWalkToPark(park.id)}
+                    >
+                      <title>Walk to {park.name}</title>
+                    </rect>
+                  );
+                })}
+                {/* Clickable Ring 1 + Ring 2 Street-Aligned Neighborhood House Plots! */}
+                {[...ring1Placements, ...ring2Placements].map((pl) => {
+                  const nx = 56 + (pl.x / 29.5) * 44;
+                  const ny = 56 + (pl.z / 29.5) * 44;
+                  const col = deriveTraitsFromSeed(pl.lab.seed).palette.liquidMid;
+                  const sz = pl.ring === 1 ? 6.8 : 5.8;
+                  return (
+                    <rect
                       key={pl.lab.tokenId}
-                      cx={nx}
-                      cy={ny}
-                      r={pl.ring === 1 ? 3.5 : 3.0}
+                      x={nx - sz / 2}
+                      y={ny - sz / 2}
+                      width={sz}
+                      height={sz}
+                      rx="1.4"
                       fill={col}
                       stroke="#ffffff"
                       strokeWidth="1.1"
@@ -6721,7 +6758,7 @@ export function LabWorldExperience({
                       <title>
                         Walk to Lab #{pl.lab.tokenId} ({pl.districtName})
                       </title>
-                    </circle>
+                    </rect>
                   );
                 })}
               </>

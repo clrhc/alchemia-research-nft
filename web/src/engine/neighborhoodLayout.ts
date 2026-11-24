@@ -83,16 +83,27 @@ export interface NeighborhoodGrowthStage {
   skylineUnlocked: boolean;
 }
 
-/** Walkable world radius covering Inner Boulevard, all 4 Canal Bridges & Ring 2 Canal Suburb Estates */
-export const NEIGHBORHOOD_WALK_LIMIT = 26.5;
+/** Walkable world radius covering the full orthogonal grid neighborhood, 4 Block Parks & Outer Suburb Streets */
+export const NEIGHBORHOOD_WALK_LIMIT = 29.5;
 
 /** Maximum individually rendered neighborhood plots in the live 3D town (120+ minted NFTs!) */
 export const MAX_NEIGHBORHOOD_PLOTS = 120;
 
+/**
+ * Orthogonal Neighborhood Street Grid Coordinates (single source of truth shared by
+ * 3D Paved Streets, Sidewalks, Streetlamps, Plot Placement & the District Mini-Map!).
+ */
+export const TOWN_STREETS = {
+  ns: [-21.2, -6.8, 6.8, 21.2] as readonly number[],
+  ew: [-21.2, -6.8, 8.4, 21.6] as readonly number[],
+  roadWidth: 2.2,
+  sidewalkTotalWidth: 3.3
+};
+
 /** Shared Community Research Fountain Plaza positioned cleanly on the South boulevard */
 export const COMMUNITY_FOUNTAIN_POS: readonly [number, number] = [0, 5.45];
 
-/** Grand Alchemia Botanical Park & Glass Conservatory center in the wide SE greenbelt */
+/** Grand Alchemia Botanical Park & Glass Conservatory center inside the SE City Block */
 export const TOWN_PARK_CENTER: readonly [number, number] = [15.2, 15.2];
 
 export interface TownParkDef {
@@ -107,7 +118,7 @@ export interface TownParkDef {
 }
 
 /**
- * 4 Walkable Quadrant Town Parks nested in wide 12.6m diagonal greenbelts across the Canal Bridges!
+ * 4 Dedicated City-Block Town Parks framed cleanly on all 4 sides by paved neighborhood streets!
  */
 export const TOWN_PARKS: readonly TownParkDef[] = [
   {
@@ -116,8 +127,8 @@ export const TOWN_PARKS: readonly TownParkDef[] = [
     subtitle: "Glass Conservatory, 6 Community Garden Beds & Koi Pond",
     x: 15.2,
     z: 15.2,
-    visitX: 13.6,
-    visitZ: 12.6,
+    visitX: 12.2,
+    visitZ: 10.6,
     accent: "#10b981"
   },
   {
@@ -126,8 +137,8 @@ export const TOWN_PARKS: readonly TownParkDef[] = [
     subtitle: "Cherry Blossom Grove, Drifting Petals & Zen Lanterns",
     x: -15.2,
     z: 15.2,
-    visitX: -13.2,
-    visitZ: 13.0,
+    visitX: -12.2,
+    visitZ: 10.6,
     accent: "#f472b6"
   },
   {
@@ -136,8 +147,8 @@ export const TOWN_PARKS: readonly TownParkDef[] = [
     subtitle: "Raised Cedar Planters, Potting Greenhouse & Fruit Trees",
     x: -15.2,
     z: -15.2,
-    visitX: -13.0,
-    visitZ: -13.0,
+    visitX: -12.2,
+    visitZ: -10.4,
     accent: "#f59e0b"
   },
   {
@@ -146,8 +157,8 @@ export const TOWN_PARKS: readonly TownParkDef[] = [
     subtitle: "Fragrant Lavender Terraces, Topiary Hedges & Glass Arbor",
     x: 15.2,
     z: -15.2,
-    visitX: 13.0,
-    visitZ: -13.0,
+    visitX: 12.2,
+    visitZ: -10.4,
     accent: "#a78bfa"
   }
 ];
@@ -163,79 +174,99 @@ interface PlotCoordSlot {
 }
 
 /**
- * Curated quadrant-aligned Inner Boulevard lots (Ring 1, 8 plots) keeping all 4 cardinal
- * avenues (North, South, East, West) completely unobstructed toward the 4 Arched Canal Bridges!
+ * Proper Orthogonal Street-Facing Neighborhood Plots (Ring 1, 8 Lots) lined neatly
+ * along Willow Lane (x=-6.8), Maple Lane (x=+6.8), Oakwood Street (z=-6.8) & Main Street (z=+8.4)!
+ * Every house sits squarely at 90° facing the paved street right in front of its driveway!
  */
-const INNER_RING_COORDS: ReadonlyArray<{ x: number; z: number; district: string }> = [
-  { x: -8.2, z: 4.2, district: "West Boulevard" },
-  { x: 8.2, z: 4.2, district: "East Boulevard" },
-  { x: -8.2, z: -4.2, district: "North-West Terrace" },
-  { x: 8.2, z: -4.2, district: "North-East Terrace" },
-  { x: -4.6, z: -8.6, district: "North Gardens" },
-  { x: 4.6, z: -8.6, district: "North Gardens" },
-  { x: -5.0, z: 9.4, district: "South Plaza" },
-  { x: 5.0, z: 9.4, district: "South Plaza" }
+const INNER_RING_SLOTS: ReadonlyArray<Omit<PlotCoordSlot, "ring">> = [
+  { x: -11.2, z: -2.2, rotY: Math.PI / 2, visitX: -8.2, visitZ: -2.2, districtName: "Willow Lane" },
+  { x: 11.2, z: -2.2, rotY: -Math.PI / 2, visitX: 8.2, visitZ: -2.2, districtName: "Maple Lane" },
+  { x: -11.2, z: 3.6, rotY: Math.PI / 2, visitX: -8.2, visitZ: 3.6, districtName: "Willow Lane" },
+  { x: 11.2, z: 3.6, rotY: -Math.PI / 2, visitX: 8.2, visitZ: 3.6, districtName: "Maple Lane" },
+  { x: -3.0, z: -11.2, rotY: 0, visitX: -3.0, visitZ: -8.3, districtName: "Oakwood Street" },
+  { x: 3.0, z: -11.2, rotY: 0, visitX: 3.0, visitZ: -8.3, districtName: "Oakwood Street" },
+  { x: -3.0, z: 12.8, rotY: Math.PI, visitX: -3.0, visitZ: 9.9, districtName: "Main Street" },
+  { x: 3.0, z: 12.8, rotY: Math.PI, visitX: 3.0, visitZ: 9.9, districtName: "Main Street" }
 ];
 
 /**
- * Generates deterministic architectural plot coordinates for ANY plot index 0..119+:
- *  - 0..7:   Ring 1 Inner Boulevard (walkable, inside canal)
- *  - 8..23:  Ring 2 Canal-Side Suburb Estates (16 walkable homes across the 4 canal bridges!)
- *  - 24..∞:  Ring 3 Expanding Outer Research City Avenues (concentric structured city blocks)
+ * Proper Suburban Block Plots (Ring 2, 16 Walkable Lots) lined neatly along the 4 Perimeter
+ * Park Boulevards (West Park Blvd, East Park Blvd, North Orchard Ave & South Blossom Ave),
+ * overlooking the 4 City-Block Parks with clean 90° street-facing driveways & sidewalks!
+ */
+const OUTER_SUBURB_SLOTS: ReadonlyArray<Omit<PlotCoordSlot, "ring">> = [
+  // East Park Blvd (facing West onto x = +21.2)
+  { x: 25.6, z: 15.2, rotY: -Math.PI / 2, visitX: 22.6, visitZ: 15.2, districtName: "East Park Blvd" },
+  { x: 25.6, z: 3.6, rotY: -Math.PI / 2, visitX: 22.6, visitZ: 3.6, districtName: "East Park Blvd" },
+  { x: 25.6, z: -2.6, rotY: -Math.PI / 2, visitX: 22.6, visitZ: -2.6, districtName: "East Park Blvd" },
+  { x: 25.6, z: -15.2, rotY: -Math.PI / 2, visitX: 22.6, visitZ: -15.2, districtName: "East Park Blvd" },
+  // South Blossom Ave (facing North onto z = +21.6)
+  { x: 15.2, z: 26.0, rotY: Math.PI, visitX: 15.2, visitZ: 23.0, districtName: "South Blossom Ave" },
+  { x: 3.0, z: 26.0, rotY: Math.PI, visitX: 3.0, visitZ: 23.0, districtName: "South Blossom Ave" },
+  { x: -3.0, z: 26.0, rotY: Math.PI, visitX: -3.0, visitZ: 23.0, districtName: "South Blossom Ave" },
+  { x: -15.2, z: 26.0, rotY: Math.PI, visitX: -15.2, visitZ: 23.0, districtName: "South Blossom Ave" },
+  // West Park Blvd (facing East onto x = -21.2)
+  { x: -25.6, z: 15.2, rotY: Math.PI / 2, visitX: -22.6, visitZ: 15.2, districtName: "West Park Blvd" },
+  { x: -25.6, z: 3.6, rotY: Math.PI / 2, visitX: -22.6, visitZ: 3.6, districtName: "West Park Blvd" },
+  { x: -25.6, z: -2.6, rotY: Math.PI / 2, visitX: -22.6, visitZ: -2.6, districtName: "West Park Blvd" },
+  { x: -25.6, z: -15.2, rotY: Math.PI / 2, visitX: -22.6, visitZ: -15.2, districtName: "West Park Blvd" },
+  // North Orchard Ave (facing South onto z = -21.2)
+  { x: -15.2, z: -25.6, rotY: 0, visitX: -15.2, visitZ: -22.6, districtName: "North Orchard Ave" },
+  { x: -3.0, z: -25.6, rotY: 0, visitX: -3.0, visitZ: -22.6, districtName: "North Orchard Ave" },
+  { x: 3.0, z: -25.6, rotY: 0, visitX: 3.0, visitZ: -22.6, districtName: "North Orchard Ave" },
+  { x: 15.2, z: -25.6, rotY: 0, visitX: 15.2, visitZ: -22.6, districtName: "North Orchard Ave" }
+];
+
+/**
+ * Generates deterministic orthogonal residential plot coordinates for ANY plot index 0..119+:
+ *  - 0..7:   Ring 1 Inner Neighborhood Streets (8 walkable fenced plots on Willow, Maple, Oakwood & Main)
+ *  - 8..23:  Ring 2 Suburb Park Boulevards (16 walkable fenced estates overlooking the 4 City-Block Parks!)
+ *  - 24..∞:  Ring 3 Expanding Orthogonal Outer Neighborhood Blocks stretching across the valley!
  */
 export function getNeighborhoodPlotSlot(plotIndex: number): PlotCoordSlot {
-  if (plotIndex < INNER_RING_COORDS.length) {
-    const slot = INNER_RING_COORDS[plotIndex];
-    const rotY = Math.atan2(-slot.x, -slot.z);
-    const len = Math.hypot(slot.x, slot.z) || 1;
-    return {
-      ring: 1,
-      districtName: slot.district,
-      x: slot.x,
-      z: slot.z,
-      rotY,
-      visitX: slot.x - (slot.x / len) * 2.85,
-      visitZ: slot.z - (slot.z / len) * 2.85
-    };
+  if (plotIndex < INNER_RING_SLOTS.length) {
+    return { ring: 1, ...INNER_RING_SLOTS[plotIndex] };
   }
 
-  // Ring 2: 16 Walkable Canal-Side Suburb Estates arranged cleanly in 4 quadrants (4 estates per quadrant)
-  const ring2Idx = plotIndex - INNER_RING_COORDS.length;
-  if (ring2Idx < 16) {
-    const quadrant = ring2Idx % 4; // 0=SE, 1=SW, 2=NW, 3=NE (fills balanced around the whole town!)
-    const posInQuad = Math.floor(ring2Idx / 4); // 0..3
-    // Angles cleanly tucked near cardinal avenues, opening huge 12.6m diagonal greenbelts for the 4 Town Parks!
-    const quadBaseAngle = quadrant * (Math.PI / 2);
-    const localOffsets = [0.21, 0.46, 1.1, 1.35];
-    const angle = quadBaseAngle + localOffsets[posInQuad];
-    const radius = 21.8;
-    const x = Math.cos(angle) * radius;
-    const z = Math.sin(angle) * radius;
-    const rotY = Math.atan2(-x, -z);
-    const len = Math.hypot(x, z) || 1;
-    const quadNames = ["South-East Suburb", "South-West Suburb", "North-West Suburb", "North-East Suburb"];
-    return {
-      ring: 2,
-      districtName: quadNames[quadrant],
-      x,
-      z,
-      rotY,
-      // Front driveway meeting the Outer Suburb Boulevard at r ≈ 18.7
-      visitX: x - (x / len) * 3.1,
-      visitZ: z - (z / len) * 3.1
-    };
+  const ring2Idx = plotIndex - INNER_RING_SLOTS.length;
+  if (ring2Idx < OUTER_SUBURB_SLOTS.length) {
+    // Interleave across all 4 avenues so the town expands evenly on every side!
+    const side = ring2Idx % 4;
+    const posOnSide = Math.floor(ring2Idx / 4);
+    const slot = OUTER_SUBURB_SLOTS[side * 4 + posOnSide];
+    return { ring: 2, ...slot };
   }
 
-  // Ring 3+: Ever-growing Outer Research City Skyline arranged in concentric urban rings!
-  const outerIdx = ring2Idx - 16;
-  const ringCapacity = 24;
-  const band = Math.floor(outerIdx / ringCapacity); // 0, 1, 2, 3...
-  const idxInBand = outerIdx % ringCapacity;
-  const angle = ((idxInBand + (band % 2) * 0.5) / ringCapacity) * Math.PI * 2 + 0.12;
-  const radius = 29.8 + band * 5.8 + (idxInBand % 2) * 1.1;
-  const x = Math.cos(angle) * radius;
-  const z = Math.sin(angle) * radius;
-  const rotY = Math.atan2(-x, -z);
+  // Ring 3+: Orthogonal Outer City Blocks arranged neatly along the 4 cardinal neighborhood edges!
+  const outerIdx = ring2Idx - OUTER_SUBURB_SLOTS.length;
+  const band = Math.floor(outerIdx / 24);
+  const idxInBand = outerIdx % 24;
+  const side = Math.floor(idxInBand / 6); // 0=East, 1=South, 2=West, 3=North
+  const along = (idxInBand % 6) - 2.5; // -2.5 .. +2.5
+  const span = 34.5 + band * 7.0;
+  const step = 7.4;
+
+  let x = 0;
+  let z = 0;
+  let rotY = 0;
+  if (side === 0) {
+    x = span;
+    z = along * step;
+    rotY = -Math.PI / 2;
+  } else if (side === 1) {
+    x = along * step;
+    z = span;
+    rotY = Math.PI;
+  } else if (side === 2) {
+    x = -span;
+    z = along * step;
+    rotY = Math.PI / 2;
+  } else {
+    x = along * step;
+    z = -span;
+    rotY = 0;
+  }
+
   const len = Math.hypot(x, z) || 1;
   return {
     ring: 3,
@@ -243,8 +274,8 @@ export function getNeighborhoodPlotSlot(plotIndex: number): PlotCoordSlot {
     x,
     z,
     rotY,
-    visitX: (x / len) * 24.5,
-    visitZ: (z / len) * 24.5
+    visitX: (x / len) * 26.5,
+    visitZ: (z / len) * 26.5
   };
 }
 
