@@ -10,6 +10,7 @@ import {
   Cpu,
   Disc3,
   DoorOpen,
+  Droplets,
   Flame,
   Flower2,
   Gamepad2,
@@ -28,7 +29,9 @@ import {
   Shirt,
   Smile,
   Sparkles,
+  Sprout,
   Sun,
+  Trees,
   UserRound,
   Waves,
   X,
@@ -48,6 +51,11 @@ interface SimsPieMenuProps {
 }
 
 function pickActionIcon(id: string) {
+  if (id === "garden-water") return Droplets;
+  if (id.startsWith("garden-plant-")) return Sprout;
+  if (id === "garden-harvest" || id === "open-garden") return Flower2;
+  if (id === "garden-fertilize") return Sparkles;
+  if (id.startsWith("park-")) return Trees;
   if (id.startsWith("move-")) return Move;
   if (id === "floor-up") return ArrowUpCircle;
   if (id === "floor-down") return ArrowDown;

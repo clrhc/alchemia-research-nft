@@ -16,6 +16,7 @@ import type { MoodBubbleKind } from "../engine/architectTextures";
 import type { CharacterEmote } from "../engine/character3D";
 import type { CharacterProfile } from "../engine/characterConfig";
 import type { DiegeticMonitorTelemetry } from "../engine/diegeticPanels3D";
+import type { GardenWorldState } from "../engine/gardenState";
 import type { FloorNumber, MovableItemId } from "../engine/homeLayout";
 import type { LabStationId } from "../engine/labStations";
 import type { NeighborLabSummary } from "../engine/neighborhoodLayout";
@@ -44,6 +45,8 @@ export interface ArtworkCanvasHandle {
   };
   setActiveFloor: (floor: FloorNumber) => void;
   setMovingItem: (itemId: MovableItemId | null, snapGrid?: boolean) => void;
+  waterGardenPlotFX: (plotId: string) => void;
+  walkToPark: (parkId: string) => void;
   fireSocialBeamToNeighbor: (tokenId: number, colorHex?: string) => void;
   triggerCatalyticPulse: (intensity?: number) => void;
   arriveAtFrontDoor: () => void;
@@ -80,6 +83,7 @@ interface ArtworkCanvasProps {
   activeStationHighlight?: LabStationId | null;
   neighbors?: NeighborLabSummary[];
   labDecor?: LabDecorConfig;
+  gardenState?: GardenWorldState;
   activeFloor?: FloorNumber;
   movingItem?: MovableItemId | null;
   moveSnapGrid?: boolean;
@@ -123,6 +127,7 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
     activeStationHighlight = null,
     neighbors,
     labDecor,
+    gardenState,
     activeFloor = 1,
     movingItem = null,
     moveSnapGrid = true,
@@ -182,6 +187,8 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
       rendererRef.current?.getSimsFurnitureAnchor(kind) ?? { x: 0, z: 1.38, yaw: 0, floor: 1 },
     setActiveFloor: (floor) => rendererRef.current?.setActiveFloor(floor),
     setMovingItem: (itemId, snapGrid = true) => rendererRef.current?.setMovingItem(itemId, snapGrid),
+    waterGardenPlotFX: (plotId) => rendererRef.current?.waterGardenPlotFX(plotId),
+    walkToPark: (parkId) => rendererRef.current?.walkToPark(parkId),
     fireSocialBeamToNeighbor: (tokenId, colorHex) =>
       rendererRef.current?.fireSocialBeamToNeighbor(tokenId, colorHex),
     triggerCatalyticPulse: (intensity = 1.0) =>
@@ -235,6 +242,7 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
     });
     if (walkMode) {
       if (labDecor) renderer.setLabDecor(labDecor);
+      if (gardenState) renderer.setGardenState(gardenState);
       if (neighbors) renderer.setNeighbors(neighbors);
       renderer.setWalkMode(true);
       renderer.setCameraMode(cameraMode);
@@ -408,6 +416,10 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
   useEffect(() => {
     rendererRef.current?.setMovingItem(movingItem, moveSnapGrid);
   }, [movingItem, moveSnapGrid]);
+
+  useEffect(() => {
+    if (gardenState) rendererRef.current?.setGardenState(gardenState);
+  }, [gardenState]);
 
   useEffect(() => {
     rendererRef.current?.setPlumbobColor(plumbobColor, playerMoodName);

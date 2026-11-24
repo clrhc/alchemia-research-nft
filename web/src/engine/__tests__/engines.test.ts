@@ -84,12 +84,26 @@ import {
 import { declutterFloatingLabels } from "../spatialDeclutter";
 import {
   COMMUNITY_FOUNTAIN_POS,
+  TOWN_PARKS,
+  TOWN_PARK_CENTER,
   buildNeighborhoodRoster,
   computeNeighborhoodPlacements,
   computeUpcomingBlueprintLots,
   deriveNeighborCharacterProfile,
   getNeighborhoodGrowthStage
 } from "../neighborhoodLayout";
+import {
+  GARDEN_PLOT_DEFS,
+  PLANT_SPECIES,
+  computePlotGrowth,
+  createInitialGardenState,
+  fertilizeGardenPlot,
+  harvestGardenPlot,
+  loadGardenState,
+  plantSeedInPlot,
+  saveGardenState,
+  waterGardenPlot
+} from "../gardenState";
 import {
   BAR_STYLES,
   FLOOR_STYLES,
@@ -790,5 +804,74 @@ describe("Living Minted NFT Neighborhood & Sims Interactivity", () => {
     );
     expect(stairActions.some((a) => a.id === "floor-up")).toBe(true);
     expect(stairActions.some((a) => a.id === "floor-down")).toBe(true);
+  });
+
+  it("powers walkable town parks, botanical conservatory, 8 plant species & interactive home/park gardening", () => {
+    expect(TOWN_PARKS).toHaveLength(4);
+    expect(TOWN_PARK_CENTER).toEqual([15.2, 15.2]);
+    expect(PLANT_SPECIES).toHaveLength(8);
+    expect(GARDEN_PLOT_DEFS).toHaveLength(10);
+    expect(GARDEN_PLOT_DEFS.filter((d) => d.zone === "home")).toHaveLength(4);
+    expect(GARDEN_PLOT_DEFS.filter((d) => d.zone === "park")).toHaveLength(6);
+
+    // Ensure all 4 Town Parks sit cleanly separated from Ring 1 & Ring 2 neighbor houses!
+    const roster = buildNeighborhoodRoster(1, [], 28);
+    const placements = computeNeighborhoodPlacements(roster).filter((p) => p.ring <= 2);
+    for (const park of TOWN_PARKS) {
+      for (const pl of placements) {
+        expect(Math.hypot(park.x - pl.x, park.z - pl.z)).toBeGreaterThan(4.0);
+      }
+    }
+
+    // Full plant -> water -> fertilize -> harvest lifecycle & Botanical Almanac tracking
+    const t0 = 1_700_000_000_000;
+    let g = createInitialGardenState(t0);
+    g = plantSeedInPlot(g, "home-2", "orchid", t0);
+    const early = computePlotGrowth(g.plots["home-2"], t0 + 2_000);
+    expect(early.stage).toBe(1);
+    expect(early.readyToHarvest).toBe(false);
+
+    // Watering accelerates growth by +36%
+    const watered = waterGardenPlot(g, "home-2", t0 + 5_000);
+    expect(watered.boosted).toBe(true);
+    const mid = computePlotGrowth(watered.nextState.plots["home-2"], t0 + 5_000);
+    expect(mid.progress).toBeGreaterThan(early.progress + 0.3);
+
+    // Crystal mist fertilizes straight to stage 3 ready-to-harvest bloom
+    const bloomed = fertilizeGardenPlot(watered.nextState, "home-2", t0 + 6_000);
+    expect(computePlotGrowth(bloomed.plots["home-2"], t0 + 6_000).stage).toBe(3);
+    expect(computePlotGrowth(bloomed.plots["home-2"], t0 + 6_000).readyToHarvest).toBe(true);
+
+    // Harvesting awards sparks, increments Almanac counts & clears plot for replanting
+    const harvested = harvestGardenPlot(bloomed, "home-2", t0 + 7_000);
+    expect(harvested.harvested?.id).toBe("orchid");
+    expect(harvested.sparksEarned).toBe(7);
+    expect(harvested.nextState.totalHarvests).toBe(1);
+    expect(harvested.nextState.harvestedCounts.orchid).toBe(1);
+    expect(harvested.nextState.plots["home-2"].speciesId).toBeNull();
+
+    // Persistence round-trip
+    saveGardenState(314, harvested.nextState);
+    expect(loadGardenState(314).totalHarvests).toBe(1);
+
+    // Sims Pie Actions for Garden Beds (empty / growing / ready), Conservatory & Park Benches
+    const plotTarget: SimsObjectTarget = {
+      kind: "garden-plot",
+      label: "Park Bed #1",
+      plotId: "park-1",
+      worldX: 12.6,
+      worldZ: 12.85
+    };
+    expect(getSimsPieActions(plotTarget, { gardenPlotStatus: "empty" })[0].id).toBe("garden-plant-lavender");
+    expect(getSimsPieActions(plotTarget, { gardenPlotStatus: "growing" })[0].id).toBe("garden-water");
+    expect(getSimsPieActions(plotTarget, { gardenPlotStatus: "ready" })[0].id).toBe("garden-harvest");
+    expect(
+      getSimsPieActions({ kind: "conservatory", label: "Grand Botanical Conservatory", worldX: 13.6, worldZ: 12.6 })
+        .some((a) => a.id === "park-tend-community")
+    ).toBe(true);
+    expect(
+      getSimsPieActions({ kind: "park-bench", label: "Sakura Picnic Park", worldX: -14.8, worldZ: 14.5 })
+        .some((a) => a.id === "park-feed-koi")
+    ).toBe(true);
   });
 });

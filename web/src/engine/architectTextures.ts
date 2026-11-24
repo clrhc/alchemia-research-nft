@@ -228,7 +228,9 @@ export type MoodBubbleKind =
   | "wave"
   | "dna"
   | "coin"
-  | "idea";
+  | "idea"
+  | "water"
+  | "flower";
 
 /**
  * Procedural Warm Travertine, Slate Basalt, Rose Marble, Nordic Silver Oak & Pearl Graphite
@@ -393,44 +395,163 @@ export function createDistrictGroundTexture(): THREE.CanvasTexture {
   const cx = size / 2;
   const cy = size / 2;
 
-  // Serene architectural pale alabaster-sage landscaped park ground
-  const rad = ctx.createRadialGradient(cx, cy, 40, cx, cy, 512);
-  rad.addColorStop(0, "#eef3f8");
-  rad.addColorStop(0.28, "#e6efe9");
-  rad.addColorStop(0.62, "#e0ebe4");
-  rad.addColorStop(1, "#eaf0f6");
+  // Lush sunlit botanical meadow parkland so paved stone streets & flower gardens pop crisply!
+  const rad = ctx.createRadialGradient(cx, cy, 36, cx, cy, 512);
+  rad.addColorStop(0, "#dcefe2");
+  rad.addColorStop(0.28, "#cce7d3");
+  rad.addColorStop(0.64, "#c2e2cb");
+  rad.addColorStop(1, "#d2ead8");
   ctx.fillStyle = rad;
   ctx.fillRect(0, 0, size, size);
 
-  // Subtle concentric architectural garden ring paths
-  const rings = [110, 178, 255, 360, 448];
-  rings.forEach((r, i) => {
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.strokeStyle = i === 1 ? "rgba(255,255,255,0.75)" : "rgba(148,163,184,0.22)";
-    ctx.lineWidth = i === 1 ? 18 : 1.5;
-    ctx.stroke();
-  });
-
-  // Soft sunlit botanical lawn stipple
+  // Soft painterly botanical lawn patches & sun-dappled meadow variation
   let seed = 91823;
   const rand = () => {
     seed = (seed * 16807) % 2147483647;
     return seed / 2147483647;
   };
-  for (let i = 0; i < 1400; i++) {
+  for (let i = 0; i < 42; i++) {
+    const px = rand() * size;
+    const py = rand() * size;
+    const pr = 42 + rand() * 88;
+    const g = ctx.createRadialGradient(px, py, 4, px, py, pr);
+    g.addColorStop(0, i % 2 === 0 ? "rgba(134, 239, 172, 0.22)" : "rgba(255, 255, 255, 0.22)");
+    g.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(px - pr, py - pr, pr * 2, pr * 2);
+  }
+
+  // Fine sunlit grass blades, clover tufts & tiny meadow wildflowers
+  for (let i = 0; i < 2400; i++) {
     const x = rand() * size;
     const y = rand() * size;
+    const pick = i % 15;
     ctx.fillStyle =
-      i % 3 === 0 ? "rgba(167, 214, 191, 0.24)" : "rgba(255, 255, 255, 0.28)";
+      pick === 0
+        ? "rgba(255, 255, 255, 0.58)"
+        : pick === 1
+          ? "rgba(251, 207, 232, 0.45)"
+          : pick % 2 === 0
+            ? "rgba(110, 198, 152, 0.34)"
+            : "rgba(167, 224, 188, 0.34)";
     ctx.beginPath();
-    ctx.arc(x, y, 1 + rand() * 2.2, 0, Math.PI * 2);
+    ctx.arc(x, y, 0.9 + rand() * 2.1, 0, Math.PI * 2);
     ctx.fill();
   }
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
+  return tex;
+}
+
+/**
+ * Procedural Architectural Paved Cobblestone / Silver-Slate Boulevard Road Texture!
+ * Gives Alchemia Town crisp European-modern stone pavers, subtle wheel polish,
+ * and honed limestone curb seams.
+ */
+export function createPavedRoadTexture(): THREE.CanvasTexture {
+  const size = 512;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+
+  // Cool honed slate-silver architectural asphalt/paver base
+  ctx.fillStyle = "#6b778a";
+  ctx.fillRect(0, 0, size, size);
+
+  let seed = 55109;
+  const rand = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+
+  // Running-bond cobblestone / ashlar granite street blocks
+  const rowH = 32;
+  const colW = 64;
+  for (let row = 0; row < size / rowH; row++) {
+    const y = row * rowH;
+    const offset = (row % 2) * (colW / 2);
+    for (let col = -1; col <= size / colW + 1; col++) {
+      const x = col * colW + offset;
+      const shade = Math.round(104 + (rand() - 0.5) * 18);
+      ctx.fillStyle = `rgb(${shade}, ${shade + 8}, ${shade + 20})`;
+      ctx.fillRect(x + 1.5, y + 1.5, colW - 3, rowH - 3);
+
+      // Soft top-edge highlight on each stone paver
+      ctx.fillStyle = "rgba(241, 245, 249, 0.14)";
+      ctx.fillRect(x + 2, y + 2, colW - 4, 3);
+    }
+  }
+
+  // Fine mineral aggregate speckle for realistic stone grain
+  for (let i = 0; i < 900; i++) {
+    const sx = rand() * size;
+    const sy = rand() * size;
+    ctx.fillStyle = i % 2 === 0 ? "rgba(255,255,255,0.12)" : "rgba(30,41,59,0.14)";
+    ctx.fillRect(sx, sy, 2, 2);
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+/**
+ * Procedural Warm Sunlit Garden Stepping-Stone & Gravel Park Footpath Texture!
+ */
+export function createGardenPathTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+
+  ctx.fillStyle = "#e8e3d6";
+  ctx.fillRect(0, 0, size, size);
+
+  let seed = 31991;
+  const rand = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+
+  // Warm limestone stepping flagstones
+  const stones: Array<[number, number, number, number]> = [
+    [16, 14, 96, 52],
+    [126, 18, 112, 48],
+    [10, 82, 74, 56],
+    [98, 78, 86, 60],
+    [196, 80, 50, 56],
+    [22, 152, 108, 46],
+    [144, 150, 96, 50],
+    [14, 208, 92, 40],
+    [120, 210, 120, 38]
+  ];
+  for (const [x, y, w, h] of stones) {
+    const tint = Math.round(238 + (rand() - 0.5) * 14);
+    ctx.fillStyle = `rgb(${tint}, ${tint - 3}, ${tint - 10})`;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, 10);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(148, 163, 184, 0.28)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  for (let i = 0; i < 400; i++) {
+    ctx.fillStyle = i % 2 === 0 ? "rgba(255,255,255,0.32)" : "rgba(120,113,108,0.16)";
+    ctx.fillRect(rand() * size, rand() * size, 2, 2);
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
 
@@ -566,6 +687,29 @@ export function createMoodBubbleTexture(kind: MoodBubbleKind): THREE.CanvasTextu
     ctx.fill();
     ctx.fillStyle = "#64748b";
     ctx.fillRect(58, 64, 12, 7);
+  } else if (kind === "water") {
+    ctx.fillStyle = "#38bdf8";
+    ctx.beginPath();
+    ctx.moveTo(64, 34);
+    ctx.bezierCurveTo(78, 52, 80, 66, 64, 74);
+    ctx.bezierCurveTo(48, 66, 50, 52, 64, 34);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.65)";
+    ctx.beginPath();
+    ctx.arc(59, 57, 4, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (kind === "flower") {
+    for (let p = 0; p < 5; p++) {
+      const ang = (p / 5) * Math.PI * 2 - Math.PI / 2;
+      ctx.fillStyle = p % 2 === 0 ? "#f472b6" : "#fbcfe8";
+      ctx.beginPath();
+      ctx.arc(64 + Math.cos(ang) * 11, 56 + Math.sin(ang) * 11, 8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = "#fbbf24";
+    ctx.beginPath();
+    ctx.arc(64, 56, 6.5, 0, Math.PI * 2);
+    ctx.fill();
   } else {
     ctx.fillStyle = "#f59e0b";
     ctx.beginPath();

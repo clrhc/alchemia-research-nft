@@ -22,6 +22,7 @@ import {
   Dices,
   DoorOpen,
   Download,
+  Droplets,
   Eye,
   FileJson,
   Flame,
@@ -59,11 +60,13 @@ import {
   Smile,
   Sofa,
   Sparkles,
+  Sprout,
   Star,
   Sun,
   Sunset,
   Tag,
   Timer,
+  Trees,
   Trophy,
   UserRound,
   Users,
@@ -114,6 +117,7 @@ import {
 } from "../engine/homeLayout";
 import {
   COMMUNITY_FOUNTAIN_POS,
+  TOWN_PARKS,
   buildNeighborhoodRoster,
   computeNeighborhoodPlacements,
   computeUpcomingBlueprintLots,
@@ -121,6 +125,20 @@ import {
   getNeighborhoodGrowthStage,
   type NeighborLabSummary
 } from "../engine/neighborhoodLayout";
+import {
+  GARDEN_PLOT_DEFS,
+  PLANT_SPECIES,
+  PLANT_SPECIES_BY_ID,
+  computePlotGrowth,
+  fertilizeGardenPlot,
+  harvestGardenPlot,
+  loadGardenState,
+  plantSeedInPlot,
+  saveGardenState,
+  waterGardenPlot,
+  type GardenWorldState,
+  type PlantSpeciesId
+} from "../engine/gardenState";
 import { declutterFloatingLabels, type DeclutterInput } from "../engine/spatialDeclutter";
 import { deriveTraitsFromSeed } from "../engine/prng";
 import {
@@ -476,6 +494,10 @@ export function LabWorldExperience({
   const [activeFloor, setActiveFloor] = useState<FloorNumber>(1);
   const [movingItem, setMovingItem] = useState<MovableItemId | null>(null);
   const [moveSnapGrid, setMoveSnapGrid] = useState<boolean>(true);
+  const [gardenState, setGardenState] = useState<GardenWorldState>(() =>
+    loadGardenState(activeVessel.tokenId)
+  );
+  const [townSubTab, setTownSubTab] = useState<"town" | "gardens">("town");
   const [neighborhoodDrawerOpen, setNeighborhoodDrawerOpen] = useState(false);
   const neighborhoodDrawerOpenRef = useRef(false);
   neighborhoodDrawerOpenRef.current = neighborhoodDrawerOpen;
@@ -668,6 +690,7 @@ export function LabWorldExperience({
     setInspectedNeighbor(null);
     setActiveFloor(1);
     setMovingItem(null);
+    setGardenState(loadGardenState(activeVessel.tokenId));
   }, [activeVessel.tokenId, activeVessel.seed, isVisiting]);
 
   useEffect(() => {
@@ -1624,6 +1647,153 @@ export function LabWorldExperience({
     setFeedback("Reset all 9 stations & furniture pieces to their spacious default layout!");
   }, [labDecor, updateLabDecor]);
 
+  // ============================================================================
+  // Botanical Town Parks, Home Courtyard Gardens & Community Conservatory Beds!
+  // ============================================================================
+  const readyGardenCount = useMemo(
+    () =>
+      GARDEN_PLOT_DEFS.filter((d) => computePlotGrowth(gardenState.plots[d.id], nowTick).readyToHarvest)
+        .length,
+    [gardenState, nowTick]
+  );
+
+  const handlePlantSeed = useCallback(
+    (plotId: string, speciesId: PlantSpeciesId) => {
+      const next = saveGardenState(
+        activeVessel.tokenId,
+        plantSeedInPlot(gardenState, plotId, speciesId, Date.now())
+      );
+      setGardenState(next);
+      artworkRef.current?.waterGardenPlotFX(plotId);
+      soundEngine.playTap(1046.5);
+      setCharacterEmote((prev) => ({ emote: "hop", seq: (prev?.seq || 0) + 1 }));
+      const sp = PLANT_SPECIES_BY_ID[speciesId];
+      setSimsVibes((v) => applySimsVibeDelta(v, { focus: 6, fun: 8 }));
+      setFeedback(`Planted ${sp.name}! Water it anytime to speed up bloom (${sp.growSeconds}s).`);
+    },
+    [activeVessel.tokenId, gardenState]
+  );
+
+  const handleWaterPlot = useCallback(
+    (plotId: string) => {
+      const res = waterGardenPlot(gardenState, plotId, Date.now());
+      const saved = saveGardenState(activeVessel.tokenId, res.nextState);
+      setGardenState(saved);
+      artworkRef.current?.waterGardenPlotFX(plotId);
+      soundEngine.playTap(1174.66);
+      setSimsVibes((v) => applySimsVibeDelta(v, { focus: 8, energy: 4 }));
+      triggerPlayerMoodlet("Relaxed", "Garden Watering", "Botanical Bed");
+      setFeedback(
+        res.boosted
+          ? "Watered plant! +36% growth speed boost with sparkling dew."
+          : "Admired your blooming flowers — ready to harvest!"
+      );
+    },
+    [activeVessel.tokenId, gardenState, triggerPlayerMoodlet]
+  );
+
+  const handleFertilizePlot = useCallback(
+    (plotId: string) => {
+      const saved = saveGardenState(
+        activeVessel.tokenId,
+        fertilizeGardenPlot(gardenState, plotId, Date.now())
+      );
+      setGardenState(saved);
+      artworkRef.current?.waterGardenPlotFX(plotId);
+      soundEngine.playBuildRoom();
+      setFeedback("Applied botanical crystal mist — instant full radiant bloom!");
+    },
+    [activeVessel.tokenId, gardenState]
+  );
+
+  const handleHarvestPlot = useCallback(
+    (plotId: string) => {
+      const res = harvestGardenPlot(gardenState, plotId, Date.now());
+      if (!res.harvested) return;
+      const saved = saveGardenState(activeVessel.tokenId, res.nextState);
+      setGardenState(saved);
+      artworkRef.current?.waterGardenPlotFX(plotId);
+      soundEngine.playBuildRoom();
+      onAwardPlayBonus?.(res.sparksEarned);
+      setSimsVibes((v) => applySimsVibeDelta(v, res.harvested!.vibeDelta));
+      setCharacterEmote((prev) => ({ emote: "spin", seq: (prev?.seq || 0) + 1 }));
+      triggerPlayerMoodlet("Inspired", `Harvested ${res.harvested.name}!`, "Botanical Garden");
+      setFeedback(
+        `Harvested ${res.harvested.name}! ${res.harvested.moodPerk}${
+          onAwardPlayBonus ? ` · +${res.sparksEarned} sparks` : ""
+        }!`
+      );
+    },
+    [activeVessel.tokenId, gardenState, onAwardPlayBonus, triggerPlayerMoodlet]
+  );
+
+  const handleWaterAllPlots = useCallback(() => {
+    let cur = gardenState;
+    let count = 0;
+    const now = Date.now();
+    for (const def of GARDEN_PLOT_DEFS) {
+      const res = waterGardenPlot(cur, def.id, now);
+      if (res.boosted) {
+        cur = res.nextState;
+        count++;
+        artworkRef.current?.waterGardenPlotFX(def.id);
+      }
+    }
+    if (count === 0) {
+      setFeedback("All planted beds are already blooming! Plant a new seed or harvest ready blooms.");
+      return;
+    }
+    setGardenState(saveGardenState(activeVessel.tokenId, cur));
+    soundEngine.playBuildRoom();
+    setSimsVibes((v) => applySimsVibeDelta(v, { focus: 12, energy: 8 }));
+    setFeedback(`Watered ${count} garden ${count === 1 ? "bed" : "beds"} across your home & park!`);
+  }, [activeVessel.tokenId, gardenState]);
+
+  const handleHarvestAllPlots = useCallback(() => {
+    let cur = gardenState;
+    let totalSparks = 0;
+    let harvestedCount = 0;
+    const now = Date.now();
+    for (const def of GARDEN_PLOT_DEFS) {
+      const res = harvestGardenPlot(cur, def.id, now);
+      if (res.harvested) {
+        cur = res.nextState;
+        totalSparks += res.sparksEarned;
+        harvestedCount++;
+        artworkRef.current?.waterGardenPlotFX(def.id);
+      }
+    }
+    if (harvestedCount === 0) {
+      setFeedback("No blooms ready to harvest yet — water your plants to speed them up!");
+      return;
+    }
+    setGardenState(saveGardenState(activeVessel.tokenId, cur));
+    onAwardPlayBonus?.(totalSparks);
+    soundEngine.playBuildRoom();
+    setCharacterEmote((prev) => ({ emote: "spin", seq: (prev?.seq || 0) + 1 }));
+    setSimsVibes((v) => applySimsVibeDelta(v, { energy: 16, focus: 16, fun: 16 }));
+    triggerPlayerMoodlet("Inspired", "Grand Botanical Harvest!", "Alchemia Gardens");
+    setFeedback(
+      `Harvested ${harvestedCount} blooming ${harvestedCount === 1 ? "bed" : "beds"}${
+        onAwardPlayBonus ? ` · +${totalSparks} sparks` : ""
+      }!`
+    );
+  }, [activeVessel.tokenId, gardenState, onAwardPlayBonus, triggerPlayerMoodlet]);
+
+  const handleWalkToPark = useCallback((parkId: string) => {
+    const park = TOWN_PARKS.find((p) => p.id === parkId) || TOWN_PARKS[0];
+    if (!park) return;
+    setPieMenu(null);
+    setOpenStation(null);
+    setNeighborhoodDrawerOpen(false);
+    setActiveFloor(1);
+    setCameraMode("follow");
+    setCurrentActivity(`Strolling to ${park.name}`);
+    artworkRef.current?.walkToPark(park.id);
+    soundEngine.playTap(1046.5);
+    setFeedback(`Walking down the paved boulevard to ${park.name}!`);
+  }, []);
+
   let pendingCoins: number;
   if (
     activeVessel.onChain &&
@@ -2398,6 +2568,183 @@ export function LabWorldExperience({
       case "lot-mint-wave":
         handleSpawnNeighborMint(5);
         break;
+
+      case "garden-plant-lavender":
+      case "garden-plant-sunflower":
+      case "garden-plant-sakura":
+      case "garden-plant-orchid":
+        if (target.kind === "garden-plot") {
+          const sp = actionId.replace("garden-plant-", "") as PlantSpeciesId;
+          setCameraMode("follow");
+          setActiveFloor(1);
+          setCurrentActivity(`Planting ${PLANT_SPECIES_BY_ID[sp].name}`);
+          artworkRef.current?.performSimsAction({
+            x: target.worldX,
+            z: target.worldZ,
+            floor: 1,
+            emote: "hop",
+            bubble: "flower",
+            burstColor: PLANT_SPECIES_BY_ID[sp].petalHex,
+            onArrive: () => handlePlantSeed(target.plotId, sp)
+          });
+        }
+        break;
+      case "garden-water":
+        if (target.kind === "garden-plot") {
+          setCameraMode("follow");
+          setActiveFloor(1);
+          setCurrentActivity("Watering Botanical Bed");
+          artworkRef.current?.performSimsAction({
+            x: target.worldX,
+            z: target.worldZ,
+            floor: 1,
+            emote: "wave",
+            bubble: "water",
+            burstColor: "#38bdf8",
+            onArrive: () => handleWaterPlot(target.plotId)
+          });
+        }
+        break;
+      case "garden-fertilize":
+        if (target.kind === "garden-plot") {
+          setCameraMode("follow");
+          setActiveFloor(1);
+          setCurrentActivity("Applying Crystal Mist");
+          artworkRef.current?.performSimsAction({
+            x: target.worldX,
+            z: target.worldZ,
+            floor: 1,
+            emote: "spin",
+            bubble: "sparkle",
+            burstColor: "#a855f7",
+            onArrive: () => handleFertilizePlot(target.plotId)
+          });
+        }
+        break;
+      case "garden-harvest":
+        if (target.kind === "garden-plot") {
+          setCameraMode("follow");
+          setActiveFloor(1);
+          setCurrentActivity("Harvesting Botanical Blooms");
+          artworkRef.current?.performSimsAction({
+            x: target.worldX,
+            z: target.worldZ,
+            floor: 1,
+            emote: "spin",
+            bubble: "flower",
+            burstColor: "#10b981",
+            onArrive: () => handleHarvestPlot(target.plotId)
+          });
+        }
+        break;
+      case "open-garden":
+        setOpenStation(null);
+        setTownSubTab("gardens");
+        setNeighborhoodDrawerOpen(true);
+        soundEngine.playTap(1046.5);
+        break;
+      case "park-smell-flowers":
+        setCameraMode("follow");
+        setActiveFloor(1);
+        setCurrentActivity("Breathing Conservatory Mist");
+        artworkRef.current?.performSimsAction({
+          x: target.worldX,
+          z: target.worldZ,
+          floor: 1,
+          emote: "wave",
+          bubble: "flower",
+          burstColor: "#10b981",
+          onArrive: () => {
+            setSimsVibes((v) => applySimsVibeDelta(v, { energy: 18, focus: 18 }));
+            triggerPlayerMoodlet("Inspired", "Conservatory Mist", target.label);
+            soundEngine.playBuildRoom();
+            setFeedback(`Breathed fragrant botanical mist at ${target.label} — feeling Inspired!`);
+          }
+        });
+        break;
+      case "park-tend-community":
+        setCameraMode("follow");
+        setActiveFloor(1);
+        setCurrentActivity("Tending Town Greenhouse");
+        artworkRef.current?.performSimsAction({
+          x: target.worldX,
+          z: target.worldZ,
+          floor: 1,
+          posture: "analyze",
+          bubble: "water",
+          burstColor: "#38bdf8",
+          onArrive: () => {
+            onAwardPlayBonus?.(2);
+            setSimsVibes((v) => applySimsVibeDelta(v, { focus: 16, social: 14 }));
+            triggerPlayerMoodlet("Social", "Community Gardener", target.label);
+            soundEngine.playBuildRoom();
+            setFeedback(
+              `Tended the town greenhouse plants!${onAwardPlayBonus ? " +2 sparks" : ""} · +14 Social.`
+            );
+          }
+        });
+        break;
+      case "park-relax":
+        setCameraMode("follow");
+        setActiveFloor(1);
+        setCurrentActivity(`Relaxing at ${target.label}`);
+        artworkRef.current?.performSimsAction({
+          x: target.worldX,
+          z: target.worldZ,
+          floor: 1,
+          posture: "sit",
+          bubble: "sparkle",
+          burstColor: "#10b981",
+          onArrive: () => {
+            setSimsVibes((v) => applySimsVibeDelta(v, { energy: 26, focus: 12 }));
+            triggerPlayerMoodlet("Relaxed", "Park Breeze", target.label);
+            soundEngine.playTap(1046.5);
+            setFeedback(`Relaxed on the park bench at ${target.label} — +26 Energy!`);
+          }
+        });
+        break;
+      case "park-picnic":
+        setCameraMode("follow");
+        setActiveFloor(1);
+        setCurrentActivity(`Picnicking at ${target.label}`);
+        artworkRef.current?.performSimsAction({
+          x: target.worldX,
+          z: target.worldZ,
+          floor: 1,
+          posture: "sit",
+          emote: "wave",
+          bubble: "flower",
+          burstColor: "#f472b6",
+          onArrive: () => {
+            setSimsVibes((v) => applySimsVibeDelta(v, { fun: 22, social: 20, energy: 14 }));
+            triggerPlayerMoodlet("Playful", "Botanical Picnic!", target.label);
+            soundEngine.playBuildRoom();
+            setFeedback(`Enjoyed a sunny picnic at ${target.label} — +22 Fun & +20 Social!`);
+          }
+        });
+        break;
+      case "park-feed-koi":
+        setCameraMode("follow");
+        setActiveFloor(1);
+        setCurrentActivity("Feeding Park Koi Fish");
+        artworkRef.current?.performSimsAction({
+          x: target.worldX,
+          z: target.worldZ,
+          floor: 1,
+          emote: "hop",
+          bubble: "water",
+          burstColor: "#fb923c",
+          onArrive: () => {
+            onAwardPlayBonus?.(1);
+            setSimsVibes((v) => applySimsVibeDelta(v, { fun: 16, energy: 12 }));
+            triggerPlayerMoodlet("Relaxed", "Koi Pond Zen", target.label);
+            soundEngine.playTap(1174.66);
+            setFeedback(
+              `Fed the swimming golden koi fish!${onAwardPlayBonus ? " +1 spark" : ""} · feeling Relaxed.`
+            );
+          }
+        });
+        break;
     }
   };
 
@@ -2539,6 +2886,7 @@ export function LabWorldExperience({
         activeStationHighlight={openStation || nearStation}
         neighbors={neighbors}
         labDecor={labDecor}
+        gardenState={gardenState}
         activeFloor={activeFloor}
         movingItem={movingItem}
         moveSnapGrid={moveSnapGrid}
@@ -2627,7 +2975,14 @@ export function LabWorldExperience({
             petSleeping: vitals.sleeping,
             standalone: standaloneMode,
             currentFloor: activeFloor,
-            maxFloors: labDecor.houseFloors
+            maxFloors: labDecor.houseFloors,
+            gardenPlotStatus:
+              pieMenu.target.kind === "garden-plot"
+                ? (() => {
+                    const g = computePlotGrowth(gardenState.plots[pieMenu.target.plotId], nowTick);
+                    return g.stage === 0 ? "empty" : g.readyToHarvest ? "ready" : "growing";
+                  })()
+                : undefined
           })}
           onSelect={(actionId) => handleSimsPieAction(actionId, pieMenu.target)}
           onClose={() => setPieMenu(null)}
@@ -5415,6 +5770,223 @@ export function LabWorldExperience({
 
           <div className="world-drawer-scroll">
             <div className="world-drawer-stack">
+              <div className="builder-subtabs" role="tablist" aria-label="Town & Parks view">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={townSubTab === "town"}
+                  className={`builder-subtab clickable ${townSubTab === "town" ? "active" : ""}`}
+                  onClick={() => {
+                    setTownSubTab("town");
+                    soundEngine.playTap(987.77);
+                  }}
+                >
+                  <MapPin size={12} /> Town ({neighbors.length + 1})
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={townSubTab === "gardens"}
+                  className={`builder-subtab clickable ${townSubTab === "gardens" ? "active" : ""}`}
+                  onClick={() => {
+                    setTownSubTab("gardens");
+                    soundEngine.playTap(1046.5);
+                  }}
+                >
+                  <Flower2 size={12} /> Parks &amp; Gardens
+                  {readyGardenCount > 0 ? ` (${readyGardenCount}!)` : ""}
+                </button>
+              </div>
+
+              {townSubTab === "gardens" ? (
+                <div className="world-drawer-stack">
+                  {/* 4 Walkable Botanical Town Parks */}
+                  <div className="expand-section-card">
+                    <div className="single-kicker">
+                      4 Walkable Town Parks &amp; Glass Conservatory
+                    </div>
+                    <div className="world-sector-list" style={{ marginTop: 6 }}>
+                      {TOWN_PARKS.map((park) => (
+                        <div key={park.id} className="park-card">
+                          <span
+                            className="cute-icon-bubble is-sm"
+                            style={{ "--bubble-accent": park.accent } as React.CSSProperties}
+                          >
+                            <Trees size={11} />
+                          </span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <strong>{park.name}</strong>
+                            <div className="tama-sub">{park.subtitle}</div>
+                          </div>
+                          <button
+                            type="button"
+                            className="sector-btn clickable"
+                            style={{ padding: "4px 9px", fontSize: "0.68rem" }}
+                            onClick={() => handleWalkToPark(park.id)}
+                          >
+                            <Footprints size={10} /> Walk
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Seed Packet Picker + Bulk Water/Harvest Controls */}
+                  <div className="expand-section-card">
+                    <div className="furnish-header-row">
+                      <span className="single-kicker">Choose Seed Packet (8 Species)</span>
+                      <div style={{ display: "flex", gap: 5 }}>
+                        <button
+                          type="button"
+                          className="subtle-pill-btn clickable"
+                          style={{ padding: "3px 8px", fontSize: "0.68rem" }}
+                          onClick={handleWaterAllPlots}
+                        >
+                          <Droplets size={10} /> Water All
+                        </button>
+                        <button
+                          type="button"
+                          className="sector-btn clickable"
+                          style={{ padding: "3px 8px", fontSize: "0.68rem" }}
+                          onClick={handleHarvestAllPlots}
+                        >
+                          <Sparkles size={10} /> Harvest{readyGardenCount > 0 ? ` (${readyGardenCount})` : ""}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="seed-chip-grid" style={{ marginTop: 7 }}>
+                      {PLANT_SPECIES.map((sp) => {
+                        const selected = gardenState.selectedSeed === sp.id;
+                        return (
+                          <button
+                            key={sp.id}
+                            type="button"
+                            className={`seed-chip clickable ${selected ? "active" : ""}`}
+                            onClick={() => {
+                              setGardenState((prev) =>
+                                saveGardenState(activeVessel.tokenId, { ...prev, selectedSeed: sp.id })
+                              );
+                              soundEngine.playTap(987.77);
+                            }}
+                            title={`${sp.desc} · ${sp.growSeconds}s · +${sp.harvestSparks} sparks`}
+                          >
+                            <span className="cause-dot" style={{ background: sp.petalHex }} />
+                            <span>{sp.name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* All 10 Live Growing Garden Beds (4 Home Courtyard + 6 Botanical Park!) */}
+                  <div className="expand-section-card">
+                    <div className="single-kicker">
+                      Home Courtyard &amp; Park Allotment Beds ({GARDEN_PLOT_DEFS.length})
+                    </div>
+                    <div className="world-sector-list" style={{ marginTop: 6 }}>
+                      {GARDEN_PLOT_DEFS.map((def) => {
+                        const plot = gardenState.plots[def.id];
+                        const snap = computePlotGrowth(plot, nowTick);
+                        const pct = Math.round(snap.progress * 100);
+                        return (
+                          <div key={def.id} className="garden-plot-card">
+                            <div className="expand-room-top">
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div className="neighbor-card-title">
+                                  <strong>{def.label}</strong>
+                                  <span className="move-floor-badge">
+                                    {def.zone === "home" ? "Home" : "Park"}
+                                  </span>
+                                </div>
+                                <div className="tama-sub">
+                                  {snap.species
+                                    ? snap.readyToHarvest
+                                      ? `${snap.species.name} · Full Bloom! (+${snap.species.harvestSparks} sparks)`
+                                      : `${snap.species.name} · ${pct}% (${snap.secondsLeft}s left)`
+                                    : "Empty sunlit soil — ready for seeds"}
+                                </div>
+                              </div>
+                              <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                                {!snap.species ? (
+                                  <button
+                                    type="button"
+                                    className="sector-btn clickable"
+                                    style={{ padding: "4px 9px", fontSize: "0.68rem" }}
+                                    onClick={() => handlePlantSeed(def.id, gardenState.selectedSeed)}
+                                  >
+                                    <Sprout size={10} /> Plant
+                                  </button>
+                                ) : snap.readyToHarvest ? (
+                                  <button
+                                    type="button"
+                                    className="sector-btn clickable"
+                                    style={{ padding: "4px 9px", fontSize: "0.68rem" }}
+                                    onClick={() => handleHarvestPlot(def.id)}
+                                  >
+                                    <Sparkles size={10} /> Harvest
+                                  </button>
+                                ) : (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="subtle-pill-btn clickable"
+                                      style={{ padding: "4px 8px", fontSize: "0.68rem" }}
+                                      onClick={() => handleWaterPlot(def.id)}
+                                      title="Water plant (+36% growth)"
+                                    >
+                                      <Droplets size={10} /> Water
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="inline-icon-btn clickable"
+                                      onClick={() => handleFertilizePlot(def.id)}
+                                      title="Crystal mist — instant bloom"
+                                      aria-label={`Instant bloom ${def.label}`}
+                                    >
+                                      <Sparkles size={11} />
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                            {snap.species && (
+                              <div className="garden-progress-track">
+                                <div
+                                  className="garden-progress-fill"
+                                  style={{
+                                    width: `${Math.max(6, pct)}%`,
+                                    background: snap.species.petalHex
+                                  }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Botanical Almanac (8 Collectible Species) */}
+                  <div className="expand-section-card">
+                    <div className="single-kicker">
+                      Botanical Almanac · {gardenState.totalHarvests} Total Harvests
+                    </div>
+                    <div className="almanac-grid" style={{ marginTop: 6 }}>
+                      {PLANT_SPECIES.map((sp) => {
+                        const cnt = gardenState.harvestedCounts[sp.id] ?? 0;
+                        return (
+                          <div key={sp.id} className={`almanac-badge ${cnt > 0 ? "collected" : ""}`}>
+                            <span className="cause-dot" style={{ background: sp.petalHex }} />
+                            <span>{sp.name}</span>
+                            <strong>×{cnt}</strong>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
               {/* Live Town Growth Progress & Civic Milestone Unlocks */}
               <div className="town-growth-card">
                 <div className="town-growth-head">
@@ -5763,6 +6335,8 @@ export function LabWorldExperience({
                   </div>
                 </div>
               )}
+                </>
+              )}
             </div>
           </div>
         </aside>
@@ -5795,14 +6369,39 @@ export function LabWorldExperience({
             })}
             <button
               type="button"
-              className={`world-dock-btn clickable ${neighborhoodDrawerOpen ? "active" : ""}`}
+              className={`world-dock-btn clickable ${
+                neighborhoodDrawerOpen && townSubTab === "town" ? "active" : ""
+              }`}
               style={{ "--dock-accent": "#0ea5e9" } as React.CSSProperties}
-              onClick={handleOpenNeighborhood}
+              onClick={() => {
+                setTownSubTab("town");
+                handleOpenNeighborhood();
+              }}
             >
               <span className="dock-icon-charm">
                 <Users size={13} />
               </span>
               <span>Town</span>
+            </button>
+            <button
+              type="button"
+              className={`world-dock-btn clickable ${
+                neighborhoodDrawerOpen && townSubTab === "gardens" ? "active" : ""
+              }`}
+              style={{ "--dock-accent": "#10b981" } as React.CSSProperties}
+              onClick={() => {
+                soundEngine.playTap(1046.5);
+                setPieMenu(null);
+                setOpenStation(null);
+                setTownSubTab("gardens");
+                setNeighborhoodDrawerOpen((open) => (townSubTab === "gardens" ? !open : true));
+              }}
+              title="Open Town Parks, Glass Conservatory & Plant Gardens"
+            >
+              <span className="dock-icon-charm">
+                <Flower2 size={13} />
+              </span>
+              <span>{readyGardenCount > 0 ? `Gardens (${readyGardenCount})` : "Gardens"}</span>
             </button>
           </div>
 
@@ -6084,6 +6683,23 @@ export function LabWorldExperience({
                       <title>Next Mint · Lot #{lot.lotNumber}</title>
                     </circle>
                   ))}
+                {/* 4 Clickable Emerald Town Parks on District Radar */}
+                {TOWN_PARKS.map((park) => (
+                  <circle
+                    key={park.id}
+                    cx={56 + (park.x / 26.8) * 44}
+                    cy={56 + (park.z / 26.8) * 44}
+                    r={park.id === "conservatory" ? 4.4 : 3.4}
+                    fill="#34d399"
+                    stroke="#ffffff"
+                    strokeWidth="1.1"
+                    className="clickable"
+                    style={{ cursor: "pointer" }}
+                    onClick={() => handleWalkToPark(park.id)}
+                  >
+                    <title>Walk to {park.name}</title>
+                  </circle>
+                ))}
                 {/* Clickable Ring 1 + Ring 2 Walkable Neighbor Homes! */}
                 {[...ring1Placements, ...ring2Placements].map((pl) => {
                   const nx = 56 + (pl.x / 26.8) * 44;

@@ -92,6 +92,66 @@ export const MAX_NEIGHBORHOOD_PLOTS = 120;
 /** Shared Community Research Fountain Plaza positioned cleanly on the South boulevard */
 export const COMMUNITY_FOUNTAIN_POS: readonly [number, number] = [0, 5.45];
 
+/** Grand Alchemia Botanical Park & Glass Conservatory center in the wide SE greenbelt */
+export const TOWN_PARK_CENTER: readonly [number, number] = [15.2, 15.2];
+
+export interface TownParkDef {
+  id: "conservatory" | "sakura-park" | "herb-orchard" | "rose-gardens";
+  name: string;
+  subtitle: string;
+  x: number;
+  z: number;
+  visitX: number;
+  visitZ: number;
+  accent: string;
+}
+
+/**
+ * 4 Walkable Quadrant Town Parks nested in wide 12.6m diagonal greenbelts across the Canal Bridges!
+ */
+export const TOWN_PARKS: readonly TownParkDef[] = [
+  {
+    id: "conservatory",
+    name: "Grand Botanical Park",
+    subtitle: "Glass Conservatory, 6 Community Garden Beds & Koi Pond",
+    x: 15.2,
+    z: 15.2,
+    visitX: 13.6,
+    visitZ: 12.6,
+    accent: "#10b981"
+  },
+  {
+    id: "sakura-park",
+    name: "Sakura Picnic Park",
+    subtitle: "Cherry Blossom Grove, Drifting Petals & Zen Lanterns",
+    x: -15.2,
+    z: 15.2,
+    visitX: -13.2,
+    visitZ: 13.0,
+    accent: "#f472b6"
+  },
+  {
+    id: "herb-orchard",
+    name: "Sunlit Herb Orchard",
+    subtitle: "Raised Cedar Planters, Potting Greenhouse & Fruit Trees",
+    x: -15.2,
+    z: -15.2,
+    visitX: -13.0,
+    visitZ: -13.0,
+    accent: "#f59e0b"
+  },
+  {
+    id: "rose-gardens",
+    name: "Scented Rose & Lavender Park",
+    subtitle: "Fragrant Lavender Terraces, Topiary Hedges & Glass Arbor",
+    x: 15.2,
+    z: -15.2,
+    visitX: 13.0,
+    visitZ: -13.0,
+    accent: "#a78bfa"
+  }
+];
+
 interface PlotCoordSlot {
   ring: 1 | 2 | 3;
   districtName: string;
@@ -144,9 +204,9 @@ export function getNeighborhoodPlotSlot(plotIndex: number): PlotCoordSlot {
   if (ring2Idx < 16) {
     const quadrant = ring2Idx % 4; // 0=SE, 1=SW, 2=NW, 3=NE (fills balanced around the whole town!)
     const posInQuad = Math.floor(ring2Idx / 4); // 0..3
-    // Angles cleanly tucked between cardinal bridges (leave ±11° corridor for each avenue bridge)
+    // Angles cleanly tucked near cardinal avenues, opening huge 12.6m diagonal greenbelts for the 4 Town Parks!
     const quadBaseAngle = quadrant * (Math.PI / 2);
-    const localOffsets = [0.26, 0.56, 0.98, 1.28];
+    const localOffsets = [0.21, 0.46, 1.1, 1.35];
     const angle = quadBaseAngle + localOffsets[posInQuad];
     const radius = 21.8;
     const x = Math.cos(angle) * radius;

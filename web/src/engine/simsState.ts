@@ -597,6 +597,9 @@ export type SimsObjectTarget =
   | { kind: "hobby"; label: string; hobbyId: Exclude<HobbyPropId, "none">; worldX: number; worldZ: number }
   | { kind: "home-room"; label: string; roomId: ExtraRoomId; worldX: number; worldZ: number }
   | { kind: "stairs"; label: string; worldX: number; worldZ: number }
+  | { kind: "garden-plot"; label: string; plotId: string; worldX: number; worldZ: number }
+  | { kind: "conservatory"; label: string; worldX: number; worldZ: number }
+  | { kind: "park-bench"; label: string; worldX: number; worldZ: number }
   | { kind: "player"; label: string; worldX: number; worldZ: number }
   | { kind: "fountain"; label: string; worldX: number; worldZ: number }
   | { kind: "neighbor-lab"; label: string; tokenId: number; worldX: number; worldZ: number }
@@ -891,13 +894,41 @@ const NPC_INITIAL_MOODS: readonly SimsMoodName[] = [
 ];
 
 const NPC_ACTIVITIES_BY_MOOD: Record<SimsMoodName, readonly string[]> = {
-  Inspired: ["Sketching new glass wing", "Admiring helix symmetry", "Dreaming up breakthroughs"],
-  Focused: ["Analyzing 1L2Y fold", "Calibrating microscope", "Tuning ALCH harvester"],
-  Energized: ["Sipping quantum espresso", "Power-walking the canal", "Testing catalyst beams"],
-  Playful: ["Tossing glowing protons", "Joking with neighbors", "Playing with lab companion"],
-  Social: ["Waving on the boulevard", "Hosting patio visitors", "Sharing science stories"],
-  Relaxed: ["Resting by the canal", "Tending ceramic bonsai", "Watching sunlit clouds"],
-  Drowsy: ["Taking a studio breather", "Brewing decaf elixir", "Dozing on terrazzo bench"]
+  Inspired: [
+    "Sketching new glass greenhouse",
+    "Planting crystal orchids",
+    "Admiring Botanical Conservatory"
+  ],
+  Focused: [
+    "Analyzing 1L2Y fold",
+    "Pruning bonsai garden beds",
+    "Calibrating greenhouse mist"
+  ],
+  Energized: [
+    "Watering lavender beds",
+    "Power-walking the paved boulevard",
+    "Harvesting sunbeam flowers"
+  ],
+  Playful: [
+    "Feeding koi at the park pond",
+    "Picnicking under sakura trees",
+    "Playing with lab companion"
+  ],
+  Social: [
+    "Waving on the boulevard",
+    "Tending community garden plots",
+    "Sharing cuttings with neighbors"
+  ],
+  Relaxed: [
+    "Strolling the Botanical Park",
+    "Tending ceramic bonsai",
+    "Resting on a canal park bench"
+  ],
+  Drowsy: [
+    "Taking a garden breather",
+    "Brewing mint tea from the yard",
+    "Dozing by the rose pergola"
+  ]
 };
 
 export function loadRelationshipsMap(): Record<number, StoredNeighborRelation> {
@@ -1106,6 +1137,7 @@ export function getSimsPieActions(
     standalone?: boolean;
     currentFloor?: number;
     maxFloors?: number;
+    gardenPlotStatus?: "empty" | "growing" | "ready";
   }
 ): SimsPieAction[] {
   switch (target.kind) {
@@ -1215,6 +1247,44 @@ export function getSimsPieActions(
         { id: "open-expand", label: "Add Floors", sublabel: "1F / 2F / 3F", accent: "#10b981" }
       ];
     }
+    case "garden-plot": {
+      const status = options?.gardenPlotStatus ?? "empty";
+      if (status === "ready") {
+        return [
+          { id: "garden-harvest", label: "Harvest Bloom!", sublabel: "+Sparks & Mood", accent: "#10b981" },
+          { id: "open-garden", label: "Garden Journal", sublabel: "8 species", accent: "#64748b" },
+          { id: "garden-water", label: "Admire Flowers", sublabel: "Inspired!", accent: "#f472b6" }
+        ];
+      }
+      if (status === "growing") {
+        return [
+          { id: "garden-water", label: "Water Plant", sublabel: "+36% growth", accent: "#38bdf8" },
+          { id: "garden-fertilize", label: "Crystal Mist", sublabel: "Instant bloom", accent: "#a855f7" },
+          { id: "open-garden", label: "Garden Journal", sublabel: "All beds", accent: "#10b981" }
+        ];
+      }
+      return [
+        { id: "garden-plant-lavender", label: "Plant Lavender", sublabel: "35s · +4 sparks", accent: "#a78bfa" },
+        { id: "garden-plant-sunflower", label: "Plant Sunflower", sublabel: "45s · +5 sparks", accent: "#fbbf24" },
+        { id: "garden-plant-sakura", label: "Plant Sakura", sublabel: "55s · +6 sparks", accent: "#f472b6" },
+        { id: "garden-plant-orchid", label: "Plant Orchid", sublabel: "60s · +7 sparks", accent: "#38bdf8" },
+        { id: "open-garden", label: "All 8 Seeds", sublabel: "Garden Journal", accent: "#10b981" }
+      ];
+    }
+    case "conservatory":
+      return [
+        { id: "park-smell-flowers", label: "Botanical Mist", sublabel: "Inspired!", accent: "#10b981" },
+        { id: "park-tend-community", label: "Tend Greenhouse", sublabel: "+2 sparks", accent: "#38bdf8" },
+        { id: "open-garden", label: "Park Gardens", sublabel: "Plant & Harvest", accent: "#f472b6" },
+        { id: "open-neighborhood", label: "All Town Parks", accent: "#64748b" }
+      ];
+    case "park-bench":
+      return [
+        { id: "park-relax", label: "Relax in Park", sublabel: "+26 Energy", accent: "#10b981" },
+        { id: "park-picnic", label: "Enjoy Picnic", sublabel: "+22 Fun & Social", accent: "#f472b6" },
+        { id: "park-feed-koi", label: "Feed Koi Fish", sublabel: "+1 spark", accent: "#38bdf8" },
+        { id: "open-garden", label: "Garden Journal", accent: "#64748b" }
+      ];
     case "player":
       return [
         { id: "open-moods", label: "Moods & Friends", sublabel: "Change vibe", accent: "#10b981" },

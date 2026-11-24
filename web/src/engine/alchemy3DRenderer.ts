@@ -14,6 +14,7 @@ import {
 import { ResearcherAvatar3D, type CharacterEmote, type CharacterPosture } from "./character3D";
 import type { CharacterProfile } from "./characterConfig";
 import { DiegeticLabMonitors3D, type DiegeticMonitorTelemetry } from "./diegeticPanels3D";
+import { createInitialGardenState, type GardenWorldState } from "./gardenState";
 import { HomeArchitecture3D } from "./homeArchitecture3D";
 import {
   clampPlacementPoint,
@@ -33,12 +34,14 @@ import {
 } from "./labStations";
 import {
   NEIGHBORHOOD_WALK_LIMIT,
+  TOWN_PARKS,
   type NeighborLabSummary,
   type NeighborhoodPlotPlacement
 } from "./neighborhoodLayout";
 import { NeighborhoodWorld3D } from "./neighborhoodWorld3D";
 import { SeededRNG, deriveTraitsFromSeed } from "./prng";
 import { SimsFurniture3D } from "./simsFurniture3D";
+import { TownGardens3D } from "./townGardens3D";
 import {
   FLOOR_STYLES,
   defaultLabDecor,
@@ -228,6 +231,9 @@ export class Alchemy3DRenderer {
   private diegeticMonitors: DiegeticLabMonitors3D | null = null;
   private simsFurniture: SimsFurniture3D | null = null;
   private homeArchitecture: HomeArchitecture3D | null = null;
+  private townGardens: TownGardens3D | null = null;
+  private gardenState: GardenWorldState = createInitialGardenState();
+  private lastGardenSyncMs = 0;
   private neighborhoodWorld: NeighborhoodWorld3D | null = null;
   private activeFloor: FloorNumber = 1;
   private movingItem: MovableItemId | null = null;
@@ -695,6 +701,7 @@ export class Alchemy3DRenderer {
     if (this.activeFloor > this.labDecor.houseFloors) {
       this.setActiveFloor(this.labDecor.houseFloors);
     }
+    this.townGardens?.syncGardenState(this.gardenState, this.labDecor.houseSize);
     this.syncCustomLayoutPositions();
 
     if (this.simsFurniture) {
@@ -713,6 +720,30 @@ export class Alchemy3DRenderer {
         }
       }
     }
+  }
+
+  public setGardenState(state: GardenWorldState) {
+    this.gardenState = state;
+    this.townGardens?.syncGardenState(state, this.labDecor.houseSize, Date.now());
+  }
+
+  public waterGardenPlotFX(plotId: string) {
+    this.townGardens?.spawnWaterSplash(plotId);
+  }
+
+  public walkToPark(parkId: string) {
+    const park = TOWN_PARKS.find((p) => p.id === parkId) || TOWN_PARKS[0];
+    if (!park) return;
+    if (this.activeFloor !== 1) this.setActiveFloor(1);
+    this.performSimsAction({
+      x: park.visitX,
+      z: park.visitZ,
+      floor: 1,
+      yaw: Math.atan2(park.x - park.visitX, park.z - park.visitZ),
+      emote: "hop",
+      bubble: "flower",
+      burstColor: park.accent
+    });
   }
 
   public setPlumbobColor(hex: string, moodName?: string) {
@@ -1283,6 +1314,9 @@ export class Alchemy3DRenderer {
     if (this.neighborhoodWorld) {
       obstacles.push(...this.neighborhoodWorld.getNeighborObstacles());
     }
+    if (this.townGardens) {
+      obstacles.push(...this.townGardens.getObstacles());
+    }
 
     for (const [ox, oz, rad] of obstacles) {
       const dx = nx - ox;
@@ -1331,6 +1365,11 @@ export class Alchemy3DRenderer {
     this.homeArchitecture = new HomeArchitecture3D(this.terrazzoTex, this.titaniumTex);
     this.homeArchitecture.updateArchitecture(this.labDecor, this.traits.palette.liquidMid);
     this.walkCampusGroup.add(this.homeArchitecture.group);
+
+    // Grand Botanical Parks, Glass Conservatory, Koi Pond & 10 Live Growing Interactive Garden Planter Beds!
+    this.townGardens = new TownGardens3D(this.terrazzoTex, this.titaniumTex);
+    this.townGardens.syncGardenState(this.gardenState, this.labDecor.houseSize, Date.now());
+    this.walkCampusGroup.add(this.townGardens.group);
 
     // Live 3D Move-Mode Placement Cursor Ring (glowing cyan/silver blueprint reticle)
     const ghostGrp = new THREE.Group();
@@ -1523,6 +1562,11 @@ export class Alchemy3DRenderer {
       this.walkCampusGroup.remove(this.homeArchitecture.group);
       this.homeArchitecture.dispose();
       this.homeArchitecture = null;
+    }
+    if (this.townGardens) {
+      this.walkCampusGroup.remove(this.townGardens.group);
+      this.townGardens.dispose();
+      this.townGardens = null;
     }
     if (this.diegeticMonitors) {
       this.walkCampusGroup.remove(this.diegeticMonitors.group);
@@ -1953,6 +1997,7 @@ export class Alchemy3DRenderer {
       if (this.visitingHostAvatar) extraTargets.push(this.visitingHostAvatar.root);
       if (this.simsFurniture) extraTargets.push(...this.simsFurniture.getRaycastTargets());
       if (this.homeArchitecture) extraTargets.push(...this.homeArchitecture.getRaycastTargets());
+      if (this.townGardens) extraTargets.push(...this.townGardens.getRaycastTargets());
       if (this.neighborhoodWorld) extraTargets.push(...this.neighborhoodWorld.getRaycastTargets());
       if (this.heroVesselGroup) extraTargets.push(this.heroVesselGroup);
       if (extraTargets.length > 0 && this.raycaster.intersectObjects(extraTargets, true).length > 0) {
@@ -2103,6 +2148,24 @@ export class Alchemy3DRenderer {
         const hHits = this.raycaster.intersectObjects(this.homeArchitecture.getRaycastTargets(), true);
         if (hHits.length > 0) {
           let cur: THREE.Object3D | null = hHits[0].object;
+          let target: SimsObjectTarget | undefined;
+          while (cur && !target) {
+            if (cur.userData?.simsTarget) target = cur.userData.simsTarget as SimsObjectTarget;
+            cur = cur.parent;
+          }
+          if (target) {
+            this.onSimsObjectClick(target, screenX, screenY);
+            soundEngine.playTap(1046.5);
+            return;
+          }
+        }
+      }
+
+      // Interactive Home & Town Botanical Garden Beds, Glass Conservatory & Park Benches!
+      if (this.townGardens) {
+        const gHits = this.raycaster.intersectObjects(this.townGardens.getRaycastTargets(), true);
+        if (gHits.length > 0) {
+          let cur: THREE.Object3D | null = gHits[0].object;
           let target: SimsObjectTarget | undefined;
           while (cur && !target) {
             if (cur.userData?.simsTarget) target = cur.userData.simsTarget as SimsObjectTarget;
@@ -6221,9 +6284,15 @@ export class Alchemy3DRenderer {
       !this.creatorCameraMode
     );
 
-    // Animate Sims Interactive Furniture, Homely Architecture, Move-Mode Reticle, Visiting Host & Neighborhood!
+    // Animate Sims Interactive Furniture, Homely Architecture, Botanical Parks & Gardens, Move Reticle & Town!
     this.simsFurniture?.update(dt, t);
     this.homeArchitecture?.update(dt, t);
+    this.townGardens?.update(dt, t);
+    const nowWall = Date.now();
+    if (this.townGardens && nowWall - this.lastGardenSyncMs > 1200) {
+      this.lastGardenSyncMs = nowWall;
+      this.townGardens.syncGardenState(this.gardenState, this.labDecor.houseSize, nowWall);
+    }
     this.neighborhoodWorld?.update(dt, t, this.charX, this.charZ);
     if (this.moveGhostRing && this.moveGhostRing.visible) {
       this.moveGhostRing.rotation.y += dt * 1.4;
