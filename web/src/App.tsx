@@ -829,16 +829,18 @@ export function App() {
           </Suspense>
         )}
 
-        {/* Quiet White Paper Link Pinned at the Very Bottom of the Site */}
-        <footer className="quiet-footer">
-          <button
-            type="button"
-            className="footer-link clickable"
-            onClick={() => setShowWhitePaper(true)}
-          >
-            White Paper
-          </button>
-        </footer>
+        {/* Quiet White Paper Link Pinned at the Bottom on Home & Gallery (Hidden in Full-Viewport My Labs!) */}
+        {page !== "mylabs" && (
+          <footer className="quiet-footer">
+            <button
+              type="button"
+              className="footer-link clickable"
+              onClick={() => setShowWhitePaper(true)}
+            >
+              White Paper
+            </button>
+          </footer>
+        )}
       </div>
 
       {showWhitePaper && (

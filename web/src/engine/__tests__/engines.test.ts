@@ -55,6 +55,13 @@ import {
   sanitizeCharacterProfile
 } from "../characterConfig";
 import {
+  ONBOARDING_GRAND_BONUS_SPARKS,
+  ONBOARDING_STEPS,
+  completeOnboardingStep,
+  createInitialOnboardingState,
+  getOnboardingProgress
+} from "../onboarding";
+import {
   LAB_STATIONS,
   findNearestTriggeredStation,
   stationForSector
@@ -76,6 +83,7 @@ import {
   MOOD_SHIFT_ACTIONS,
   PATIO_DECORS,
   PLANT_PACKS,
+  ROOM_THEME_PRESETS,
   RUG_STYLES,
   SEATING_STYLES,
   STATION_UPGRADE_DEFS,
@@ -529,7 +537,29 @@ describe("Living Minted NFT Neighborhood & Sims Interactivity", () => {
     expect(RUG_STYLES).toHaveLength(5);
     expect(PLANT_PACKS).toHaveLength(5);
     expect(LIGHTING_FIXTURES).toHaveLength(5);
+    expect(ROOM_THEME_PRESETS).toHaveLength(3);
     expect(STATION_UPGRADE_DEFS).toHaveLength(5);
+
+    // Interactive 5-step Housewarming Welcome Guide progression & grand bonus sparks
+    expect(ONBOARDING_STEPS).toHaveLength(5);
+    let ob = createInitialOnboardingState();
+    expect(getOnboardingProgress(ob).doneCount).toBe(0);
+    expect(getOnboardingProgress(ob).nextStep?.id).toBe("walk");
+
+    const s1 = completeOnboardingStep(ob, "walk");
+    expect(s1.newlyCompleted).toBe(true);
+    expect(s1.stepReward).toBe(3);
+    expect(s1.grandBonusAwarded).toBe(false);
+    // Re-completing same step is idempotent with 0 duplicate rewards
+    expect(completeOnboardingStep(s1.nextState, "walk").newlyCompleted).toBe(false);
+
+    ob = completeOnboardingStep(s1.nextState, "pet").nextState;
+    ob = completeOnboardingStep(ob, "furnish").nextState;
+    ob = completeOnboardingStep(ob, "town").nextState;
+    const finalStep = completeOnboardingStep(ob, "mood");
+    expect(finalStep.grandBonusAwarded).toBe(true);
+    expect(finalStep.totalReward).toBe(5 + ONBOARDING_GRAND_BONUS_SPARKS);
+    expect(getOnboardingProgress(finalStep.nextState).allDone).toBe(true);
 
     // Backward-compatible partial migration preserves old saved { floorStyle, patioDecor }
     const migrated = sanitizeLabDecor({ floorStyle: "oak", patioDecor: "cherry-tree" });

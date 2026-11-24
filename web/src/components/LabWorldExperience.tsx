@@ -113,6 +113,7 @@ import {
   MOOD_SHIFT_ACTIONS,
   PATIO_DECORS,
   PLANT_PACKS,
+  ROOM_THEME_PRESETS,
   RUG_STYLES,
   SEATING_STYLES,
   SIMS_MOOD_VISUALS,
@@ -143,6 +144,16 @@ import {
   type StoredNeighborRelation,
   type UpgradeableStationId
 } from "../engine/simsState";
+import {
+  ONBOARDING_STEPS,
+  completeOnboardingStep,
+  createInitialOnboardingState,
+  getOnboardingProgress,
+  loadOnboardingState,
+  saveOnboardingState,
+  type OnboardingState,
+  type OnboardingStepId
+} from "../engine/onboarding";
 import {
   PROTEIN_BENCHMARKS,
   downloadPDBFromSnapshot,
@@ -574,6 +585,10 @@ export function LabWorldExperience({
   const [showBestFold, setShowBestFold] = useState(true);
   const [highlightedResidueIdx, setHighlightedResidueIdx] = useState<number | null>(null);
   const [goals, setGoals] = useState<Record<GoalKey, boolean>>(() => loadGoals());
+  const [onboarding, setOnboarding] = useState<OnboardingState>(() => loadOnboardingState());
+  const onboardingRef = useRef<OnboardingState>(onboarding);
+  onboardingRef.current = onboarding;
+  const onboardingProgress = useMemo(() => getOnboardingProgress(onboarding), [onboarding]);
   const [editingPetName, setEditingPetName] = useState(false);
   const [petNameDraft, setPetNameDraft] = useState("");
   const [petSubTab, setPetSubTab] = useState<"care" | "boutique">("care");
@@ -748,13 +763,47 @@ export function LabWorldExperience({
     soundEngine.playTap(1046.5);
   }, [savedProfile]);
 
+  const completeGuideStep = useCallback(
+    (stepId: OnboardingStepId) => {
+      setOnboarding((prev) => {
+        if (prev.completed[stepId]) return prev;
+        const res = completeOnboardingStep(prev, stepId);
+        if (!res.newlyCompleted) return prev;
+        if (res.totalReward > 0) {
+          onAwardPlayBonus?.(res.totalReward);
+        }
+        if (res.grandBonusAwarded) {
+          soundEngine.playBuildRoom();
+          artworkRef.current?.triggerCatalyticPulse(1.25);
+          setCharacterEmote((e) => ({ emote: "spin", seq: (e?.seq || 0) + 1 }));
+          setFeedback(
+            `Housewarming Complete! All 5 welcome steps finished (+${res.totalReward} bonus sparks)!`
+          );
+        } else {
+          const def = ONBOARDING_STEPS.find((s) => s.id === stepId);
+          setFeedback(
+            `Welcome Guide: "${def?.title || stepId}" complete!${
+              onAwardPlayBonus ? ` +${res.stepReward} sparks.` : ""
+            }`
+          );
+        }
+        return res.nextState;
+      });
+    },
+    [onAwardPlayBonus]
+  );
+
+  const completeGuideStepRef = useRef(completeGuideStep);
+  completeGuideStepRef.current = completeGuideStep;
+
   const updateLabDecor = useCallback(
     (next: LabDecorConfig) => {
       const saved = saveLabDecor(activeVessel.tokenId, next);
       setLabDecor(saved);
       soundEngine.playTap(1046.5);
+      completeGuideStep("furnish");
     },
-    [activeVessel.tokenId]
+    [activeVessel.tokenId, completeGuideStep]
   );
 
   const triggerPlayerMoodlet = useCallback((mood: SimsMoodName, label: string, source: string) => {
@@ -775,8 +824,9 @@ export function LabWorldExperience({
       setCurrentActivity(`${act.label} (${act.mood})`);
       soundEngine.playTap(act.mood === "Playful" ? 1318.5 : 1046.5);
       setFeedback(`Mood shifted to ${act.mood}! (${act.moodletLabel})`);
+      completeGuideStep("mood");
     },
-    [triggerPlayerMoodlet]
+    [triggerPlayerMoodlet, completeGuideStep]
   );
 
   const handleQuickRename = (e: React.FormEvent) => {
@@ -1111,6 +1161,9 @@ export function LabWorldExperience({
     const drawerOpen = Boolean(openStationRef.current || neighborhoodDrawerOpenRef.current);
     const isCompact = telemetry.width < 820;
     const charDist = Math.hypot(telemetry.charX, telemetry.charZ);
+    if (telemetry.moving && !onboardingRef.current.completed.walk) {
+      completeGuideStepRef.current("walk");
+    }
 
     // Smooth hysteresis switching between Home Lab & Boulevard Exploration mode
     if (!charOutRef.current && charDist > 4.2) {
@@ -1314,6 +1367,7 @@ export function LabWorldExperience({
     setNeighborhoodDrawerOpen((open) => {
       const next = !open;
       setCameraMode(next ? "neighborhood" : "follow");
+      if (next) completeGuideStep("town");
       return next;
     });
   };
@@ -1376,8 +1430,17 @@ export function LabWorldExperience({
       setSimsVibes((v) => applySimsVibeDelta(v, { focus: 12, fun: 10 }));
       triggerPlayerMoodlet("Inspired", `${nextTier.title} Built!`, def.name);
       setFeedback(`Upgraded ${def.name} to Lv.${curLvl + 1} ${nextTier.title} (${nextTier.perk})!`);
+      completeGuideStep("furnish");
     },
-    [isVisiting, labDecor, standaloneMode, onSpendCoinsForTreat, activeVessel.tokenId, triggerPlayerMoodlet]
+    [
+      isVisiting,
+      labDecor,
+      standaloneMode,
+      onSpendCoinsForTreat,
+      activeVessel.tokenId,
+      triggerPlayerMoodlet,
+      completeGuideStep
+    ]
   );
 
   let pendingCoins: number;
@@ -1449,6 +1512,7 @@ export function LabWorldExperience({
     saveCompanionVitals(activeVessel.tokenId, next);
     setTamaSignal((prev) => ({ action, seq: (prev?.seq || 0) + 1 }));
     setCharacterEmote((prev) => ({ emote: "wave", seq: (prev?.seq || 0) + 1 }));
+    completeGuideStep("pet");
   };
 
   const handleSavePetName = () => {
@@ -1485,6 +1549,39 @@ export function LabWorldExperience({
     setTamaSignal((prev) => ({ action: "pet", seq: (prev?.seq || 0) + 1 }));
     soundEngine.playTap(1174.66);
     setFeedback(toastMsg);
+    completeGuideStep("pet");
+  };
+
+  const handleTriggerGuideAction = (stepId: OnboardingStepId) => {
+    if (!savedProfile) {
+      openCharacterCreator();
+      return;
+    }
+    if (stepId === "walk") {
+      setOpenStation(null);
+      setNeighborhoodDrawerOpen(false);
+      setCameraMode("follow");
+      artworkRef.current?.walkToStation("research");
+      completeGuideStep("walk");
+    } else if (stepId === "pet") {
+      setPetSubTab("boutique");
+      navigateToStation("pet");
+      setCameraMode("orbit");
+      setCamPreset((prev) => ({ preset: "pet", seq: (prev?.seq || 0) + 1 }));
+    } else if (stepId === "furnish") {
+      setBuilderSubTab("furnish");
+      navigateToStation("builder");
+    } else if (stepId === "town") {
+      setOpenStation(null);
+      setNeighborhoodDrawerOpen(true);
+      setCameraMode("neighborhood");
+      completeGuideStep("town");
+    } else if (stepId === "mood") {
+      setNeighborhoodDrawerOpen(false);
+      setConsoleSubTab("sims");
+      setOpenStation("console");
+    }
+    soundEngine.playTap(1046.5);
   };
 
   // Complete Sims-Style Contextual Radial Pie Action Handler
@@ -1516,6 +1613,8 @@ export function LabWorldExperience({
       case "pet-style":
         setPetSubTab("boutique");
         navigateToStation("pet");
+        setCameraMode("orbit");
+        setCamPreset((prev) => ({ preset: "pet", seq: (prev?.seq || 0) + 1 }));
         break;
       case "open-pet":
         navigateToStation("pet");
@@ -3091,6 +3190,7 @@ export function LabWorldExperience({
                     className={`builder-subtab clickable ${petSubTab === "care" ? "active" : ""}`}
                     onClick={() => {
                       setPetSubTab("care");
+                      setCameraMode("follow");
                       soundEngine.playTap(880);
                     }}
                   >
@@ -3105,6 +3205,8 @@ export function LabWorldExperience({
                     }`}
                     onClick={() => {
                       setPetSubTab("boutique");
+                      setCameraMode("orbit");
+                      setCamPreset((prev) => ({ preset: "pet", seq: (prev?.seq || 0) + 1 }));
                       soundEngine.playTap(1046.5);
                     }}
                   >
@@ -3508,6 +3610,27 @@ export function LabWorldExperience({
                         >
                           <Dices size={12} /> Randomize Look
                         </button>
+                      </div>
+
+                      <div className="theme-presets-strip" aria-label="1-click room themes">
+                        {ROOM_THEME_PRESETS.map((theme) => (
+                          <button
+                            key={theme.id}
+                            type="button"
+                            className="creator-preset-pill clickable"
+                            onClick={() => {
+                              updateLabDecor({
+                                ...theme.decor,
+                                stationUpgrades: { ...labDecor.stationUpgrades }
+                              });
+                              soundEngine.playBuildRoom();
+                              setFeedback(`Applied the ${theme.label} full-room theme in 3D!`);
+                            }}
+                          >
+                            <span className="cause-dot" style={{ background: theme.swatch }} />
+                            {theme.label}
+                          </button>
+                        ))}
                       </div>
 
                       <div className="furnish-cat-strip" role="tablist" aria-label="Furniture categories">
@@ -4491,6 +4614,19 @@ export function LabWorldExperience({
                         >
                           <Compass size={12} /> Orbit Cam
                         </button>
+                        <button
+                          type="button"
+                          className="subtle-pill-btn clickable"
+                          onClick={() => {
+                            const fresh = saveOnboardingState(createInitialOnboardingState());
+                            setOnboarding(fresh);
+                            setOpenStation(null);
+                            soundEngine.playTap(1046.5);
+                            setFeedback("Reopened the interactive Welcome Guide!");
+                          }}
+                        >
+                          <Sparkles size={12} /> Replay Guide
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -4992,6 +5128,101 @@ export function LabWorldExperience({
           </div>
         </div>
       )}
+
+      {/* Interactive Cutesy Silver-Glass Housewarming Welcome Guide (Auto-Hides When Drawers Open!) */}
+      {!creatorOpen &&
+        Boolean(savedProfile) &&
+        !onboarding.dismissed &&
+        !onboardingProgress.allDone &&
+        !openStation &&
+        !neighborhoodDrawerOpen &&
+        onboardingProgress.nextStep && (
+          onboarding.minimized ? (
+            <button
+              type="button"
+              className="welcome-guide-pill clickable"
+              onClick={() =>
+                setOnboarding((prev) => saveOnboardingState({ ...prev, minimized: false }))
+              }
+            >
+              <span className="cute-icon-bubble is-xs">
+                <Sparkles size={10} />
+              </span>
+              <strong>Welcome Guide</strong>
+              <span className="world-pill-muted">
+                {onboardingProgress.doneCount}/{onboardingProgress.totalCount}
+              </span>
+            </button>
+          ) : (
+            <section className="welcome-guide-card" aria-label="Interactive Welcome Guide">
+              <div className="welcome-guide-head">
+                <div className="welcome-guide-title-row">
+                  <span
+                    className="cute-icon-bubble is-sm"
+                    style={{ "--bubble-accent": onboardingProgress.nextStep.accent } as React.CSSProperties}
+                  >
+                    <Sparkles size={11} />
+                  </span>
+                  <div>
+                    <div className="single-kicker">
+                      Welcome Tour · {onboardingProgress.doneCount}/{onboardingProgress.totalCount}
+                    </div>
+                    <strong>{onboardingProgress.nextStep.title}</strong>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <button
+                    type="button"
+                    className="inline-icon-btn clickable"
+                    onClick={() =>
+                      setOnboarding((prev) => saveOnboardingState({ ...prev, minimized: true }))
+                    }
+                    title="Minimize guide"
+                    aria-label="Minimize guide"
+                  >
+                    –
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-icon-btn clickable"
+                    onClick={() =>
+                      setOnboarding((prev) => saveOnboardingState({ ...prev, dismissed: true }))
+                    }
+                    title="Dismiss guide"
+                    aria-label="Dismiss guide"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="welcome-guide-progress">
+                <div
+                  className="welcome-guide-progress-fill"
+                  style={{ width: `${Math.max(12, onboardingProgress.pct)}%` }}
+                />
+              </div>
+
+              <p className="welcome-guide-desc">{onboardingProgress.nextStep.desc}</p>
+
+              <div className="welcome-guide-cta-row">
+                <span className="welcome-reward-chip">
+                  +{onboardingProgress.nextStep.rewardSparks} sparks
+                </span>
+                <button
+                  type="button"
+                  className="sector-btn clickable"
+                  onClick={() =>
+                    onboardingProgress.nextStep &&
+                    handleTriggerGuideAction(onboardingProgress.nextStep.id)
+                  }
+                >
+                  {onboardingProgress.nextStep.ctaLabel} <ArrowRight size={11} />
+                </button>
+              </div>
+            </section>
+          )
+        )}
 
       {/* Subtle Frosted-Silver Keyboard & Walk Hint Micro-Capsule */}
       {!creatorOpen && Boolean(savedProfile) && (

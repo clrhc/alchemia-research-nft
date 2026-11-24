@@ -114,6 +114,61 @@ export const LIGHTING_FIXTURES: readonly FurnishCatalogOption<LightingFixtureId>
   { id: "aurora-arc", label: "Aurora Arch", desc: "Iridescent prismatic overhead light arc", swatch: "#c4b5fd" }
 ];
 
+export interface RoomThemePreset {
+  id: string;
+  label: string;
+  swatch: string;
+  decor: Omit<LabDecorConfig, "stationUpgrades">;
+}
+
+export const ROOM_THEME_PRESETS: readonly RoomThemePreset[] = [
+  {
+    id: "silver-zen",
+    label: "Silver Zen",
+    swatch: "#cbd5e1",
+    decor: {
+      floorStyle: "terrazzo",
+      patioDecor: "fountain",
+      seatingStyle: "tatami",
+      barStyle: "matcha",
+      rugStyle: "silver-ring",
+      hobbyProp: "aquarium",
+      plantPack: "bamboo",
+      lightingFixture: "halo-ring"
+    }
+  },
+  {
+    id: "sakura-cozy",
+    label: "Sakura Cozy",
+    swatch: "#f9a8d4",
+    decor: {
+      floorStyle: "oak",
+      patioDecor: "cherry-tree",
+      seatingStyle: "plush-sofa",
+      barStyle: "boba",
+      rugStyle: "pastel-terrazzo",
+      hobbyProp: "easel",
+      plantPack: "blossom-vases",
+      lightingFixture: "fairy-orbs"
+    }
+  },
+  {
+    id: "cosmic-atrium",
+    label: "Cosmic Lab",
+    swatch: "#818cf8",
+    decor: {
+      floorStyle: "obsidian",
+      patioDecor: "mini-orrery",
+      seatingStyle: "egg-chair",
+      barStyle: "espresso",
+      rugStyle: "star-weave",
+      hobbyProp: "arcade",
+      plantPack: "succulents",
+      lightingFixture: "aurora-arc"
+    }
+  }
+];
+
 export interface StationUpgradeTierInfo {
   level: StationUpgradeLevel;
   title: string;
