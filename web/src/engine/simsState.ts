@@ -4,6 +4,17 @@
  */
 
 import { PERSONALITY_TRAITS, type PersonalityTraitId } from "./characterConfig";
+import {
+  EXTRA_ROOM_DEFS,
+  WALL_STYLES,
+  sanitizeCustomLayout,
+  type CustomLayoutMap,
+  type ExtraRoomId,
+  type HouseFloorCount,
+  type HouseSizeLevel,
+  type MovableItemId,
+  type WallStyleId
+} from "./homeLayout";
 import { SeededRNG } from "./prng";
 
 export type FloorStyleId = "terrazzo" | "travertine" | "basalt" | "marble" | "oak" | "obsidian";
@@ -29,6 +40,11 @@ export interface LabDecorConfig {
   plantPack: PlantPackId;
   lightingFixture: LightingFixtureId;
   stationUpgrades: StationUpgradesMap;
+  houseSize: HouseSizeLevel;
+  houseFloors: HouseFloorCount;
+  wallStyle: WallStyleId;
+  extraRooms: ExtraRoomId[];
+  customLayout: CustomLayoutMap;
 }
 
 export interface FloorStyleOption {
@@ -118,7 +134,18 @@ export interface RoomThemePreset {
   id: string;
   label: string;
   swatch: string;
-  decor: Omit<LabDecorConfig, "stationUpgrades">;
+  decor: Pick<
+    LabDecorConfig,
+    | "floorStyle"
+    | "patioDecor"
+    | "seatingStyle"
+    | "barStyle"
+    | "rugStyle"
+    | "hobbyProp"
+    | "plantPack"
+    | "lightingFixture"
+    | "wallStyle"
+  >;
 }
 
 export const ROOM_THEME_PRESETS: readonly RoomThemePreset[] = [
@@ -134,7 +161,8 @@ export const ROOM_THEME_PRESETS: readonly RoomThemePreset[] = [
       rugStyle: "silver-ring",
       hobbyProp: "aquarium",
       plantPack: "bamboo",
-      lightingFixture: "halo-ring"
+      lightingFixture: "halo-ring",
+      wallStyle: "alabaster-glass"
     }
   },
   {
@@ -149,7 +177,8 @@ export const ROOM_THEME_PRESETS: readonly RoomThemePreset[] = [
       rugStyle: "pastel-terrazzo",
       hobbyProp: "easel",
       plantPack: "blossom-vases",
-      lightingFixture: "fairy-orbs"
+      lightingFixture: "fairy-orbs",
+      wallStyle: "blush-plaster"
     }
   },
   {
@@ -164,7 +193,8 @@ export const ROOM_THEME_PRESETS: readonly RoomThemePreset[] = [
       rugStyle: "star-weave",
       hobbyProp: "arcade",
       plantPack: "succulents",
-      lightingFixture: "aurora-arc"
+      lightingFixture: "aurora-arc",
+      wallStyle: "silver-slate"
     }
   }
 ];
@@ -565,6 +595,8 @@ export type SimsObjectTarget =
   | { kind: "microscope"; label: string; worldX: number; worldZ: number }
   | { kind: "harvester"; label: string; worldX: number; worldZ: number }
   | { kind: "hobby"; label: string; hobbyId: Exclude<HobbyPropId, "none">; worldX: number; worldZ: number }
+  | { kind: "home-room"; label: string; roomId: ExtraRoomId; worldX: number; worldZ: number }
+  | { kind: "stairs"; label: string; worldX: number; worldZ: number }
   | { kind: "player"; label: string; worldX: number; worldZ: number }
   | { kind: "fountain"; label: string; worldX: number; worldZ: number }
   | { kind: "neighbor-lab"; label: string; tokenId: number; worldX: number; worldZ: number }
@@ -601,7 +633,12 @@ export function defaultLabDecor(): LabDecorConfig {
     hobbyProp: "bookshelf",
     plantPack: "minimal",
     lightingFixture: "none",
-    stationUpgrades: defaultStationUpgrades()
+    stationUpgrades: defaultStationUpgrades(),
+    houseSize: 1,
+    houseFloors: 1,
+    wallStyle: "alabaster-glass",
+    extraRooms: [],
+    customLayout: {}
   };
 }
 
@@ -614,6 +651,14 @@ export function sanitizeLabDecor(raw?: Partial<LabDecorConfig> | null): LabDecor
   const def = defaultLabDecor();
   if (!raw || typeof raw !== "object") return def;
   const up = raw.stationUpgrades as Partial<StationUpgradesMap> | undefined;
+  const rawRooms = Array.isArray(raw.extraRooms) ? raw.extraRooms : [];
+  const validRooms = Array.from(
+    new Set(
+      rawRooms.filter((r): r is ExtraRoomId =>
+        EXTRA_ROOM_DEFS.some((d) => d.id === r)
+      )
+    )
+  );
   return {
     floorStyle: FLOOR_STYLES.some((f) => f.id === raw.floorStyle)
       ? (raw.floorStyle as FloorStyleId)
@@ -645,7 +690,14 @@ export function sanitizeLabDecor(raw?: Partial<LabDecorConfig> | null): LabDecor
       pet: clampUpgradeLevel(up?.pet),
       builder: clampUpgradeLevel(up?.builder),
       lounge: clampUpgradeLevel(up?.lounge)
-    }
+    },
+    houseSize: raw.houseSize === 3 || raw.houseSize === 2 ? raw.houseSize : 1,
+    houseFloors: raw.houseFloors === 3 || raw.houseFloors === 2 ? raw.houseFloors : 1,
+    wallStyle: WALL_STYLES.some((w) => w.id === raw.wallStyle)
+      ? (raw.wallStyle as WallStyleId)
+      : def.wallStyle,
+    extraRooms: validRooms,
+    customLayout: sanitizeCustomLayout(raw.customLayout)
   };
 }
 
@@ -659,6 +711,9 @@ export function deriveNeighborLabDecor(seed: string): LabDecorConfig {
     const r = rng.next();
     return r > 0.72 ? 3 : r > 0.34 ? 2 : 1;
   };
+  const extraRooms: ExtraRoomId[] = EXTRA_ROOM_DEFS.filter(() => rng.next() > 0.56).map((r) => r.id);
+  const sizeRoll = rng.next();
+  const floorRoll = rng.next();
   return {
     floorStyle: pick(FLOOR_STYLES).id,
     patioDecor: pick(PATIO_DECORS).id,
@@ -674,11 +729,22 @@ export function deriveNeighborLabDecor(seed: string): LabDecorConfig {
       pet: pickLevel(),
       builder: pickLevel(),
       lounge: pickLevel()
-    }
+    },
+    houseSize: sizeRoll > 0.65 ? 3 : sizeRoll > 0.28 ? 2 : 1,
+    houseFloors: floorRoll > 0.72 ? 3 : floorRoll > 0.35 ? 2 : 1,
+    wallStyle: pick(WALL_STYLES).id,
+    extraRooms,
+    customLayout: {}
   };
 }
 
-export function randomizeLabDecor(keepUpgrades?: StationUpgradesMap): LabDecorConfig {
+export function randomizeLabDecor(
+  keepUpgrades?: StationUpgradesMap,
+  keepArchitecture?: Pick<
+    LabDecorConfig,
+    "houseSize" | "houseFloors" | "extraRooms" | "customLayout"
+  >
+): LabDecorConfig {
   const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)];
   const activeHobbies = HOBBY_PROPS.filter((h) => h.id !== "none");
   const activeRugs = RUG_STYLES.filter((r) => r.id !== "none");
@@ -693,7 +759,29 @@ export function randomizeLabDecor(keepUpgrades?: StationUpgradesMap): LabDecorCo
     hobbyProp: pick(activeHobbies).id,
     plantPack: pick(activePlants).id,
     lightingFixture: pick(activeLights).id,
-    stationUpgrades: keepUpgrades ? { ...keepUpgrades } : defaultStationUpgrades()
+    stationUpgrades: keepUpgrades ? { ...keepUpgrades } : defaultStationUpgrades(),
+    houseSize: keepArchitecture?.houseSize ?? 1,
+    houseFloors: keepArchitecture?.houseFloors ?? 1,
+    wallStyle: pick(WALL_STYLES).id,
+    extraRooms: keepArchitecture ? [...keepArchitecture.extraRooms] : [],
+    customLayout: keepArchitecture ? { ...keepArchitecture.customLayout } : {}
+  };
+}
+
+export function moveItemInDecor(
+  decor: LabDecorConfig,
+  itemId: MovableItemId,
+  x: number,
+  z: number,
+  yaw: number,
+  floor: 1 | 2 | 3
+): LabDecorConfig {
+  return {
+    ...decor,
+    customLayout: {
+      ...decor.customLayout,
+      [itemId]: { x, z, yaw, floor }
+    }
   };
 }
 
@@ -1013,7 +1101,12 @@ export function applyNeighborSocialAction(
  */
 export function getSimsPieActions(
   target: SimsObjectTarget,
-  options?: { petSleeping?: boolean; standalone?: boolean }
+  options?: {
+    petSleeping?: boolean;
+    standalone?: boolean;
+    currentFloor?: number;
+    maxFloors?: number;
+  }
 ): SimsPieAction[] {
   switch (target.kind) {
     case "pet":
@@ -1041,20 +1134,20 @@ export function getSimsPieActions(
       return [
         { id: "bench-sit", label: "Sit & Rest", sublabel: "+Energy", accent: "#10b981" },
         { id: "bench-meditate", label: "Stargaze Fold", sublabel: "+Focus", accent: "#38bdf8" },
-        { id: "open-builder", label: "Furnish Home", accent: "#8b5cf6" },
-        { id: "open-upgrades", label: "Upgrade Lounge", sublabel: "Lv 1–3", accent: "#a855f7" }
+        { id: "move-seating", label: "Move Seating", sublabel: "Free place", accent: "#64748b" },
+        { id: "open-builder", label: "Furnish Home", accent: "#8b5cf6" }
       ];
     case "espresso":
       return [
         { id: "espresso-brew", label: "Brew Elixir", sublabel: "Energized!", accent: "#f59e0b" },
         { id: "espresso-share", label: "Toast Science", sublabel: "+Social", accent: "#f472b6" },
-        { id: "open-builder", label: "Swap Bar", accent: "#8b5cf6" },
-        { id: "open-console", label: "Sims Status", accent: "#64748b" }
+        { id: "move-bar", label: "Move Bar", sublabel: "Free place", accent: "#64748b" },
+        { id: "open-builder", label: "Swap Bar", accent: "#8b5cf6" }
       ];
     case "microscope":
       return [
         { id: "micro-analyze", label: "Analyze Fold", sublabel: "Focused!", accent: "#38bdf8" },
-        { id: "fold-wiggle", label: "Wiggle", sublabel: "+1 spark", accent: "#10b981" },
+        { id: "move-research", label: "Move Station", sublabel: "Free place", accent: "#64748b" },
         { id: "open-upgrades", label: "Upgrade Scope", sublabel: "Lv 1–3", accent: "#8b5cf6" },
         { id: "open-research", label: "Open Workbench", accent: "#6366f1" }
       ];
@@ -1062,6 +1155,7 @@ export function getSimsPieActions(
       return [
         { id: "mine-overclock", label: "Spin Blades", sublabel: "+Focus", accent: "#6366f1" },
         { id: "open-mining", label: "Claim ALCH", accent: "#f59e0b" },
+        { id: "move-mining", label: "Move Station", sublabel: "Free place", accent: "#64748b" },
         { id: "open-upgrades", label: "Upgrade Station", sublabel: "Lv 1–3", accent: "#10b981" }
       ];
     case "hobby": {
@@ -1077,8 +1171,48 @@ export function getSimsPieActions(
                 : { id: "hobby-arcade", label: "Play Arcade", sublabel: "+2 sparks", accent: "#10b981" };
       return [
         primary,
-        { id: "hobby-vibe", label: "Admire Craft", sublabel: "+Fun", accent: "#a855f7" },
-        { id: "open-builder", label: "Swap Furniture", accent: "#64748b" }
+        { id: "move-hobby", label: "Move Prop", sublabel: "Free place", accent: "#64748b" },
+        { id: "open-builder", label: "Swap Furniture", accent: "#8b5cf6" }
+      ];
+    }
+    case "home-room": {
+      const primary =
+        target.roomId === "bedroom"
+          ? { id: "room-nap", label: "Cozy Nap", sublabel: "+35 Energy", accent: "#a78bfa" }
+          : target.roomId === "kitchen"
+            ? { id: "room-cook", label: "Cook Meal", sublabel: "+Energy & Social", accent: "#f59e0b" }
+            : target.roomId === "spa"
+              ? { id: "room-soak", label: "Warm Soak", sublabel: "Relaxed!", accent: "#38bdf8" }
+              : target.roomId === "hearth"
+                ? { id: "room-fire", label: "Cozy By Fire", sublabel: "+25 Fun", accent: "#fb7185" }
+                : target.roomId === "pergola"
+                  ? { id: "room-garden", label: "Garden Breath", sublabel: "Inspired!", accent: "#10b981" }
+                  : { id: "room-piano", label: "Play Piano", sublabel: "Playful!", accent: "#f472b6" };
+      return [
+        primary,
+        { id: "open-expand", label: "Expand Home", sublabel: "Rooms & Floors", accent: "#10b981" },
+        { id: "open-builder", label: "Furnish", accent: "#64748b" }
+      ];
+    }
+    case "stairs": {
+      const cur = options?.currentFloor ?? 1;
+      const max = options?.maxFloors ?? 2;
+      const nextUp = Math.min(max, cur + 1);
+      const nextDown = Math.max(1, cur - 1);
+      return [
+        {
+          id: "floor-up",
+          label: cur < max ? `Go to ${nextUp}F` : `Top Floor (${max}F)`,
+          sublabel: cur < max ? "Upstairs" : "Highest floor",
+          accent: "#38bdf8"
+        },
+        {
+          id: "floor-down",
+          label: cur > 1 ? `Go to ${nextDown}F` : "Ground Floor (1F)",
+          sublabel: cur > 1 ? "Downstairs" : "Main atrium",
+          accent: "#64748b"
+        },
+        { id: "open-expand", label: "Add Floors", sublabel: "1F / 2F / 3F", accent: "#10b981" }
       ];
     }
     case "player":

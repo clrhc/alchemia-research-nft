@@ -16,6 +16,7 @@ import type { MoodBubbleKind } from "../engine/architectTextures";
 import type { CharacterEmote } from "../engine/character3D";
 import type { CharacterProfile } from "../engine/characterConfig";
 import type { DiegeticMonitorTelemetry } from "../engine/diegeticPanels3D";
+import type { FloorNumber, MovableItemId } from "../engine/homeLayout";
 import type { LabStationId } from "../engine/labStations";
 import type { NeighborLabSummary } from "../engine/neighborhoodLayout";
 import { deriveTraitsFromSeed } from "../engine/prng";
@@ -39,7 +40,10 @@ export interface ArtworkCanvasHandle {
     x: number;
     z: number;
     yaw: number;
+    floor: FloorNumber;
   };
+  setActiveFloor: (floor: FloorNumber) => void;
+  setMovingItem: (itemId: MovableItemId | null, snapGrid?: boolean) => void;
   fireSocialBeamToNeighbor: (tokenId: number, colorHex?: string) => void;
   triggerCatalyticPulse: (intensity?: number) => void;
   arriveAtFrontDoor: () => void;
@@ -76,6 +80,9 @@ interface ArtworkCanvasProps {
   activeStationHighlight?: LabStationId | null;
   neighbors?: NeighborLabSummary[];
   labDecor?: LabDecorConfig;
+  activeFloor?: FloorNumber;
+  movingItem?: MovableItemId | null;
+  moveSnapGrid?: boolean;
   plumbobColor?: string;
   playerMoodName?: string;
   controlsEnabled?: boolean;
@@ -95,6 +102,7 @@ interface ArtworkCanvasProps {
   onNearStationChange?: (stationId: LabStationId | null) => void;
   onStationArrived?: (stationId: LabStationId) => void;
   onSimsObjectClick?: (target: SimsObjectTarget, screenX: number, screenY: number) => void;
+  onPlaceMovedItem?: (itemId: MovableItemId, x: number, z: number, floor: FloorNumber) => void;
   onPulseClick?: () => void;
 }
 
@@ -115,6 +123,9 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
     activeStationHighlight = null,
     neighbors,
     labDecor,
+    activeFloor = 1,
+    movingItem = null,
+    moveSnapGrid = true,
     plumbobColor = "#10b981",
     playerMoodName = "Inspired",
     controlsEnabled = true,
@@ -134,6 +145,7 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
     onNearStationChange,
     onStationArrived,
     onSimsObjectClick,
+    onPlaceMovedItem,
     onPulseClick
   },
   ref
@@ -152,6 +164,8 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
   onStationArrivedRef.current = onStationArrived;
   const onSimsObjectClickRef = useRef(onSimsObjectClick);
   onSimsObjectClickRef.current = onSimsObjectClick;
+  const onPlaceMovedItemRef = useRef(onPlaceMovedItem);
+  onPlaceMovedItemRef.current = onPlaceMovedItem;
 
   useImperativeHandle(ref, () => ({
     capturePhoto: () => rendererRef.current?.captureSnapshotDataUrl() ?? null,
@@ -165,7 +179,9 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
     flipCreatorView: (back) => rendererRef.current?.flipCreatorView(back),
     performSimsAction: (req) => rendererRef.current?.performSimsAction(req),
     getSimsFurnitureAnchor: (kind) =>
-      rendererRef.current?.getSimsFurnitureAnchor(kind) ?? { x: 0, z: 1.38, yaw: 0 },
+      rendererRef.current?.getSimsFurnitureAnchor(kind) ?? { x: 0, z: 1.38, yaw: 0, floor: 1 },
+    setActiveFloor: (floor) => rendererRef.current?.setActiveFloor(floor),
+    setMovingItem: (itemId, snapGrid = true) => rendererRef.current?.setMovingItem(itemId, snapGrid),
     fireSocialBeamToNeighbor: (tokenId, colorHex) =>
       rendererRef.current?.fireSocialBeamToNeighbor(tokenId, colorHex),
     triggerCatalyticPulse: (intensity = 1.0) =>
@@ -214,7 +230,8 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
       onTelemetry: (telemetry) => onTelemetryRef.current?.(telemetry),
       onNearStationChange: (stationId) => onNearStationRef.current?.(stationId),
       onStationArrived: (stationId) => onStationArrivedRef.current?.(stationId),
-      onSimsObjectClick: (target, sx, sy) => onSimsObjectClickRef.current?.(target, sx, sy)
+      onSimsObjectClick: (target, sx, sy) => onSimsObjectClickRef.current?.(target, sx, sy),
+      onPlaceMovedItem: (itemId, x, z, floor) => onPlaceMovedItemRef.current?.(itemId, x, z, floor)
     });
     if (walkMode) {
       if (labDecor) renderer.setLabDecor(labDecor);
@@ -378,23 +395,19 @@ export const ArtworkCanvas = forwardRef<ArtworkCanvasHandle, ArtworkCanvasProps>
     if (neighbors) rendererRef.current?.setNeighbors(neighbors);
   }, [neighbors]);
 
+  const labDecorKey = labDecor ? JSON.stringify(labDecor) : "";
   useEffect(() => {
     if (labDecor) rendererRef.current?.setLabDecor(labDecor);
-  }, [
-    labDecor?.floorStyle,
-    labDecor?.patioDecor,
-    labDecor?.seatingStyle,
-    labDecor?.barStyle,
-    labDecor?.rugStyle,
-    labDecor?.hobbyProp,
-    labDecor?.plantPack,
-    labDecor?.lightingFixture,
-    labDecor?.stationUpgrades.research,
-    labDecor?.stationUpgrades.mining,
-    labDecor?.stationUpgrades.pet,
-    labDecor?.stationUpgrades.builder,
-    labDecor?.stationUpgrades.lounge
-  ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [labDecorKey]);
+
+  useEffect(() => {
+    rendererRef.current?.setActiveFloor(activeFloor);
+  }, [activeFloor]);
+
+  useEffect(() => {
+    rendererRef.current?.setMovingItem(movingItem, moveSnapGrid);
+  }, [movingItem, moveSnapGrid]);
 
   useEffect(() => {
     rendererRef.current?.setPlumbobColor(plumbobColor, playerMoodName);

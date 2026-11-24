@@ -153,6 +153,13 @@ export class DiegeticLabMonitors3D {
     return out;
   }
 
+  public setStationPosition(stationId: LabStationId, x: number, y: number, z: number) {
+    const rig = this.screens.get(stationId);
+    if (!rig) return;
+    rig.basePos.set(x, y, z);
+    rig.group.position.set(x, y, z);
+  }
+
   public updateTelemetry(data: DiegeticMonitorTelemetry, nowMs: number) {
     // Throttle GPU canvas texture uploads cleanly (~320ms cadence, dirty-checked per monitor)
     if (nowMs - this.lastDrawMs < 320) return;

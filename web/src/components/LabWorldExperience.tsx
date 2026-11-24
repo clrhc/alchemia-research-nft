@@ -42,6 +42,8 @@ import {
   Microscope,
   Minimize2,
   Moon,
+  Move,
+  Music,
   Palette,
   Pause,
   PawPrint,
@@ -49,6 +51,8 @@ import {
   Pickaxe,
   Play,
   Plus,
+  RotateCcw,
+  RotateCw,
   Send,
   ShieldCheck,
   Shirt,
@@ -95,6 +99,20 @@ import {
 } from "../engine/characterConfig";
 import { LAB_STATIONS, LAB_STATION_BY_ID, type LabStationId } from "../engine/labStations";
 import {
+  EXTRA_ROOM_DEFS,
+  HOUSE_FLOOR_DEFS,
+  HOUSE_SIZE_DEFS,
+  MOVABLE_ITEMS,
+  WALL_STYLES,
+  getHouseBoundsRadius,
+  resolveItemPlacement,
+  type ExtraRoomId,
+  type FloorNumber,
+  type HouseFloorCount,
+  type HouseSizeLevel,
+  type MovableItemId
+} from "../engine/homeLayout";
+import {
   COMMUNITY_FOUNTAIN_POS,
   buildNeighborhoodRoster,
   computeNeighborhoodPlacements,
@@ -130,6 +148,7 @@ import {
   loadGuestbookEntries,
   loadLabDecor,
   loadRelationshipsMap,
+  moveItemInDecor,
   randomizeLabDecor,
   saveLabDecor,
   upgradeStationInDecor,
@@ -450,10 +469,13 @@ export function LabWorldExperience({
     x: number;
     y: number;
   } | null>(null);
-  const [builderSubTab, setBuilderSubTab] = useState<"furnish" | "upgrades" | "rooms">("furnish");
+  const [builderSubTab, setBuilderSubTab] = useState<"furnish" | "expand" | "move" | "upgrades">("furnish");
   const [furnishCategory, setFurnishCategory] = useState<
-    "seating" | "bar" | "hobby" | "rug" | "patio" | "plants" | "lights" | "floor"
+    "seating" | "bar" | "hobby" | "rug" | "patio" | "plants" | "lights" | "floor" | "walls"
   >("seating");
+  const [activeFloor, setActiveFloor] = useState<FloorNumber>(1);
+  const [movingItem, setMovingItem] = useState<MovableItemId | null>(null);
+  const [moveSnapGrid, setMoveSnapGrid] = useState<boolean>(true);
   const [neighborhoodDrawerOpen, setNeighborhoodDrawerOpen] = useState(false);
   const neighborhoodDrawerOpenRef = useRef(false);
   neighborhoodDrawerOpenRef.current = neighborhoodDrawerOpen;
@@ -644,6 +666,8 @@ export function LabWorldExperience({
     setGuestbookDraft("");
     setPieMenu(null);
     setInspectedNeighbor(null);
+    setActiveFloor(1);
+    setMovingItem(null);
   }, [activeVessel.tokenId, activeVessel.seed, isVisiting]);
 
   useEffect(() => {
@@ -1053,6 +1077,7 @@ export function LabWorldExperience({
 
       if (e.code === "Escape") {
         setPieMenu(null);
+        setMovingItem(null);
         setOpenStation(null);
         setNeighborhoodDrawerOpen(false);
         setInspectedNeighbor(null);
@@ -1244,7 +1269,7 @@ export function LabWorldExperience({
     }
 
     // Update live Architectural Blueprint Mini-Map Radar (dual-scale: Lab Close-Up or Full Growing Town!)
-    const radarSpan = radarIsDistrictRef.current ? 26.8 : 3.45;
+    const radarSpan = radarIsDistrictRef.current ? 26.8 : 4.75;
     const mapCoord = (v: number) => Math.max(8, Math.min(104, 56 + (v / radarSpan) * 44));
     if (radarPlayerRef.current) {
       const rx = mapCoord(telemetry.charX);
@@ -1442,6 +1467,162 @@ export function LabWorldExperience({
       completeGuideStep
     ]
   );
+
+  // ============================================================================
+  // Multi-Story Floors, Home Size Expansion, 6 Homely Rooms & Free-Place Mover
+  // ============================================================================
+  const handleSwitchFloor = useCallback(
+    (floor: FloorNumber) => {
+      const clamped = Math.max(1, Math.min(labDecor.houseFloors, floor)) as FloorNumber;
+      setActiveFloor(clamped);
+      artworkRef.current?.setActiveFloor(clamped);
+      soundEngine.playTap(clamped === 3 ? 1318.5 : clamped === 2 ? 1046.5 : 880);
+      setCurrentActivity(`Exploring Floor ${clamped}F`);
+    },
+    [labDecor.houseFloors]
+  );
+
+  const handleExpandHouseSize = useCallback(
+    (targetSize: HouseSizeLevel) => {
+      if (isVisiting) {
+        setFeedback("Return to your own Home Lab to expand your house!");
+        return;
+      }
+      const def = HOUSE_SIZE_DEFS.find((s) => s.level === targetSize);
+      if (!def || targetSize <= labDecor.houseSize) return;
+      if (!standaloneMode && onSpendCoinsForTreat && def.costSparks > 0) {
+        if (!onSpendCoinsForTreat(def.costSparks)) {
+          setFeedback(`Need ${def.costSparks} sparks to expand to ${def.title} (${def.footprintLabel}).`);
+          return;
+        }
+      }
+      const saved = saveLabDecor(activeVessel.tokenId, { ...labDecor, houseSize: targetSize });
+      setLabDecor(saved);
+      soundEngine.playBuildRoom();
+      setCharacterEmote((prev) => ({ emote: "spin", seq: (prev?.seq || 0) + 1 }));
+      triggerPlayerMoodlet("Inspired", `${def.title}!`, "Home Expansion");
+      setFeedback(`Expanded home to ${def.title} (${def.footprintLabel})!`);
+      completeGuideStep("furnish");
+    },
+    [isVisiting, labDecor, standaloneMode, onSpendCoinsForTreat, activeVessel.tokenId, triggerPlayerMoodlet, completeGuideStep]
+  );
+
+  const handleAddHouseFloor = useCallback(
+    (targetFloors: HouseFloorCount) => {
+      if (isVisiting) {
+        setFeedback("Return to your own Home Lab to add upper floors!");
+        return;
+      }
+      const def = HOUSE_FLOOR_DEFS.find((f) => f.floors === targetFloors);
+      if (!def || targetFloors <= labDecor.houseFloors) return;
+      if (!standaloneMode && onSpendCoinsForTreat && def.costSparks > 0) {
+        if (!onSpendCoinsForTreat(def.costSparks)) {
+          setFeedback(`Need ${def.costSparks} sparks to build ${def.title}.`);
+          return;
+        }
+      }
+      const saved = saveLabDecor(activeVessel.tokenId, { ...labDecor, houseFloors: targetFloors });
+      setLabDecor(saved);
+      soundEngine.playBuildRoom();
+      setActiveFloor(targetFloors);
+      window.setTimeout(() => artworkRef.current?.setActiveFloor(targetFloors), 80);
+      triggerPlayerMoodlet("Inspired", `${def.floors}F Sky Floor Built!`, "Home Architect");
+      setFeedback(`Built ${def.title}! Use the 1F/2F/3F switcher or click the spiral staircase.`);
+      completeGuideStep("furnish");
+    },
+    [isVisiting, labDecor, standaloneMode, onSpendCoinsForTreat, activeVessel.tokenId, triggerPlayerMoodlet, completeGuideStep]
+  );
+
+  const handleUnlockExtraRoom = useCallback(
+    (roomId: ExtraRoomId) => {
+      if (isVisiting) {
+        setFeedback("Return to your own Home Lab to build cozy interior rooms!");
+        return;
+      }
+      const def = EXTRA_ROOM_DEFS.find((r) => r.id === roomId);
+      if (!def || labDecor.extraRooms.includes(roomId)) return;
+      if (!standaloneMode && onSpendCoinsForTreat && def.costSparks > 0) {
+        if (!onSpendCoinsForTreat(def.costSparks)) {
+          setFeedback(`Need ${def.costSparks} sparks to build ${def.name}.`);
+          return;
+        }
+      }
+      const saved = saveLabDecor(activeVessel.tokenId, {
+        ...labDecor,
+        extraRooms: [...labDecor.extraRooms, roomId]
+      });
+      setLabDecor(saved);
+      soundEngine.playBuildRoom();
+      setCharacterEmote((prev) => ({ emote: "hop", seq: (prev?.seq || 0) + 1 }));
+      triggerPlayerMoodlet("Inspired", `${def.name} Added!`, "Cozy Home");
+      setFeedback(`Added ${def.name} to your home — click it in 3D for cozy Sims actions!`);
+      completeGuideStep("furnish");
+    },
+    [isVisiting, labDecor, standaloneMode, onSpendCoinsForTreat, activeVessel.tokenId, triggerPlayerMoodlet, completeGuideStep]
+  );
+
+  const startMovingItem = useCallback(
+    (itemId: MovableItemId) => {
+      if (isVisiting) {
+        setFeedback("Return to your own Home Lab to rearrange stations & furniture!");
+        return;
+      }
+      const meta = MOVABLE_ITEMS.find((m) => m.id === itemId);
+      const cur = resolveItemPlacement(itemId, labDecor.customLayout);
+      const targetFloor = Math.min(labDecor.houseFloors, cur.floor) as FloorNumber;
+      setPieMenu(null);
+      setOpenStation(null);
+      setNeighborhoodDrawerOpen(false);
+      setActiveFloor(targetFloor);
+      setMovingItem(itemId);
+      setCameraMode("orbit");
+      soundEngine.playTap(1046.5);
+      setFeedback(
+        `Move Mode: click anywhere on ${targetFloor}F to place ${meta?.label || itemId}. Switch floors or rotate anytime!`
+      );
+    },
+    [isVisiting, labDecor.customLayout, labDecor.houseFloors]
+  );
+
+  const handlePlaceMovedItem = useCallback(
+    (itemId: MovableItemId, x: number, z: number, floor: FloorNumber) => {
+      const cur = resolveItemPlacement(itemId, labDecor.customLayout);
+      const next = moveItemInDecor(labDecor, itemId, x, z, cur.yaw, floor);
+      updateLabDecor(next);
+      const meta = MOVABLE_ITEMS.find((m) => m.id === itemId);
+      setFeedback(`Moved ${meta?.label || itemId} to ${floor}F (${x.toFixed(1)}, ${z.toFixed(1)})!`);
+    },
+    [labDecor, updateLabDecor]
+  );
+
+  const handleRotateMovedItem = useCallback(
+    (itemId: MovableItemId) => {
+      const cur = resolveItemPlacement(itemId, labDecor.customLayout);
+      const nextYaw = Number((((cur.yaw + Math.PI / 4) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2));
+      const next = moveItemInDecor(labDecor, itemId, cur.x, cur.z, nextYaw, cur.floor);
+      updateLabDecor(next);
+      const meta = MOVABLE_ITEMS.find((m) => m.id === itemId);
+      setFeedback(`Rotated ${meta?.label || itemId} by 45°!`);
+    },
+    [labDecor, updateLabDecor]
+  );
+
+  const handleResetItemLayout = useCallback(
+    (itemId: MovableItemId) => {
+      const nextLayout = { ...labDecor.customLayout };
+      delete nextLayout[itemId];
+      updateLabDecor({ ...labDecor, customLayout: nextLayout });
+      const meta = MOVABLE_ITEMS.find((m) => m.id === itemId);
+      setFeedback(`Reset ${meta?.label || itemId} to its spacious default spot.`);
+    },
+    [labDecor, updateLabDecor]
+  );
+
+  const handleResetAllLayout = useCallback(() => {
+    updateLabDecor({ ...labDecor, customLayout: {} });
+    soundEngine.playBuildRoom();
+    setFeedback("Reset all 9 stations & furniture pieces to their spacious default layout!");
+  }, [labDecor, updateLabDecor]);
 
   let pendingCoins: number;
   if (
@@ -1653,13 +1834,20 @@ export function LabWorldExperience({
         break;
 
       case "bench-sit": {
-        const a = artworkRef.current?.getSimsFurnitureAnchor("bench") ?? { x: -1.46, z: 0.54, yaw: 1.2 };
+        const a = artworkRef.current?.getSimsFurnitureAnchor("bench") ?? {
+          x: -2.12,
+          z: 1.02,
+          yaw: 1.2,
+          floor: 1 as FloorNumber
+        };
         const energyGain = Math.round(24 * stationBonuses.energyFunMult);
         setCameraMode("follow");
+        setActiveFloor(a.floor);
         setCurrentActivity("Relaxing in Comfort Lounge");
         artworkRef.current?.performSimsAction({
           x: a.x,
           z: a.z,
+          floor: a.floor,
           yaw: a.yaw,
           posture: "sit",
           bubble: "sparkle",
@@ -1674,13 +1862,20 @@ export function LabWorldExperience({
         break;
       }
       case "bench-meditate": {
-        const a = artworkRef.current?.getSimsFurnitureAnchor("bench") ?? { x: -1.46, z: 0.54, yaw: 1.2 };
+        const a = artworkRef.current?.getSimsFurnitureAnchor("bench") ?? {
+          x: -2.12,
+          z: 1.02,
+          yaw: 1.2,
+          floor: 1 as FloorNumber
+        };
         const focusGain = Math.round(22 * stationBonuses.focusMult);
         setCameraMode("follow");
+        setActiveFloor(a.floor);
         setCurrentActivity("Stargazing & Visualizing Folds");
         artworkRef.current?.performSimsAction({
           x: a.x,
           z: a.z,
+          floor: a.floor,
           yaw: a.yaw,
           posture: "sit",
           bubble: "idea",
@@ -1698,23 +1893,159 @@ export function LabWorldExperience({
         setBuilderSubTab("furnish");
         navigateToStation("builder");
         break;
+      case "open-expand":
+        setBuilderSubTab("expand");
+        navigateToStation("builder");
+        break;
       case "open-upgrades":
         setBuilderSubTab("upgrades");
         navigateToStation("builder");
         break;
+      case "move-seating":
+        startMovingItem("seating");
+        break;
+      case "move-bar":
+        startMovingItem("bar");
+        break;
+      case "move-research":
+        startMovingItem("research");
+        break;
+      case "move-mining":
+        startMovingItem("mining");
+        break;
+      case "move-hobby":
+        startMovingItem("hobby");
+        break;
+      case "floor-up":
+        handleSwitchFloor(Math.min(labDecor.houseFloors, activeFloor + 1) as FloorNumber);
+        break;
+      case "floor-down":
+        handleSwitchFloor(Math.max(1, activeFloor - 1) as FloorNumber);
+        break;
+      case "room-nap":
+      case "room-cook":
+      case "room-soak":
+      case "room-fire":
+      case "room-garden":
+      case "room-piano": {
+        const roomId: ExtraRoomId =
+          actionId === "room-nap"
+            ? "bedroom"
+            : actionId === "room-cook"
+              ? "kitchen"
+              : actionId === "room-soak"
+                ? "spa"
+                : actionId === "room-fire"
+                  ? "hearth"
+                  : actionId === "room-garden"
+                    ? "pergola"
+                    : "music";
+        const roomDef = EXTRA_ROOM_DEFS.find((r) => r.id === roomId);
+        const rx = roomDef?.standX ?? target.worldX;
+        const rz = roomDef?.standZ ?? target.worldZ;
+        setCameraMode("follow");
+        setActiveFloor(1);
+        const cfg =
+          roomId === "bedroom"
+            ? {
+                activity: "Power Napping in Cozy Bedroom",
+                posture: "sit" as const,
+                mood: "Relaxed" as SimsMoodName,
+                moodlet: "Rested & Cozy",
+                bubble: "zzz" as const,
+                color: "#a78bfa",
+                delta: { energy: 35, focus: 10 },
+                msg: "Took a rejuvenating nap under the canopy bed — +35 Energy!"
+              }
+            : roomId === "kitchen"
+              ? {
+                  activity: "Cooking a Warm Lab Meal",
+                  posture: "brew" as const,
+                  mood: "Energized" as SimsMoodName,
+                  moodlet: "Home-Cooked Feast",
+                  bubble: "coffee" as const,
+                  color: "#f59e0b",
+                  delta: { energy: 25, social: 15, fun: 10 },
+                  msg: "Prepared a warm artisan meal in your kitchenette — +25 Energy & +15 Social!"
+                }
+              : roomId === "spa"
+                ? {
+                    activity: "Soaking in Cedar Onsen Spa",
+                    posture: "sit" as const,
+                    mood: "Relaxed" as SimsMoodName,
+                    moodlet: "Onsen Serenity",
+                    bubble: "sparkle" as const,
+                    color: "#38bdf8",
+                    delta: { energy: 30, fun: 15 },
+                    msg: "Soaked in warm sakura-scented spring water — feeling deeply Relaxed!"
+                  }
+                : roomId === "hearth"
+                  ? {
+                      activity: "Warming by the Glass Hearth",
+                      posture: "sit" as const,
+                      mood: "Relaxed" as SimsMoodName,
+                      moodlet: "Fireside Glow",
+                      bubble: "heart" as const,
+                      color: "#fb7185",
+                      delta: { fun: 25, energy: 14 },
+                      msg: "Cozying up beside your glowing glass fireplace — +25 Fun!"
+                    }
+                  : roomId === "pergola"
+                    ? {
+                        activity: "Tending Wisteria Garden",
+                        posture: "stand" as const,
+                        mood: "Inspired" as SimsMoodName,
+                        moodlet: "Botanical Bloom",
+                        bubble: "sparkle" as const,
+                        color: "#10b981",
+                        delta: { focus: 20, energy: 12 },
+                        msg: "Strolled beneath the blooming wisteria pergola — feeling Inspired!"
+                      }
+                    : {
+                        activity: "Playing Grand Piano Sonata",
+                        posture: "analyze" as const,
+                        mood: "Playful" as SimsMoodName,
+                        moodlet: "Melodic Flow",
+                        bubble: "sparkle" as const,
+                        color: "#f472b6",
+                        delta: { fun: 30, social: 12 },
+                        msg: "Played a sparkling sonata on your grand piano — +30 Fun!"
+                      };
+        setCurrentActivity(cfg.activity);
+        artworkRef.current?.performSimsAction({
+          x: rx,
+          z: rz,
+          floor: 1,
+          yaw: roomDef?.yaw ?? 0,
+          posture: cfg.posture,
+          emote: roomId === "music" || roomId === "pergola" ? "hop" : undefined,
+          bubble: cfg.bubble,
+          burstColor: cfg.color,
+          onArrive: () => {
+            setSimsVibes((v) => applySimsVibeDelta(v, cfg.delta));
+            triggerPlayerMoodlet(cfg.mood, cfg.moodlet, roomDef?.name || target.label);
+            soundEngine.playBuildRoom();
+            setFeedback(cfg.msg);
+          }
+        });
+        break;
+      }
 
       case "espresso-brew": {
         const a = artworkRef.current?.getSimsFurnitureAnchor("espresso") ?? {
-          x: -0.92,
-          z: -1.12,
-          yaw: -2.45
+          x: -1.26,
+          z: -2.02,
+          yaw: -2.45,
+          floor: 1 as FloorNumber
         };
         const energyGain = Math.round(28 * stationBonuses.energyFunMult);
         setCameraMode("follow");
+        setActiveFloor(a.floor);
         setCurrentActivity(`Brewing at ${target.label}`);
         artworkRef.current?.performSimsAction({
           x: a.x,
           z: a.z,
+          floor: a.floor,
           yaw: a.yaw,
           posture: "brew",
           bubble: "coffee",
@@ -1730,16 +2061,19 @@ export function LabWorldExperience({
       }
       case "espresso-share": {
         const a = artworkRef.current?.getSimsFurnitureAnchor("espresso") ?? {
-          x: -0.92,
-          z: -1.12,
-          yaw: -2.45
+          x: -1.26,
+          z: -2.02,
+          yaw: -2.45,
+          floor: 1 as FloorNumber
         };
         const funGain = Math.round(12 * stationBonuses.energyFunMult);
         setCameraMode("follow");
+        setActiveFloor(a.floor);
         setCurrentActivity("Toasting Open Science");
         artworkRef.current?.performSimsAction({
           x: a.x,
           z: a.z,
+          floor: a.floor,
           yaw: a.yaw,
           posture: "brew",
           emote: "wave",
@@ -1760,17 +2094,20 @@ export function LabWorldExperience({
 
       case "micro-analyze": {
         const a = artworkRef.current?.getSimsFurnitureAnchor("microscope") ?? {
-          x: -1.32,
-          z: -0.58,
-          yaw: -1.65
+          x: -2.06,
+          z: -1.14,
+          yaw: -1.65,
+          floor: 1 as FloorNumber
         };
         const focusGain = Math.round(24 * stationBonuses.focusMult);
         const sparkGain = 1 + stationBonuses.extraFoldSpark;
         setCameraMode("follow");
+        setActiveFloor(a.floor);
         setCurrentActivity("Analyzing Protein Fold");
         artworkRef.current?.performSimsAction({
           x: a.x,
           z: a.z,
+          floor: a.floor,
           yaw: a.yaw,
           posture: "analyze",
           bubble: "dna",
@@ -1798,9 +2135,10 @@ export function LabWorldExperience({
       case "hobby-arcade":
       case "hobby-vibe": {
         const a = artworkRef.current?.getSimsFurnitureAnchor("hobby") ?? {
-          x: -1.34,
-          z: 1.68,
-          yaw: -2.45
+          x: 2.22,
+          z: -2.08,
+          yaw: 0.65,
+          floor: 1 as FloorNumber
         };
         const funBoost = Math.round(20 * stationBonuses.energyFunMult);
         const focusBoost = Math.round(18 * stationBonuses.focusMult);
@@ -1872,10 +2210,12 @@ export function LabWorldExperience({
                       };
 
         setCameraMode("follow");
+        setActiveFloor(a.floor);
         setCurrentActivity(config.activity);
         artworkRef.current?.performSimsAction({
           x: a.x,
           z: a.z,
+          floor: a.floor,
           yaw: a.yaw,
           posture: actionId === "hobby-read" || actionId === "hobby-arcade" ? "analyze" : "stand",
           emote: actionId === "hobby-music" ? "spin" : "hop",
@@ -1896,15 +2236,18 @@ export function LabWorldExperience({
 
       case "mine-overclock": {
         const a = artworkRef.current?.getSimsFurnitureAnchor("harvester") ?? {
-          x: 1.38,
-          z: -0.58,
-          yaw: 1.9
+          x: 2.22,
+          z: -0.36,
+          yaw: 1.45,
+          floor: 1 as FloorNumber
         };
         setCameraMode("follow");
+        setActiveFloor(a.floor);
         setCurrentActivity("Spinning ALCH Harvester");
         artworkRef.current?.performSimsAction({
           x: a.x,
           z: a.z,
+          floor: a.floor,
           yaw: a.yaw,
           posture: "analyze",
           bubble: "coin",
@@ -2196,6 +2539,9 @@ export function LabWorldExperience({
         activeStationHighlight={openStation || nearStation}
         neighbors={neighbors}
         labDecor={labDecor}
+        activeFloor={activeFloor}
+        movingItem={movingItem}
+        moveSnapGrid={moveSnapGrid}
         plumbobColor={simsMood.plumbobHex}
         playerMoodName={simsMood.name}
         controlsEnabled={!pieMenu}
@@ -2212,6 +2558,7 @@ export function LabWorldExperience({
         onWalkTelemetry={handleWalkTelemetry}
         onNearStationChange={handleNearStationChange}
         onStationArrived={handleStationArrived}
+        onPlaceMovedItem={handlePlaceMovedItem}
         onSimsObjectClick={(target, sx, sy) => {
           if (!savedProfile && !creatorOpen && creatorTriggerMode === "on-first-interaction") {
             openCharacterCreator();
@@ -2278,7 +2625,9 @@ export function LabWorldExperience({
           containerHeight={stageRef.current?.clientHeight || 640}
           actions={getSimsPieActions(pieMenu.target, {
             petSleeping: vitals.sleeping,
-            standalone: standaloneMode
+            standalone: standaloneMode,
+            currentFloor: activeFloor,
+            maxFloors: labDecor.houseFloors
           })}
           onSelect={(actionId) => handleSimsPieAction(actionId, pieMenu.target)}
           onClose={() => setPieMenu(null)}
@@ -2333,8 +2682,8 @@ export function LabWorldExperience({
               headline = petDisplayName;
               liveLine = `${companionMoodLabel(vitals)} · ${tamaBoost}x speed`;
             } else if (st.id === "builder") {
-              headline = `Home Studio`;
-              liveLine = `${builtCount}/6 wings · ${stationBonuses.totalUpgrades}/10 upgrades`;
+              headline = `Home Architect`;
+              liveLine = `${labDecor.houseFloors}F · ${labDecor.extraRooms.length + builtCount} rooms · Move`;
             } else if (st.id === "console") {
               headline = savedProfile?.name || "Researcher";
               liveLine = `Goals ${goalsDoneCount}/5 · Wardrobe`;
@@ -2566,6 +2915,94 @@ export function LabWorldExperience({
           </div>
         </header>
       )}
+
+      {/* Clickable Cutesy Silver-Glass 1F / 2F / 3F Multi-Story Floor Switcher */}
+      {!creatorOpen && Boolean(savedProfile) && labDecor.houseFloors >= 2 && (
+        <div className="floor-switcher-hud" role="group" aria-label="Switch house floor">
+          <span className="floor-switcher-label">
+            <Layers size={11} /> Floor
+          </span>
+          {([1, 2, 3] as FloorNumber[])
+            .filter((f) => f <= labDecor.houseFloors)
+            .map((f) => (
+              <button
+                key={f}
+                type="button"
+                className={`floor-pill-btn clickable ${activeFloor === f ? "active" : ""}`}
+                onClick={() => handleSwitchFloor(f)}
+                title={`Go to Floor ${f}F`}
+              >
+                {f}F
+              </button>
+            ))}
+        </div>
+      )}
+
+      {/* Live 3D Free-Placement Move Mode Floating Top Banner */}
+      {!creatorOpen && movingItem && (() => {
+        const meta = MOVABLE_ITEMS.find((m) => m.id === movingItem);
+        return (
+          <div className="move-mode-banner" role="region" aria-label="Move item placement mode">
+            <div className="move-mode-info">
+              <span
+                className="cute-icon-bubble is-sm"
+                style={{ "--bubble-accent": meta?.accent || "#38bdf8" } as React.CSSProperties}
+              >
+                <Move size={11} />
+              </span>
+              <div>
+                <strong>Placing {meta?.label || movingItem}</strong>
+                <small>Click anywhere on {activeFloor}F deck to move it live in 3D</small>
+              </div>
+            </div>
+            <div className="move-mode-actions">
+              {labDecor.houseFloors >= 2 &&
+                ([1, 2, 3] as FloorNumber[])
+                  .filter((f) => f <= labDecor.houseFloors)
+                  .map((f) => (
+                    <button
+                      key={f}
+                      type="button"
+                      className={`subtle-pill-btn clickable ${activeFloor === f ? "active" : ""}`}
+                      style={{ padding: "4px 8px", fontSize: "0.7rem" }}
+                      onClick={() => handleSwitchFloor(f)}
+                    >
+                      {f}F
+                    </button>
+                  ))}
+              <button
+                type="button"
+                className="subtle-pill-btn clickable"
+                style={{ padding: "4px 9px", fontSize: "0.7rem" }}
+                onClick={() => handleRotateMovedItem(movingItem)}
+                title="Rotate 45 degrees"
+              >
+                <RotateCw size={11} /> Rotate
+              </button>
+              <button
+                type="button"
+                className={`subtle-pill-btn clickable ${moveSnapGrid ? "active" : ""}`}
+                style={{ padding: "4px 9px", fontSize: "0.7rem" }}
+                onClick={() => setMoveSnapGrid((v) => !v)}
+                title="Toggle 0.25m alignment grid"
+              >
+                <Grid2x2 size={11} /> Snap
+              </button>
+              <button
+                type="button"
+                className="sector-btn clickable"
+                onClick={() => {
+                  setMovingItem(null);
+                  setCameraMode("follow");
+                  soundEngine.playTap(1046.5);
+                }}
+              >
+                <Check size={11} /> Done
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Clickable Cutesy Silver-Glass Plumbob Mood & 4-Icon Needs Charm */}
       {!creatorOpen && Boolean(savedProfile) && (
@@ -3525,13 +3962,13 @@ export function LabWorldExperience({
               </div>
             )}
 
-            {/* STATION 4: SIMS-STYLE HOME FURNISHING CATALOG, STATION UPGRADES & ARCHITECTURAL WINGS */}
+            {/* STATION 4: HOME ARCHITECT — FURNISH, EXPAND FLOORS & ROOMS, FREE-PLACE MOVER & UPGRADES */}
             {openStation === "builder" && (
               <div className="world-drawer-stack">
                 <div
-                  className="builder-subtabs builder-subtabs-3"
+                  className="builder-subtabs builder-subtabs-4"
                   role="tablist"
-                  aria-label="Home studio mode"
+                  aria-label="Home architect mode"
                 >
                   <button
                     type="button"
@@ -3550,34 +3987,48 @@ export function LabWorldExperience({
                   <button
                     type="button"
                     role="tab"
+                    aria-selected={builderSubTab === "expand"}
+                    className={`builder-subtab clickable ${
+                      builderSubTab === "expand" ? "active" : ""
+                    }`}
+                    onClick={() => {
+                      setBuilderSubTab("expand");
+                      soundEngine.playTap(1046.5);
+                    }}
+                  >
+                    <Home size={12} /> Expand
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={builderSubTab === "move"}
+                    className={`builder-subtab clickable ${
+                      builderSubTab === "move" ? "active" : ""
+                    }`}
+                    onClick={() => {
+                      setBuilderSubTab("move");
+                      soundEngine.playTap(1174.66);
+                    }}
+                  >
+                    <Move size={12} /> Move
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
                     aria-selected={builderSubTab === "upgrades"}
                     className={`builder-subtab clickable ${
                       builderSubTab === "upgrades" ? "active" : ""
                     }`}
                     onClick={() => {
                       setBuilderSubTab("upgrades");
-                      soundEngine.playTap(1046.5);
-                    }}
-                  >
-                    <ArrowUpCircle size={12} /> Stations ({stationBonuses.totalUpgrades}/10)
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={builderSubTab === "rooms"}
-                    className={`builder-subtab clickable ${
-                      builderSubTab === "rooms" ? "active" : ""
-                    }`}
-                    onClick={() => {
-                      setBuilderSubTab("rooms");
                       soundEngine.playTap(880);
                     }}
                   >
-                    <Building2 size={12} /> Wings ({builtCount}/6)
+                    <ArrowUpCircle size={12} /> Gear
                   </button>
                 </div>
 
-                {/* TAB 1: FULL 8-CATEGORY 3D HOME FURNISHING CATALOG (43 LIVE 3D ITEMS!) */}
+                {/* TAB 1: FULL 9-CATEGORY 3D HOME FURNISHING CATALOG (48 LIVE 3D ITEMS!) */}
                 {builderSubTab === "furnish" && (() => {
                   const furnishCats = [
                     { id: "seating", label: "Seating", icon: Armchair },
@@ -3587,7 +4038,8 @@ export function LabWorldExperience({
                     { id: "patio", label: "Patio", icon: Sparkles },
                     { id: "plants", label: "Plants", icon: Flower2 },
                     { id: "lights", label: "Lights", icon: LampCeiling },
-                    { id: "floor", label: "Floors", icon: Palette }
+                    { id: "floor", label: "Floors", icon: Palette },
+                    { id: "walls", label: "Walls", icon: Home }
                   ] as const;
 
                   return (
@@ -3596,14 +4048,14 @@ export function LabWorldExperience({
                         <span className="single-kicker">
                           {isVisiting
                             ? `Previewing ${visitingHostProfile?.name || "Host"}'s Decor`
-                            : "43 Live 3D Furnishings"}
+                            : "48 Live 3D Furnishings & Finishes"}
                         </span>
                         <button
                           type="button"
                           className="subtle-pill-btn clickable"
                           style={{ padding: "4px 10px", fontSize: "0.7rem" }}
                           onClick={() => {
-                            const next = randomizeLabDecor(labDecor.stationUpgrades);
+                            const next = randomizeLabDecor(labDecor.stationUpgrades, labDecor);
                             updateLabDecor(next);
                             setFeedback("Styled your home with a fresh randomized 3D furnishing set!");
                           }}
@@ -3620,6 +4072,7 @@ export function LabWorldExperience({
                             className="creator-preset-pill clickable"
                             onClick={() => {
                               updateLabDecor({
+                                ...labDecor,
                                 ...theme.decor,
                                 stationUpgrades: { ...labDecor.stationUpgrades }
                               });
@@ -3902,6 +4355,36 @@ export function LabWorldExperience({
                         </div>
                       )}
 
+                      {furnishCategory === "walls" && (
+                        <div className="decor-grid">
+                          {WALL_STYLES.map((w) => {
+                            const active = labDecor.wallStyle === w.id;
+                            return (
+                              <button
+                                key={w.id}
+                                type="button"
+                                className={`decor-swatch-card furnish-card clickable ${active ? "active" : ""}`}
+                                onClick={() => {
+                                  updateLabDecor({ ...labDecor, wallStyle: w.id });
+                                  setFeedback(`Refinished home walls & trim with ${w.label}!`);
+                                }}
+                              >
+                                <div className="furnish-card-top">
+                                  <span className="decor-swatch-dot" style={{ background: w.swatch }} />
+                                  {active && (
+                                    <span className="furnish-check-badge">
+                                      <Check size={10} />
+                                    </span>
+                                  )}
+                                </div>
+                                <strong>{w.label}</strong>
+                                <small>Walls, trim &amp; balcony rails</small>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+
                       <div className="world-goals-block">
                         <div className="single-kicker" style={{ marginBottom: 7 }}>
                           World Sky &amp; Atmosphere
@@ -3943,7 +4426,276 @@ export function LabWorldExperience({
                   );
                 })()}
 
-                {/* TAB 2: PROGRESSIVE 3D STATION HARDWARE UPGRADES (LV. 1 -> LV. 2 -> LV. 3) */}
+                {/* TAB 2: EXPAND HOUSE SIZE, ADD MULTI-STORY FLOORS (2F/3F) & 6 COZY ROOMS */}
+                {builderSubTab === "expand" && (
+                  <div className="world-drawer-stack">
+                    {/* 1. House Footprint Expansion (Lv. 1 -> 2 -> 3) */}
+                    <div className="expand-section-card">
+                      <div className="single-kicker">House Size · Bigger Courtyard &amp; Veranda</div>
+                      <div className="world-sector-list" style={{ marginTop: 6 }}>
+                        {HOUSE_SIZE_DEFS.map((sz) => {
+                          const owned = labDecor.houseSize >= sz.level;
+                          const isNext = sz.level === labDecor.houseSize + 1;
+                          const canAfford =
+                            standaloneMode || !onSpendCoinsForTreat || labSparks >= sz.costSparks;
+                          return (
+                            <div key={sz.level} className={`expand-room-card ${owned ? "is-owned" : ""}`}>
+                              <div className="expand-room-top">
+                                <div>
+                                  <strong>
+                                    Lv.{sz.level} {sz.title}
+                                  </strong>
+                                  <span className="world-pill-muted" style={{ marginLeft: 6 }}>
+                                    {sz.footprintLabel}
+                                  </span>
+                                  <div className="tama-sub">{sz.desc}</div>
+                                </div>
+                                {owned ? (
+                                  <span className="built-pill">
+                                    <Check size={11} /> Built
+                                  </span>
+                                ) : isNext && !isVisiting ? (
+                                  <button
+                                    type="button"
+                                    className="sector-btn clickable"
+                                    disabled={!canAfford}
+                                    onClick={() => handleExpandHouseSize(sz.level)}
+                                  >
+                                    <Sparkles size={11} />{" "}
+                                    {standaloneMode ? "Expand Free" : `${sz.costSparks} sparks`}
+                                  </button>
+                                ) : (
+                                  <span className="world-pill-muted">Unlock Lv.{sz.level - 1} first</span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* 2. Multi-Story Walkable Floors (1F -> 2F Loft -> 3F Sky Penthouse) */}
+                    <div className="expand-section-card">
+                      <div className="single-kicker">Multi-Story Floors · Walkable Lofts &amp; Spiral Stairs</div>
+                      <div className="world-sector-list" style={{ marginTop: 6 }}>
+                        {HOUSE_FLOOR_DEFS.map((fl) => {
+                          const owned = labDecor.houseFloors >= fl.floors;
+                          const isNext = fl.floors === labDecor.houseFloors + 1;
+                          const canAfford =
+                            standaloneMode || !onSpendCoinsForTreat || labSparks >= fl.costSparks;
+                          return (
+                            <div key={fl.floors} className={`expand-room-card ${owned ? "is-owned" : ""}`}>
+                              <div className="expand-room-top">
+                                <div>
+                                  <strong>{fl.title}</strong>
+                                  <div className="tama-sub">{fl.desc}</div>
+                                </div>
+                                {owned ? (
+                                  <button
+                                    type="button"
+                                    className={`subtle-pill-btn clickable ${
+                                      activeFloor === fl.floors ? "active" : ""
+                                    }`}
+                                    style={{ padding: "4px 10px", fontSize: "0.7rem" }}
+                                    onClick={() => handleSwitchFloor(fl.floors)}
+                                  >
+                                    {activeFloor === fl.floors ? "Here" : `Go ${fl.floors}F`}
+                                  </button>
+                                ) : isNext && !isVisiting ? (
+                                  <button
+                                    type="button"
+                                    className="sector-btn clickable"
+                                    disabled={!canAfford}
+                                    onClick={() => handleAddHouseFloor(fl.floors)}
+                                  >
+                                    <Sparkles size={11} />{" "}
+                                    {standaloneMode ? `Add ${fl.floors}F` : `${fl.costSparks} sparks`}
+                                  </button>
+                                ) : (
+                                  <span className="world-pill-muted">Build {fl.floors - 1}F first</span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* 3. 6 Cozy Unlockable Interior Rooms */}
+                    <div className="expand-section-card">
+                      <div className="single-kicker">
+                        Cozy Homely Rooms ({labDecor.extraRooms.length}/{EXTRA_ROOM_DEFS.length} Built)
+                      </div>
+                      <div className="world-sector-list" style={{ marginTop: 6 }}>
+                        {EXTRA_ROOM_DEFS.map((room) => {
+                          const owned = labDecor.extraRooms.includes(room.id);
+                          const canAfford =
+                            standaloneMode || !onSpendCoinsForTreat || labSparks >= room.costSparks;
+                          const RIcon =
+                            room.id === "bedroom"
+                              ? Moon
+                              : room.id === "kitchen"
+                                ? Coffee
+                                : room.id === "spa"
+                                  ? Sparkles
+                                  : room.id === "hearth"
+                                    ? Flame
+                                    : room.id === "pergola"
+                                      ? Flower2
+                                      : Music;
+                          return (
+                            <div key={room.id} className={`expand-room-card ${owned ? "is-owned" : ""}`}>
+                              <div className="expand-room-top">
+                                <span
+                                  className="cute-icon-bubble is-sm"
+                                  style={{ "--bubble-accent": room.accent } as React.CSSProperties}
+                                >
+                                  <RIcon size={11} />
+                                </span>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <strong>{room.name}</strong>
+                                  <div className="tama-sub">
+                                    {room.desc} · <strong>{room.perk}</strong>
+                                  </div>
+                                </div>
+                                {owned ? (
+                                  <button
+                                    type="button"
+                                    className="subtle-pill-btn clickable"
+                                    style={{ padding: "4px 9px", fontSize: "0.7rem" }}
+                                    onClick={() => {
+                                      setActiveFloor(1);
+                                      setCameraMode("follow");
+                                      artworkRef.current?.performSimsAction({
+                                        x: room.standX,
+                                        z: room.standZ,
+                                        floor: 1,
+                                        yaw: room.yaw,
+                                        emote: "wave"
+                                      });
+                                      setOpenStation(null);
+                                      soundEngine.playTap(1046.5);
+                                    }}
+                                  >
+                                    Visit
+                                  </button>
+                                ) : !isVisiting ? (
+                                  <button
+                                    type="button"
+                                    className="sector-btn clickable"
+                                    disabled={!canAfford}
+                                    onClick={() => handleUnlockExtraRoom(room.id)}
+                                  >
+                                    <Sparkles size={11} />{" "}
+                                    {standaloneMode ? "Add Free" : `${room.costSparks} sparks`}
+                                  </button>
+                                ) : (
+                                  <span className="world-pill-muted">Not built</span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 3: FREE-PLACEMENT MOVER FOR EVERY STATION & FURNITURE ITEM! */}
+                {builderSubTab === "move" && (
+                  <div className="world-drawer-stack">
+                    <div className="furnish-header-row">
+                      <span className="single-kicker">
+                        Move Any Station or Furniture (1F–{labDecor.houseFloors}F)
+                      </span>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                          type="button"
+                          className={`subtle-pill-btn clickable ${moveSnapGrid ? "active" : ""}`}
+                          style={{ padding: "4px 8px", fontSize: "0.68rem" }}
+                          onClick={() => setMoveSnapGrid((v) => !v)}
+                        >
+                          <Grid2x2 size={11} /> Snap
+                        </button>
+                        {!isVisiting && (
+                          <button
+                            type="button"
+                            className="subtle-pill-btn clickable"
+                            style={{ padding: "4px 8px", fontSize: "0.68rem" }}
+                            onClick={handleResetAllLayout}
+                            title="Reset every station & furniture piece back to spacious defaults"
+                          >
+                            <RotateCcw size={11} /> Reset All
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <p className="science-summary" style={{ margin: 0 }}>
+                      Click <strong>Move</strong> on any station or furniture set, then click anywhere on
+                      your 1F deck, 2F loft, or 3F sky penthouse to place it live in 3D!
+                    </p>
+
+                    <div className="world-sector-list">
+                      {MOVABLE_ITEMS.map((item) => {
+                        const pos = resolveItemPlacement(item.id, labDecor.customLayout);
+                        const isCustomized = Boolean(labDecor.customLayout[item.id]);
+                        return (
+                          <div key={item.id} className="move-item-row">
+                            <span
+                              className="cause-dot"
+                              style={{ background: item.accent, flexShrink: 0 }}
+                            />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div className="neighbor-card-title">
+                                <strong>{item.label}</strong>
+                                <span className="move-floor-badge">{pos.floor}F</span>
+                              </div>
+                              <div className="tama-sub">
+                                {item.category === "station" ? "Station" : "Furniture"} · (
+                                {pos.x.toFixed(1)}, {pos.z.toFixed(1)})
+                              </div>
+                            </div>
+                            {!isVisiting && (
+                              <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                                <button
+                                  type="button"
+                                  className="sector-btn clickable"
+                                  style={{ padding: "4px 9px", fontSize: "0.68rem" }}
+                                  onClick={() => startMovingItem(item.id)}
+                                >
+                                  <Move size={10} /> Move
+                                </button>
+                                <button
+                                  type="button"
+                                  className="inline-icon-btn clickable"
+                                  onClick={() => handleRotateMovedItem(item.id)}
+                                  title="Rotate 45°"
+                                  aria-label={`Rotate ${item.label}`}
+                                >
+                                  <RotateCw size={11} />
+                                </button>
+                                {isCustomized && (
+                                  <button
+                                    type="button"
+                                    className="inline-icon-btn clickable"
+                                    onClick={() => handleResetItemLayout(item.id)}
+                                    title="Reset default spot"
+                                    aria-label={`Reset ${item.label}`}
+                                  >
+                                    <RotateCcw size={11} />
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 4: PROGRESSIVE 3D STATION HARDWARE UPGRADES + ON-CHAIN WINGS */}
                 {builderSubTab === "upgrades" && (
                   <div className="world-drawer-stack">
                     <div className="upgrade-summary-strip">
@@ -4041,17 +4793,12 @@ export function LabWorldExperience({
                         );
                       })}
                     </div>
-                  </div>
-                )}
 
-                {/* TAB 3: ON-CHAIN ARCHITECTURAL WINGS & TIER LEVEL */}
-                {builderSubTab === "rooms" && (
-                  <>
-                    <div className="builder-head">
+                    <div className="builder-head" style={{ marginTop: 6 }}>
                       <span>
                         {isVisiting
-                          ? `${visitingHostProfile?.name || "Host"}'s home · ${builtCount} of 6 rooms`
-                          : `${builtCount} of 6 architectural wings built`}
+                          ? `${visitingHostProfile?.name || "Host"}'s home · ${builtCount} of 6 on-chain wings`
+                          : `On-Chain Architectural Wings · ${builtCount} of 6 built`}
                       </span>
                       {onUpgradeVessel && !isVisiting && tier < 5 && (
                         <button
@@ -4180,7 +4927,7 @@ export function LabWorldExperience({
                         );
                       })}
                     </div>
-                  </>
+                  </div>
                 )}
               </div>
             )}
@@ -5385,10 +6132,12 @@ export function LabWorldExperience({
                 <line x1="8" y1="56" x2="104" y2="56" stroke="rgba(148,163,184,0.18)" strokeWidth="0.8" />
                 <line x1="56" y1="8" x2="56" y2="104" stroke="rgba(148,163,184,0.18)" strokeWidth="0.8" />
 
-                {/* 5 Clickable Station Dots */}
+                {/* 5 Clickable Station Dots (tracks live moved station positions across floors!) */}
                 {LAB_STATIONS.map((st) => {
-                  const cx = 56 + (st.padX / 3.45) * 44;
-                  const cy = 56 + (st.padZ / 3.45) * 44;
+                  const placed = resolveItemPlacement(st.id, labDecor.customLayout);
+                  const homeSpan = Math.max(4.75, getHouseBoundsRadius(labDecor.houseSize) + 0.15);
+                  const cx = Math.max(10, Math.min(102, 56 + (placed.x / homeSpan) * 44));
+                  const cy = Math.max(10, Math.min(102, 56 + (placed.z / homeSpan) * 44));
                   const active = openStation === st.id || nearStation === st.id;
                   return (
                     <circle
@@ -5403,7 +6152,9 @@ export function LabWorldExperience({
                       style={{ cursor: "pointer" }}
                       onClick={() => navigateToStation(st.id)}
                     >
-                      <title>{st.label}</title>
+                      <title>
+                        {st.label} ({placed.floor}F)
+                      </title>
                     </circle>
                   );
                 })}

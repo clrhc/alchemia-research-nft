@@ -1,6 +1,11 @@
 import * as THREE from "three";
 import { createRadialGlowTexture } from "./architectTextures";
 import {
+  getGroundElevationForFloor,
+  resolveItemPlacement,
+  type MovableItemId
+} from "./homeLayout";
+import {
   defaultLabDecor,
   type BarStyleId,
   type HobbyPropId,
@@ -68,16 +73,56 @@ export class SimsFurniture3D {
   private loungeHearthOrb: THREE.Object3D | null = null;
   private petStarToy: THREE.Object3D | null = null;
 
-  public readonly benchSitPos = new THREE.Vector3(-1.46, 0.39, 0.54);
+  public readonly benchSitPos = new THREE.Vector3(-2.12, 0.12, 1.02);
   public readonly benchSitYaw = 1.2;
-  public readonly espressoStandPos = new THREE.Vector3(-0.92, 0.39, -1.12);
+  public readonly espressoStandPos = new THREE.Vector3(-1.26, 0.12, -2.02);
   public readonly espressoStandYaw = -2.45;
-  public readonly microscopeStandPos = new THREE.Vector3(-1.32, 0.39, -0.58);
+  public readonly microscopeStandPos = new THREE.Vector3(-2.06, 0.12, -1.14);
   public readonly microscopeStandYaw = -1.65;
-  public readonly harvesterStandPos = new THREE.Vector3(1.36, 0.39, -0.22);
+  public readonly harvesterStandPos = new THREE.Vector3(2.22, 0.12, -0.36);
   public readonly harvesterStandYaw = 1.45;
-  public readonly hobbyStandPos = new THREE.Vector3(-1.34, 0.23, 1.68);
-  public readonly hobbyStandYaw = -2.45;
+  public readonly hobbyStandPos = new THREE.Vector3(2.22, 0.12, -2.08);
+  public readonly hobbyStandYaw = 0.65;
+
+  private getPlacedCoords(itemId: MovableItemId): {
+    x: number;
+    y: number;
+    z: number;
+    yaw: number;
+    floor: 1 | 2 | 3;
+  } {
+    const p = resolveItemPlacement(itemId, this.decor.customLayout);
+    const y = getGroundElevationForFloor(p.floor, p.x, p.z, this.decor.houseSize);
+    return { x: p.x, y, z: p.z, yaw: p.yaw, floor: p.floor };
+  }
+
+  public getDynamicAnchor(kind: "bench" | "espresso" | "microscope" | "harvester" | "hobby"): {
+    x: number;
+    z: number;
+    yaw: number;
+    floor: 1 | 2 | 3;
+  } {
+    const id: MovableItemId =
+      kind === "bench"
+        ? "seating"
+        : kind === "espresso"
+          ? "bar"
+          : kind === "microscope"
+            ? "research"
+            : kind === "harvester"
+              ? "mining"
+              : "hobby";
+    const p = this.getPlacedCoords(id);
+    const frontDist = kind === "bench" ? 0.14 : 0.44;
+    const standX = p.x + Math.sin(p.yaw) * frontDist;
+    const standZ = p.z + Math.cos(p.yaw) * frontDist;
+    return {
+      x: standX,
+      z: standZ,
+      yaw: kind === "bench" ? p.yaw : p.yaw + Math.PI,
+      floor: p.floor
+    };
+  }
 
   constructor(
     terrazzoTex: THREE.Texture,
@@ -181,67 +226,64 @@ export class SimsFurniture3D {
   }
 
   public getStationUpgradeWorldPos(stationId: UpgradeableStationId): THREE.Vector3 {
-    switch (stationId) {
-      case "research":
-        return new THREE.Vector3(-1.58, 1.15, -0.62);
-      case "mining":
-        return new THREE.Vector3(1.62, 1.2, -0.22);
-      case "pet":
-        return new THREE.Vector3(1.34, 0.85, 1.04);
-      case "builder":
-        return new THREE.Vector3(-0.78, 0.9, 2.02);
-      case "lounge":
-        return new THREE.Vector3(-1.32, 0.95, 0.78);
-    }
+    const id: MovableItemId = stationId === "lounge" ? "seating" : stationId;
+    const p = this.getPlacedCoords(id);
+    return new THREE.Vector3(p.x, p.y + 0.78, p.z);
   }
 
   /**
-   * Diffs & updates only the changed 3D furniture / station upgrade groups in real time!
+   * Diffs & updates only the changed 3D furniture / station upgrade / custom-layout groups in real time!
    */
   public updateFurnishings(next: LabDecorConfig, accentHex?: string) {
     const accentChanged = Boolean(accentHex && accentHex !== this.accentHex);
     if (accentHex) this.accentHex = accentHex;
 
     const prev = this.decor;
+    const layoutChanged =
+      prev.houseSize !== next.houseSize ||
+      JSON.stringify(prev.customLayout || {}) !== JSON.stringify(next.customLayout || {});
+
     this.decor = {
       ...next,
-      stationUpgrades: { ...next.stationUpgrades }
+      stationUpgrades: { ...next.stationUpgrades },
+      extraRooms: [...next.extraRooms],
+      customLayout: { ...next.customLayout }
     };
 
-    if (accentChanged || prev.seatingStyle !== next.seatingStyle) {
+    if (accentChanged || layoutChanged || prev.seatingStyle !== next.seatingStyle) {
       this.buildSeating(next.seatingStyle);
     }
-    if (accentChanged || prev.barStyle !== next.barStyle) {
+    if (accentChanged || layoutChanged || prev.barStyle !== next.barStyle) {
       this.buildBar(next.barStyle);
     }
-    if (accentChanged || prev.patioDecor !== next.patioDecor) {
+    if (accentChanged || layoutChanged || prev.patioDecor !== next.patioDecor) {
       this.buildPatioDecor(next.patioDecor);
     }
-    if (accentChanged || prev.rugStyle !== next.rugStyle) {
+    if (accentChanged || layoutChanged || prev.rugStyle !== next.rugStyle) {
       this.buildRug(next.rugStyle);
     }
-    if (accentChanged || prev.hobbyProp !== next.hobbyProp) {
+    if (accentChanged || layoutChanged || prev.hobbyProp !== next.hobbyProp) {
       this.buildHobbyProp(next.hobbyProp);
     }
-    if (accentChanged || prev.plantPack !== next.plantPack) {
+    if (accentChanged || layoutChanged || prev.plantPack !== next.plantPack) {
       this.buildPlantPack(next.plantPack);
     }
     if (accentChanged || prev.lightingFixture !== next.lightingFixture) {
       this.buildLightingFixture(next.lightingFixture);
     }
-    if (accentChanged || prev.stationUpgrades.research !== next.stationUpgrades.research) {
+    if (accentChanged || layoutChanged || prev.stationUpgrades.research !== next.stationUpgrades.research) {
       this.buildResearchStation(next.stationUpgrades.research);
     }
-    if (accentChanged || prev.stationUpgrades.mining !== next.stationUpgrades.mining) {
+    if (accentChanged || layoutChanged || prev.stationUpgrades.mining !== next.stationUpgrades.mining) {
       this.buildHarvesterStation(next.stationUpgrades.mining);
     }
-    if (accentChanged || prev.stationUpgrades.pet !== next.stationUpgrades.pet) {
+    if (accentChanged || layoutChanged || prev.stationUpgrades.pet !== next.stationUpgrades.pet) {
       this.buildPetUpgrade(next.stationUpgrades.pet);
     }
-    if (accentChanged || prev.stationUpgrades.builder !== next.stationUpgrades.builder) {
+    if (accentChanged || layoutChanged || prev.stationUpgrades.builder !== next.stationUpgrades.builder) {
       this.buildBuilderUpgrade(next.stationUpgrades.builder);
     }
-    if (accentChanged || prev.stationUpgrades.lounge !== next.stationUpgrades.lounge) {
+    if (accentChanged || layoutChanged || prev.stationUpgrades.lounge !== next.stationUpgrades.lounge) {
       this.buildLoungeUpgrade(next.stationUpgrades.lounge);
     }
 
@@ -271,9 +313,10 @@ export class SimsFurniture3D {
     this.disposeObjectChildren(this.seatingGroup);
     const { stoneMat, metalMat, cushionMat, glassMat } = this.makeBaseMaterials();
 
+    const pos = this.getPlacedCoords("seating");
     const root = new THREE.Group();
-    root.position.set(-1.54, 0.39, 0.56);
-    root.rotation.y = 1.2;
+    root.position.set(pos.x, pos.y, pos.z);
+    root.rotation.y = pos.yaw;
 
     let label = "Terrazzo Lounge Bench";
 
@@ -462,11 +505,12 @@ export class SimsFurniture3D {
       }
     }
 
+    const sitAnchor = this.getDynamicAnchor("bench");
     this.tagTarget(root, {
       kind: "bench",
       label,
-      worldX: this.benchSitPos.x,
-      worldZ: this.benchSitPos.z
+      worldX: sitAnchor.x,
+      worldZ: sitAnchor.z
     });
     this.seatingGroup.add(root);
   }
@@ -479,9 +523,10 @@ export class SimsFurniture3D {
     this.espressoSteam = [];
     const { stoneMat, metalMat, glassMat } = this.makeBaseMaterials();
 
+    const pos = this.getPlacedCoords("bar");
     const bar = new THREE.Group();
-    bar.position.set(-1.12, 0.39, -1.36);
-    bar.rotation.y = 0.72;
+    bar.position.set(pos.x, pos.y, pos.z);
+    bar.rotation.y = pos.yaw;
 
     const counter = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.54, 0.34), stoneMat);
     counter.position.y = 0.27;
@@ -640,11 +685,12 @@ export class SimsFurniture3D {
       this.espressoSteam.push(s);
     }
 
+    const barAnchor = this.getDynamicAnchor("espresso");
     this.tagTarget(bar, {
       kind: "espresso",
       label,
-      worldX: this.espressoStandPos.x,
-      worldZ: this.espressoStandPos.z
+      worldX: barAnchor.x,
+      worldZ: barAnchor.z
     });
     this.barGroup.add(bar);
   }
@@ -659,9 +705,10 @@ export class SimsFurniture3D {
     if (hobby === "none") return;
 
     const { stoneMat, metalMat, glassMat } = this.makeBaseMaterials();
+    const pos = this.getPlacedCoords("hobby");
     const root = new THREE.Group();
-    root.position.set(-1.58, 0.23, 1.96);
-    root.rotation.y = 0.58;
+    root.position.set(pos.x, pos.y, pos.z);
+    root.rotation.y = pos.yaw;
 
     let label = "Science Library";
 
@@ -917,12 +964,13 @@ export class SimsFurniture3D {
       }
     }
 
+    const hobbyAnchor = this.getDynamicAnchor("hobby");
     this.tagTarget(root, {
       kind: "hobby",
       label,
       hobbyId: hobby,
-      worldX: this.hobbyStandPos.x,
-      worldZ: this.hobbyStandPos.z
+      worldX: hobbyAnchor.x,
+      worldZ: hobbyAnchor.z
     });
     this.hobbyGroup.add(root);
   }
@@ -934,8 +982,9 @@ export class SimsFurniture3D {
     this.disposeObjectChildren(this.rugGroup);
     if (style === "none") return;
 
+    const seatPos = this.getPlacedCoords("seating");
     const rug = new THREE.Group();
-    rug.position.set(-1.12, 0.398, 0.44);
+    rug.position.set(seatPos.x + Math.sin(seatPos.yaw) * 0.28, seatPos.y + 0.008, seatPos.z + Math.cos(seatPos.yaw) * 0.28);
 
     const makeFlatMat = (color: string, metalness = 0.04, roughness = 0.88) =>
       new THREE.MeshStandardMaterial({
@@ -1034,10 +1083,12 @@ export class SimsFurniture3D {
     this.orreryRings = [];
 
     const { stoneMat, metalMat } = this.makeBaseMaterials();
+    const pPos = this.getPlacedCoords("patio");
 
     if (decor === "fountain") {
       const f = new THREE.Group();
-      f.position.set(1.74, 0.23, 1.66);
+      f.position.set(pPos.x, pPos.y, pPos.z);
+      f.rotation.y = pPos.yaw;
       const basin = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.28, 0.18, 24), stoneMat);
       basin.position.y = 0.09;
       basin.castShadow = true;
@@ -1072,7 +1123,8 @@ export class SimsFurniture3D {
       this.decorGroup.add(f);
     } else if (decor === "prism") {
       const p = new THREE.Group();
-      p.position.set(1.74, 0.23, 1.66);
+      p.position.set(pPos.x, pPos.y, pPos.z);
+      p.rotation.y = pPos.yaw;
       const plinth = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.22, 0.46), stoneMat);
       plinth.position.y = 0.11;
       plinth.castShadow = true;
@@ -1096,14 +1148,14 @@ export class SimsFurniture3D {
       this.prismTotem = crystal;
       this.decorGroup.add(p);
     } else if (decor === "lanterns") {
-      const coords: Array<[number, number]> = [
-        [1.76, 1.64],
-        [-0.92, 2.08],
-        [0.92, 2.08]
+      const coords: Array<[number, number, number]> = [
+        [pPos.x, pPos.y, pPos.z],
+        [-2.15, getGroundElevationForFloor(1, -2.15, 2.85, this.decor.houseSize), 2.85],
+        [2.15, getGroundElevationForFloor(1, 2.15, 2.85, this.decor.houseSize), 2.85]
       ];
-      for (const [lx, lz] of coords) {
+      for (const [lx, ly, lz] of coords) {
         const lGroup = new THREE.Group();
-        lGroup.position.set(lx, 0.23, lz);
+        lGroup.position.set(lx, ly, lz);
         const post = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.044, 0.44, 12), metalMat);
         post.position.y = 0.22;
         post.castShadow = true;
@@ -1134,7 +1186,8 @@ export class SimsFurniture3D {
       }
     } else if (decor === "cherry-tree") {
       const tree = new THREE.Group();
-      tree.position.set(1.74, 0.23, 1.66);
+      tree.position.set(pPos.x, pPos.y, pPos.z);
+      tree.rotation.y = pPos.yaw;
       const planter = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.22, 0.22, 20), stoneMat);
       planter.position.y = 0.11;
       planter.castShadow = true;
@@ -1185,7 +1238,8 @@ export class SimsFurniture3D {
       this.decorGroup.add(tree);
     } else if (decor === "mini-orrery") {
       const orrery = new THREE.Group();
-      orrery.position.set(1.74, 0.23, 1.66);
+      orrery.position.set(pPos.x, pPos.y, pPos.z);
+      orrery.rotation.y = pPos.yaw;
       const base = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 0.22, 20), stoneMat);
       base.position.y = 0.11;
       base.castShadow = true;
@@ -1235,7 +1289,8 @@ export class SimsFurniture3D {
     } else {
       // Default Ceramic Bonsai
       const planter = new THREE.Group();
-      planter.position.set(1.74, 0.23, 1.66);
+      planter.position.set(pPos.x, pPos.y, pPos.z);
+      planter.rotation.y = pPos.yaw;
       const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.16, 0.2, 18), stoneMat);
       pot.position.y = 0.1;
       pot.castShadow = true;
@@ -1482,9 +1537,10 @@ export class SimsFurniture3D {
     this.researchHelix = null;
     const { stoneMat, metalMat, accentGlowMat, glassMat } = this.makeBaseMaterials();
 
+    const pos = this.getPlacedCoords("research");
     const micro = new THREE.Group();
-    micro.position.set(-1.58, 0.39, -0.62);
-    micro.rotation.y = 1.5;
+    micro.position.set(pos.x, pos.y, pos.z);
+    micro.rotation.y = pos.yaw;
 
     const ped = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.2, 0.56, 16), stoneMat);
     ped.position.y = 0.28;
@@ -1583,11 +1639,12 @@ export class SimsFurniture3D {
         : level === 2
           ? "Cryo-EM Dual Microscope (Lv.2)"
           : "Protein Microscope";
+    const microAnchor = this.getDynamicAnchor("microscope");
     this.tagTarget(micro, {
       kind: "microscope",
       label,
-      worldX: this.microscopeStandPos.x,
-      worldZ: this.microscopeStandPos.z
+      worldX: microAnchor.x,
+      worldZ: microAnchor.z
     });
     this.researchGroup.add(micro);
   }
@@ -1599,9 +1656,10 @@ export class SimsFurniture3D {
     this.harvesterMotes = [];
     const { stoneMat, metalMat } = this.makeBaseMaterials();
 
+    const pos = this.getPlacedCoords("mining");
     const harv = new THREE.Group();
-    harv.position.set(1.62, 0.39, -0.22);
-    harv.rotation.y = -1.5;
+    harv.position.set(pos.x, pos.y, pos.z);
+    harv.rotation.y = pos.yaw;
 
     const col = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, 0.62, 8), stoneMat);
     col.position.y = 0.31;
@@ -1681,11 +1739,12 @@ export class SimsFurniture3D {
         : level === 2
           ? "Dual Gyro Harvester (Lv.2)"
           : "ALCH Harvester Console";
+    const harvAnchor = this.getDynamicAnchor("harvester");
     this.tagTarget(harv, {
       kind: "harvester",
       label,
-      worldX: this.harvesterStandPos.x,
-      worldZ: this.harvesterStandPos.z
+      worldX: harvAnchor.x,
+      worldZ: harvAnchor.z
     });
     this.harvesterGroup.add(harv);
   }
@@ -1696,9 +1755,10 @@ export class SimsFurniture3D {
     if (level < 2) return;
 
     const { stoneMat, metalMat, glassMat } = this.makeBaseMaterials();
+    const pos = this.getPlacedCoords("pet");
     const g = new THREE.Group();
-    g.position.set(1.34, 0.39, 1.04);
-    g.rotation.y = -0.65;
+    g.position.set(pos.x, pos.y, pos.z);
+    g.rotation.y = pos.yaw;
 
     // Lv. 2 Plush Cloud Pet Bed + Twin Ceramic Bowls
     const bedRim = new THREE.Mesh(
@@ -1775,9 +1835,10 @@ export class SimsFurniture3D {
     if (level < 2) return;
 
     const { stoneMat, metalMat, glassMat } = this.makeBaseMaterials();
+    const pos = this.getPlacedCoords("builder");
     const g = new THREE.Group();
-    g.position.set(-0.78, 0.23, 2.02);
-    g.rotation.y = 0.12;
+    g.position.set(pos.x, pos.y, pos.z);
+    g.rotation.y = pos.yaw;
 
     // Lv. 2 Frosted-Glass Architect Drafting Table + Glowing Blueprint Tablet
     for (const lx of [-0.26, 0.26]) {
@@ -1842,8 +1903,13 @@ export class SimsFurniture3D {
     if (level < 2) return;
 
     const { stoneMat, metalMat, glassMat } = this.makeBaseMaterials();
+    const seatPos = this.getPlacedCoords("seating");
     const g = new THREE.Group();
-    g.position.set(-1.18, 0.39, 0.98);
+    g.position.set(
+      seatPos.x + Math.cos(seatPos.yaw) * 0.64,
+      seatPos.y,
+      seatPos.z - Math.sin(seatPos.yaw) * 0.64
+    );
 
     // Lv. 2 Sculptural Alabaster Side Table + Glowing Aroma Diffuser
     const tableStem = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.08, 0.34, 14), stoneMat);

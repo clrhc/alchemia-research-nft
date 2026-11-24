@@ -39,11 +39,11 @@ export const LAB_STATIONS: readonly LabStationDef[] = [
     shortLabel: "Research",
     subtitle: "Live 3D protein folding & PDB exports",
     accent: "#38bdf8",
-    padX: -1.3,
-    padZ: -0.62,
-    triggerRadius: 0.78,
-    panelPos: [-1.42, 2.08, -0.72],
-    facingYaw: 0.85
+    padX: -2.42,
+    padZ: -1.18,
+    triggerRadius: 0.86,
+    panelPos: [-2.42, 2.04, -1.18],
+    facingYaw: 1.45
   },
   {
     id: "mining",
@@ -51,11 +51,11 @@ export const LAB_STATIONS: readonly LabStationDef[] = [
     shortLabel: "Mining",
     subtitle: "Claim mined ALCH & share with science",
     accent: "#6366f1",
-    padX: 1.44,
-    padZ: 0.14,
-    triggerRadius: 0.82,
-    panelPos: [2.02, 1.62, 0.18],
-    facingYaw: 1.55
+    padX: 2.58,
+    padZ: -0.36,
+    triggerRadius: 0.86,
+    panelPos: [2.58, 1.98, -0.36],
+    facingYaw: -1.5
   },
   {
     id: "pet",
@@ -63,35 +63,35 @@ export const LAB_STATIONS: readonly LabStationDef[] = [
     shortLabel: "Pet",
     subtitle: "Feed, play, dress up & Proton Catch",
     accent: "#f472b6",
-    padX: 0.96,
-    padZ: 1.32,
-    triggerRadius: 0.82,
-    panelPos: [1.34, 1.34, 1.38],
-    facingYaw: 0.45
+    padX: 1.88,
+    padZ: 1.86,
+    triggerRadius: 0.86,
+    panelPos: [1.88, 1.72, 1.86],
+    facingYaw: -0.55
   },
   {
     id: "builder",
-    label: "Furnish & Upgrades",
-    shortLabel: "Furnish",
-    subtitle: "43 furnishings, station upgrades & wings",
+    label: "Home Architect",
+    shortLabel: "Home",
+    subtitle: "Furnish, expand floors, move stations & rooms",
     accent: "#10b981",
-    padX: -1.04,
-    padZ: 1.34,
-    triggerRadius: 0.82,
-    panelPos: [-1.62, 1.44, 1.48],
-    facingYaw: -0.65
+    padX: -1.62,
+    padZ: 2.52,
+    triggerRadius: 0.86,
+    panelPos: [-1.62, 1.76, 2.52],
+    facingYaw: 0.25
   },
   {
     id: "console",
     label: "Lab Console & Look",
     shortLabel: "Profile",
-    subtitle: "Goals, lighting & character wardrobe",
+    subtitle: "Moods, friends, guestbook & wardrobe",
     accent: "#8b5cf6",
-    padX: 1.02,
-    padZ: -1.16,
-    triggerRadius: 0.78,
-    panelPos: [1.38, 2.04, -1.24],
-    facingYaw: -2.4
+    padX: 1.96,
+    padZ: -1.88,
+    triggerRadius: 0.86,
+    panelPos: [1.96, 1.98, -1.88],
+    facingYaw: -2.35
   }
 ];
 

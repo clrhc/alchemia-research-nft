@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import {
+  ArrowDown,
   ArrowUpCircle,
   BookOpen,
   Building2,
@@ -9,13 +10,18 @@ import {
   Cpu,
   Disc3,
   DoorOpen,
+  Flame,
+  Flower2,
   Gamepad2,
   Hand,
   Heart,
   Home,
+  Layers,
   MessageCircle,
   Microscope,
   Moon,
+  Move,
+  Music,
   Palette,
   Pickaxe,
   Plus,
@@ -42,6 +48,16 @@ interface SimsPieMenuProps {
 }
 
 function pickActionIcon(id: string) {
+  if (id.startsWith("move-")) return Move;
+  if (id === "floor-up") return ArrowUpCircle;
+  if (id === "floor-down") return ArrowDown;
+  if (id === "open-expand") return Layers;
+  if (id === "room-nap") return Moon;
+  if (id === "room-cook") return Coffee;
+  if (id === "room-soak") return Waves;
+  if (id === "room-fire") return Flame;
+  if (id === "room-garden") return Flower2;
+  if (id === "room-piano") return Music;
   if (id.includes("open-upgrades")) return ArrowUpCircle;
   if (id.includes("hobby-read")) return BookOpen;
   if (id.includes("hobby-watch")) return Waves;

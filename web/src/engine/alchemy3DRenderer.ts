@@ -14,10 +14,19 @@ import {
 import { ResearcherAvatar3D, type CharacterEmote, type CharacterPosture } from "./character3D";
 import type { CharacterProfile } from "./characterConfig";
 import { DiegeticLabMonitors3D, type DiegeticMonitorTelemetry } from "./diegeticPanels3D";
+import { HomeArchitecture3D } from "./homeArchitecture3D";
+import {
+  clampPlacementPoint,
+  findNearestStationWithLayout,
+  getGroundElevationForFloor,
+  getUpperFloorY,
+  resolveItemPlacement,
+  type FloorNumber,
+  type MovableItemId
+} from "./homeLayout";
 import {
   LAB_STATIONS,
   LAB_STATION_BY_ID,
-  findNearestTriggeredStation,
   stationForSector,
   type LabStationId,
   type ProjectedStationAnchor
@@ -123,6 +132,7 @@ export type AtmosphereMode = "clear" | "snow" | "motes";
 export interface SimsActionRequest {
   x: number;
   z: number;
+  floor?: FloorNumber;
   yaw?: number;
   posture?: CharacterPosture;
   emote?: CharacterEmote;
@@ -217,7 +227,15 @@ export class Alchemy3DRenderer {
   private walkFloorPlane: THREE.Mesh | null = null;
   private diegeticMonitors: DiegeticLabMonitors3D | null = null;
   private simsFurniture: SimsFurniture3D | null = null;
+  private homeArchitecture: HomeArchitecture3D | null = null;
   private neighborhoodWorld: NeighborhoodWorld3D | null = null;
+  private activeFloor: FloorNumber = 1;
+  private movingItem: MovableItemId | null = null;
+  private moveSnapGrid = true;
+  private moveGhostRing: THREE.Group | null = null;
+  private movePlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.12);
+  private tmpMoveHit = new THREE.Vector3();
+  private onPlaceMovedItem?: (itemId: MovableItemId, x: number, z: number, floor: FloorNumber) => void;
   private floorTextures: Partial<Record<FloorStyleId, THREE.CanvasTexture>> = {};
   private pavilionFloorMat: THREE.MeshStandardMaterial | null = null;
   private heroVesselGroup: THREE.Group | null = null;
@@ -557,11 +575,13 @@ export class Alchemy3DRenderer {
     onNearStationChange?: (stationId: LabStationId | null) => void;
     onStationArrived?: (stationId: LabStationId) => void;
     onSimsObjectClick?: (target: SimsObjectTarget, screenX: number, screenY: number) => void;
+    onPlaceMovedItem?: (itemId: MovableItemId, x: number, z: number, floor: FloorNumber) => void;
   }) {
     this.onWalkTelemetry = callbacks.onTelemetry;
     this.onNearStationChange = callbacks.onNearStationChange;
     this.onStationArrived = callbacks.onStationArrived;
     this.onSimsObjectClick = callbacks.onSimsObjectClick;
+    this.onPlaceMovedItem = callbacks.onPlaceMovedItem;
   }
 
   public setControlsEnabled(enabled: boolean) {
@@ -584,13 +604,99 @@ export class Alchemy3DRenderer {
     return [];
   }
 
+  public setActiveFloor(floor: FloorNumber) {
+    const targetFloor = Math.max(1, Math.min(this.labDecor.houseFloors, floor)) as FloorNumber;
+    if (this.activeFloor === targetFloor) return;
+    this.activeFloor = targetFloor;
+    this.walkTarget = null;
+    this.charVx = 0;
+    this.charVz = 0;
+    this.characterAvatar?.setPosture("stand");
+
+    if (targetFloor === 1) {
+      this.charX = 0;
+      this.charZ = 1.48;
+      this.charYaw = 0.24;
+    } else {
+      // Step cleanly onto the sunlit 2F/3F loft landing beside the spiral staircase!
+      this.charX = -2.35;
+      this.charZ = -2.18;
+      this.charYaw = 0.72;
+    }
+    this.charY = this.getWalkGroundY(this.charX, this.charZ);
+    if (this.characterAvatar) {
+      this.characterAvatar.root.position.set(this.charX, this.charY, this.charZ);
+      this.characterAvatar.root.rotation.y = this.charYaw;
+      this.characterAvatar.triggerEmote("hop");
+    }
+    this.spawnColoredBurst(
+      new THREE.Vector3(this.charX, this.charY + 0.68, this.charZ),
+      14,
+      ["#ffffff", "#38bdf8", this.traits.palette.liquidMid]
+    );
+    this.followCameraInitialized = false;
+    if (!this.creatorCameraMode && this.cameraMode === "follow") {
+      this.frameWalkCamera();
+    }
+  }
+
+  public setMovingItem(itemId: MovableItemId | null, snapGrid = true) {
+    this.movingItem = itemId;
+    this.moveSnapGrid = snapGrid;
+    if (!this.moveGhostRing) return;
+    if (!itemId) {
+      this.moveGhostRing.visible = false;
+      return;
+    }
+    const p = resolveItemPlacement(itemId, this.labDecor.customLayout);
+    const gy = getGroundElevationForFloor(p.floor, p.x, p.z, this.labDecor.houseSize);
+    this.moveGhostRing.position.set(p.x, gy + 0.032, p.z);
+    this.moveGhostRing.visible = true;
+  }
+
+  private syncCustomLayoutPositions() {
+    for (const st of LAB_STATIONS) {
+      const p = resolveItemPlacement(st.id, this.labDecor.customLayout);
+      const baseY = getGroundElevationForFloor(p.floor, p.x, p.z, this.labDecor.houseSize) + 0.008;
+      const b = this.stationBeacons.get(st.id);
+      if (b) {
+        b.baseY = baseY;
+        b.disc.position.set(p.x, baseY, p.z);
+        b.ring.position.set(p.x, baseY + 0.008, p.z);
+        b.pillar.position.set(p.x, baseY + 0.52, p.z);
+      }
+      this.diegeticMonitors?.setStationPosition(st.id, p.x, baseY + 1.36, p.z);
+    }
+  }
+
   public setLabDecor(decor: LabDecorConfig) {
     const prevUpgrades = this.labDecor.stationUpgrades;
+    const prevSize = this.labDecor.houseSize;
+    const prevFloors = this.labDecor.houseFloors;
+    const prevRoomsLen = this.labDecor.extraRooms.length;
+
     this.labDecor = {
       ...decor,
-      stationUpgrades: { ...decor.stationUpgrades }
+      stationUpgrades: { ...decor.stationUpgrades },
+      extraRooms: [...decor.extraRooms],
+      customLayout: { ...decor.customLayout }
     };
     this.applyFloorFinish();
+    if (this.homeArchitecture) {
+      this.homeArchitecture.updateArchitecture(this.labDecor, this.traits.palette.liquidMid);
+      if (decor.houseSize > prevSize || decor.houseFloors > prevFloors || decor.extraRooms.length > prevRoomsLen) {
+        this.spawnColoredBurst(
+          new THREE.Vector3(0, decor.houseFloors > prevFloors ? getUpperFloorY(decor.houseFloors) : 1.15, 0),
+          24,
+          ["#ffffff", "#38bdf8", "#10b981", "#fbbf24"]
+        );
+      }
+    }
+    if (this.activeFloor > this.labDecor.houseFloors) {
+      this.setActiveFloor(this.labDecor.houseFloors);
+    }
+    this.syncCustomLayoutPositions();
+
     if (this.simsFurniture) {
       this.simsFurniture.updateFurnishings(this.labDecor, this.traits.palette.liquidMid);
       // Celebrate any upgraded station with a radiant silver-and-accent particle burst!
@@ -641,45 +747,16 @@ export class Alchemy3DRenderer {
 
   public getSimsFurnitureAnchor(
     kind: "bench" | "espresso" | "microscope" | "harvester" | "hobby"
-  ) {
-    if (!this.simsFurniture) return { x: 0, z: 1.38, yaw: 0 };
-    if (kind === "bench") {
-      return {
-        x: this.simsFurniture.benchSitPos.x,
-        z: this.simsFurniture.benchSitPos.z,
-        yaw: this.simsFurniture.benchSitYaw
-      };
-    }
-    if (kind === "espresso") {
-      return {
-        x: this.simsFurniture.espressoStandPos.x,
-        z: this.simsFurniture.espressoStandPos.z,
-        yaw: this.simsFurniture.espressoStandYaw
-      };
-    }
-    if (kind === "microscope") {
-      return {
-        x: this.simsFurniture.microscopeStandPos.x,
-        z: this.simsFurniture.microscopeStandPos.z,
-        yaw: this.simsFurniture.microscopeStandYaw
-      };
-    }
-    if (kind === "hobby") {
-      return {
-        x: this.simsFurniture.hobbyStandPos.x,
-        z: this.simsFurniture.hobbyStandPos.z,
-        yaw: this.simsFurniture.hobbyStandYaw
-      };
-    }
-    return {
-      x: this.simsFurniture.harvesterStandPos.x,
-      z: this.simsFurniture.harvesterStandPos.z,
-      yaw: this.simsFurniture.harvesterStandYaw
-    };
+  ): { x: number; z: number; yaw: number; floor: FloorNumber } {
+    if (!this.simsFurniture) return { x: 0, z: 1.38, yaw: 0, floor: 1 };
+    return this.simsFurniture.getDynamicAnchor(kind);
   }
 
   public performSimsAction(req: SimsActionRequest) {
     if (!this.walkMode || this.creatorCameraMode) return;
+    if (req.floor && req.floor !== this.activeFloor && req.floor <= this.labDecor.houseFloors) {
+      this.setActiveFloor(req.floor);
+    }
     this.characterAvatar?.setPosture("stand");
     const dist = Math.hypot(req.x - this.charX, req.z - this.charZ);
     if (dist <= 0.22) {
@@ -740,9 +817,13 @@ export class Alchemy3DRenderer {
   }
 
   public returnHome() {
+    if (this.activeFloor !== 1) {
+      this.setActiveFloor(1);
+    }
     this.performSimsAction({
       x: 0,
       z: 1.4,
+      floor: 1,
       yaw: 0.24,
       posture: "stand",
       emote: "hop"
@@ -1127,7 +1208,11 @@ export class Alchemy3DRenderer {
   public walkToStation(stationId: LabStationId) {
     const st = LAB_STATION_BY_ID[stationId];
     if (!st) return;
-    this.walkToPoint(st.padX, st.padZ, stationId);
+    const p = resolveItemPlacement(stationId, this.labDecor.customLayout);
+    if (p.floor !== this.activeFloor && p.floor <= this.labDecor.houseFloors) {
+      this.setActiveFloor(p.floor);
+    }
+    this.walkToPoint(p.x, p.z, stationId);
   }
 
   public setActiveStationHighlight(stationId: LabStationId | null) {
@@ -1135,14 +1220,9 @@ export class Alchemy3DRenderer {
   }
 
   private getWalkGroundY(x: number, z: number): number {
-    const r = Math.hypot(x, z);
-    if (r <= 1.84) return 0.39;
-    if (r < 2.2) {
-      const u = (r - 1.84) / (2.2 - 1.84);
-      return 0.39 * (1 - u) + 0.23 * u;
+    if (this.activeFloor >= 2) {
+      return getUpperFloorY(this.activeFloor);
     }
-    if (Math.abs(x) <= 2.32 && Math.abs(z) <= 2.32) return 0.23;
-    if (Math.abs(x) <= 3.45 && Math.abs(z) <= 3.45) return 0.12;
 
     // Gentle parabolic arch elevation when walking across any of the 4 Grand Canal Bridges!
     const onNSBridge = Math.abs(x) <= 1.35 && Math.abs(z) >= 12.2 && Math.abs(z) <= 15.5;
@@ -1153,11 +1233,27 @@ export class Alchemy3DRenderer {
       return 0.05 + Math.sin(u * Math.PI) * 0.44;
     }
 
-    return 0.03;
+    return getGroundElevationForFloor(1, x, z, this.labDecor.houseSize);
   }
 
   private resolveWalkObstacles(x: number, z: number): { x: number; z: number } {
-    const limit = this.neighborhoodWorld ? NEIGHBORHOOD_WALK_LIMIT : 3.12;
+    // On 2F/3F C-shaped cutaway loft balconies, keep smoothly on the elevated deck & clear of the central atrium opening!
+    if (this.activeFloor >= 2) {
+      let nx = Math.max(-3.32, Math.min(3.32, x));
+      let nz = Math.max(-3.32, Math.min(1.58, z));
+      if (Math.abs(nx) < 1.96 && nz > -1.96) {
+        const distBack = Math.abs(nz - -1.96);
+        const distSide = 1.96 - Math.abs(nx);
+        if (distBack <= distSide) {
+          nz = -1.96;
+        } else {
+          nx = nx < 0 ? -1.96 : 1.96;
+        }
+      }
+      return { x: nx, z: nz };
+    }
+
+    const limit = this.neighborhoodWorld ? NEIGHBORHOOD_WALK_LIMIT : 4.2;
     let nx = Math.max(-limit, Math.min(limit, x));
     let nz = Math.max(-limit, Math.min(limit, z));
 
@@ -1214,22 +1310,6 @@ export class Alchemy3DRenderer {
       roughness: 0.48,
       metalness: 0.04
     });
-    const bridgeEdgeMat = new THREE.LineBasicMaterial({
-      color: "#94a3b8",
-      transparent: true,
-      opacity: 0.55
-    });
-
-    // Subtle extended outer architectural promenade deck so walking to all 6 rooms feels grounded
-    const deckGeo = new THREE.BoxGeometry(6.8, 0.06, 6.8);
-    const outerDeck = new THREE.Mesh(deckGeo, alabasterMat);
-    outerDeck.position.y = 0.09;
-    outerDeck.receiveShadow = true;
-    this.walkCampusGroup.add(outerDeck);
-
-    const deckEdges = new THREE.LineSegments(new THREE.EdgesGeometry(deckGeo), bridgeEdgeMat);
-    deckEdges.position.copy(outerDeck.position);
-    this.walkCampusGroup.add(deckEdges);
 
     // Three minimalist alabaster footbridges (East, West, North) over the reflecting pool to match South steps
     const bridgeDefs: Array<[number, number, number]> = [
@@ -1246,6 +1326,52 @@ export class Alchemy3DRenderer {
       bMesh.receiveShadow = true;
       this.walkCampusGroup.add(bMesh);
     }
+
+    // Expandable Multi-Story Homely Estate Architecture (Lv.1-3 House Size, 1F/2F/3F Floors & 6 Cozy Rooms!)
+    this.homeArchitecture = new HomeArchitecture3D(this.terrazzoTex, this.titaniumTex);
+    this.homeArchitecture.updateArchitecture(this.labDecor, this.traits.palette.liquidMid);
+    this.walkCampusGroup.add(this.homeArchitecture.group);
+
+    // Live 3D Move-Mode Placement Cursor Ring (glowing cyan/silver blueprint reticle)
+    const ghostGrp = new THREE.Group();
+    const gOuter = new THREE.Mesh(
+      new THREE.TorusGeometry(0.42, 0.022, 10, 42),
+      new THREE.MeshStandardMaterial({
+        color: "#38bdf8",
+        emissive: "#0ea5e9",
+        emissiveIntensity: 1.25,
+        transparent: true,
+        opacity: 0.92
+      })
+    );
+    gOuter.rotation.x = Math.PI / 2;
+    ghostGrp.add(gOuter);
+    const gDisc = new THREE.Mesh(
+      new THREE.CircleGeometry(0.38, 32),
+      new THREE.MeshBasicMaterial({
+        color: "#38bdf8",
+        transparent: true,
+        opacity: 0.22,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      })
+    );
+    gDisc.rotation.x = -Math.PI / 2;
+    ghostGrp.add(gDisc);
+    const gPillar = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.014, 0.028, 0.85, 10),
+      new THREE.MeshBasicMaterial({
+        color: "#bae6fd",
+        transparent: true,
+        opacity: 0.55,
+        depthWrite: false
+      })
+    );
+    gPillar.position.y = 0.42;
+    ghostGrp.add(gPillar);
+    ghostGrp.visible = false;
+    this.moveGhostRing = ghostGrp;
+    this.walkCampusGroup.add(ghostGrp);
 
     // Invisible smooth floor plane covering the entire walkable neighborhood & canal-side suburbs!
     const floorHit = new THREE.Mesh(
@@ -1370,6 +1496,7 @@ export class Alchemy3DRenderer {
     // 5 Diegetic Physical Frosted-Glass Floating 3D Holographic Monitors inside WebGL!
     this.diegeticMonitors = new DiegeticLabMonitors3D();
     this.walkCampusGroup.add(this.diegeticMonitors.group);
+    this.syncCustomLayoutPositions();
 
     // Interactive Sims-Style Lab Furniture, Home Furnishings & Progressive Station Upgrades
     this.simsFurniture = new SimsFurniture3D(
@@ -1392,6 +1519,11 @@ export class Alchemy3DRenderer {
   }
 
   private disposeWalkCampus3D() {
+    if (this.homeArchitecture) {
+      this.walkCampusGroup.remove(this.homeArchitecture.group);
+      this.homeArchitecture.dispose();
+      this.homeArchitecture = null;
+    }
     if (this.diegeticMonitors) {
       this.walkCampusGroup.remove(this.diegeticMonitors.group);
       this.diegeticMonitors.dispose();
@@ -1410,6 +1542,7 @@ export class Alchemy3DRenderer {
     this.disposeObjectChildren(this.walkCampusGroup);
     this.stationBeacons.clear();
     this.walkFloorPlane = null;
+    this.moveGhostRing = null;
     this.walkWaypointMesh = null;
     this.walkHoverRing = null;
     this.walkBreadcrumbs = [];
@@ -1760,6 +1893,27 @@ export class Alchemy3DRenderer {
       -((e.clientY - rect.top) / rect.height) * 2 + 1
     );
     this.raycaster.setFromCamera(ndc, this.camera);
+
+    // Live 3D Move-Mode Placement Reticle (tracks active floor 1F / 2F / 3F!)
+    if (this.walkMode && !this.creatorCameraMode && this.movingItem && this.moveGhostRing) {
+      this.movePlane.constant = -getUpperFloorY(this.activeFloor);
+      if (this.raycaster.ray.intersectPlane(this.movePlane, this.tmpMoveHit)) {
+        const pt = clampPlacementPoint(
+          this.tmpMoveHit.x,
+          this.tmpMoveHit.z,
+          this.labDecor.houseSize,
+          this.activeFloor,
+          this.moveSnapGrid
+        );
+        const gy = getGroundElevationForFloor(this.activeFloor, pt.x, pt.z, this.labDecor.houseSize);
+        this.moveGhostRing.position.set(pt.x, gy + 0.032, pt.z);
+        this.moveGhostRing.visible = true;
+        if (this.walkHoverRing) this.walkHoverRing.visible = false;
+        this.renderer.domElement.style.cursor = "crosshair";
+        return;
+      }
+    }
+
     const atomTargets = this.floatingAtoms.map((a) => a.group);
     const hits = this.raycaster.intersectObjects(atomTargets, true);
     if (hits.length > 0) {
@@ -1792,12 +1946,13 @@ export class Alchemy3DRenderer {
         return;
       }
     }
-    // Check Sims interactive furniture, own character, visiting host NPC, neighbor labs, NPCs, and central flask for hover pointer
+    // Check Sims interactive furniture, homely rooms, stairs, own character, visiting host NPC, neighbor labs, NPCs, and central flask for hover pointer
     if (this.walkMode && !this.creatorCameraMode) {
       const extraTargets: THREE.Object3D[] = [];
       if (this.characterAvatar) extraTargets.push(this.characterAvatar.root);
       if (this.visitingHostAvatar) extraTargets.push(this.visitingHostAvatar.root);
       if (this.simsFurniture) extraTargets.push(...this.simsFurniture.getRaycastTargets());
+      if (this.homeArchitecture) extraTargets.push(...this.homeArchitecture.getRaycastTargets());
       if (this.neighborhoodWorld) extraTargets.push(...this.neighborhoodWorld.getRaycastTargets());
       if (this.heroVesselGroup) extraTargets.push(this.heroVesselGroup);
       if (extraTargets.length > 0 && this.raycaster.intersectObjects(extraTargets, true).length > 0) {
@@ -1806,11 +1961,25 @@ export class Alchemy3DRenderer {
         return;
       }
     }
-    // Show subtle architectural floor walk-target cursor ring on hover
-    if (this.walkMode && !this.creatorCameraMode && this.walkFloorPlane && this.walkHoverRing) {
-      const fHits = this.raycaster.intersectObject(this.walkFloorPlane, false);
-      if (fHits.length > 0) {
-        const pt = this.resolveWalkObstacles(fHits[0].point.x, fHits[0].point.z);
+    // Show subtle architectural floor walk-target cursor ring on hover (supports 1F, 2F & 3F!)
+    if (this.walkMode && !this.creatorCameraMode && this.walkHoverRing) {
+      let hitX: number | null = null;
+      let hitZ: number | null = null;
+      if (this.activeFloor >= 2) {
+        this.movePlane.constant = -getUpperFloorY(this.activeFloor);
+        if (this.raycaster.ray.intersectPlane(this.movePlane, this.tmpMoveHit)) {
+          hitX = this.tmpMoveHit.x;
+          hitZ = this.tmpMoveHit.z;
+        }
+      } else if (this.walkFloorPlane) {
+        const fHits = this.raycaster.intersectObject(this.walkFloorPlane, false);
+        if (fHits.length > 0) {
+          hitX = fHits[0].point.x;
+          hitZ = fHits[0].point.z;
+        }
+      }
+      if (hitX !== null && hitZ !== null) {
+        const pt = this.resolveWalkObstacles(hitX, hitZ);
         const gy = this.getWalkGroundY(pt.x, pt.z);
         this.walkHoverRing.position.set(pt.x, gy + 0.014, pt.z);
         this.walkHoverRing.visible = true;
@@ -1832,6 +2001,29 @@ export class Alchemy3DRenderer {
       -((e.clientY - rect.top) / rect.height) * 2 + 1
     );
     this.raycaster.setFromCamera(ndc, this.camera);
+
+    // 0. Live 3D Move Mode: clicking anywhere on the active floor places the selected station or furniture!
+    if (this.walkMode && !this.creatorCameraMode && this.movingItem) {
+      this.movePlane.constant = -getUpperFloorY(this.activeFloor);
+      if (this.raycaster.ray.intersectPlane(this.movePlane, this.tmpMoveHit)) {
+        const pt = clampPlacementPoint(
+          this.tmpMoveHit.x,
+          this.tmpMoveHit.z,
+          this.labDecor.houseSize,
+          this.activeFloor,
+          this.moveSnapGrid
+        );
+        const gy = getGroundElevationForFloor(this.activeFloor, pt.x, pt.z, this.labDecor.houseSize);
+        this.spawnColoredBurst(
+          new THREE.Vector3(pt.x, gy + 0.42, pt.z),
+          14,
+          ["#38bdf8", "#ffffff", "#10b981"]
+        );
+        soundEngine.playBuildRoom();
+        this.onPlaceMovedItem?.(this.movingItem, pt.x, pt.z, this.activeFloor);
+        return;
+      }
+    }
 
     // 1. Did the user click directly on the 3D Cat or Dog?
     const petTargets = this.companions.map((c) => c.group);
@@ -1893,11 +2085,29 @@ export class Alchemy3DRenderer {
         }
       }
 
-      // Sims Furniture (Lounge Bench, Espresso Bar, Microscope, Harvester)
+      // Sims Furniture (Lounge Bench, Espresso Bar, Microscope, Harvester, Hobby Nook)
       if (this.simsFurniture) {
         const fHits = this.raycaster.intersectObjects(this.simsFurniture.getRaycastTargets(), true);
         if (fHits.length > 0) {
           const target = fHits[0].object.userData?.simsTarget as SimsObjectTarget | undefined;
+          if (target) {
+            this.onSimsObjectClick(target, screenX, screenY);
+            soundEngine.playTap(1046.5);
+            return;
+          }
+        }
+      }
+
+      // Cozy Extra Rooms (Bedroom, Kitchen, Spa, Fireplace, Garden Arbor, Piano) & Spiral Staircase!
+      if (this.homeArchitecture) {
+        const hHits = this.raycaster.intersectObjects(this.homeArchitecture.getRaycastTargets(), true);
+        if (hHits.length > 0) {
+          let cur: THREE.Object3D | null = hHits[0].object;
+          let target: SimsObjectTarget | undefined;
+          while (cur && !target) {
+            if (cur.userData?.simsTarget) target = cur.userData.simsTarget as SimsObjectTarget;
+            cur = cur.parent;
+          }
           if (target) {
             this.onSimsObjectClick(target, screenX, screenY);
             soundEngine.playTap(1046.5);
@@ -2040,13 +2250,31 @@ export class Alchemy3DRenderer {
       }
     }
 
-    // 4. In Walk Mode: clicking any floor/terrace point walks your character smoothly there!
-    if (this.walkMode && !this.creatorCameraMode && this.walkFloorPlane) {
-      const floorHits = this.raycaster.intersectObject(this.walkFloorPlane, false);
-      if (floorHits.length > 0) {
-        const pt = floorHits[0].point;
-        const nearSt = findNearestTriggeredStation(pt.x, pt.z);
-        this.walkToPoint(pt.x, pt.z, nearSt);
+    // 4. In Walk Mode: clicking any floor/terrace point (on 1F, 2F, or 3F!) walks your character smoothly there!
+    if (this.walkMode && !this.creatorCameraMode) {
+      let hitX: number | null = null;
+      let hitZ: number | null = null;
+      if (this.activeFloor >= 2) {
+        this.movePlane.constant = -getUpperFloorY(this.activeFloor);
+        if (this.raycaster.ray.intersectPlane(this.movePlane, this.tmpMoveHit)) {
+          hitX = this.tmpMoveHit.x;
+          hitZ = this.tmpMoveHit.z;
+        }
+      } else if (this.walkFloorPlane) {
+        const floorHits = this.raycaster.intersectObject(this.walkFloorPlane, false);
+        if (floorHits.length > 0) {
+          hitX = floorHits[0].point.x;
+          hitZ = floorHits[0].point.z;
+        }
+      }
+      if (hitX !== null && hitZ !== null) {
+        const nearSt = findNearestStationWithLayout(
+          hitX,
+          hitZ,
+          this.activeFloor,
+          this.labDecor.customLayout
+        );
+        this.walkToPoint(hitX, hitZ, nearSt);
         soundEngine.playTap(784);
         this.onInteractiveEvent?.({
           kind: "floor-walk",
@@ -5850,8 +6078,8 @@ export class Alchemy3DRenderer {
           if (arriveAction) {
             this.executeArrivalSimsAction(arriveAction);
           } else if (arrived) {
-            const st = LAB_STATION_BY_ID[arrived];
-            if (st) this.charYaw = st.facingYaw;
+            const p = resolveItemPlacement(arrived, this.labDecor.customLayout);
+            this.charYaw = p.yaw;
             this.characterAvatar.triggerEmote("wave");
             this.onStationArrived?.(arrived);
           }
@@ -5930,11 +6158,16 @@ export class Alchemy3DRenderer {
       );
     }
 
-    // Proximity station detection (avoid hijacking panel while auto-walking past intermediate pads)
+    // Proximity station detection (respects custom moved station coordinates & current floor!)
     const nearStation =
       this.creatorCameraMode || !this.characterAvatar
         ? null
-        : findNearestTriggeredStation(this.charX, this.charZ);
+        : findNearestStationWithLayout(
+            this.charX,
+            this.charZ,
+            this.activeFloor,
+            this.labDecor.customLayout
+          );
     const enRouteToSpecificStation = Boolean(
       (this.walkTarget?.arriveStation && this.walkTarget.arriveStation !== nearStation) ||
       this.walkTarget?.arriveAction
@@ -5988,9 +6221,15 @@ export class Alchemy3DRenderer {
       !this.creatorCameraMode
     );
 
-    // Animate Sims Interactive Furniture, Visiting Host NPC & Living Minted NFT Neighborhood!
+    // Animate Sims Interactive Furniture, Homely Architecture, Move-Mode Reticle, Visiting Host & Neighborhood!
     this.simsFurniture?.update(dt, t);
+    this.homeArchitecture?.update(dt, t);
     this.neighborhoodWorld?.update(dt, t, this.charX, this.charZ);
+    if (this.moveGhostRing && this.moveGhostRing.visible) {
+      this.moveGhostRing.rotation.y += dt * 1.4;
+      const pulse = 1 + Math.sin(t * 5.2) * 0.08;
+      this.moveGhostRing.scale.set(pulse, 1, pulse);
+    }
 
     if (this.visitingHostAvatar) {
       this.visitingHostWaveCooldown = Math.max(0, this.visitingHostWaveCooldown - dt);
@@ -6082,8 +6321,10 @@ export class Alchemy3DRenderer {
     const anchors = {} as Record<LabStationId, ProjectedStationAnchor>;
 
     for (const st of LAB_STATIONS) {
-      // Project just above the top rail of each physical 3D holographic monitor
-      this.tmpProj.set(st.panelPos[0], st.panelPos[1] + 0.06, st.panelPos[2]);
+      // Project just above the top rail of each physical 3D holographic monitor (follows moved stations across floors!)
+      const p = resolveItemPlacement(st.id, this.labDecor.customLayout);
+      const gy = getGroundElevationForFloor(p.floor, p.x, p.z, this.labDecor.houseSize);
+      this.tmpProj.set(p.x, gy + 1.44, p.z);
       const distToCam = this.camera.position.distanceTo(this.tmpProj);
       this.tmpProj.project(this.camera);
       const visible =
@@ -6099,7 +6340,7 @@ export class Alchemy3DRenderer {
         x: (this.tmpProj.x * 0.5 + 0.5) * w,
         y: (-this.tmpProj.y * 0.5 + 0.5) * h,
         visible,
-        distToChar: Math.hypot(this.charX - st.padX, this.charZ - st.padZ),
+        distToChar: p.floor === this.activeFloor ? Math.hypot(this.charX - p.x, this.charZ - p.z) : 99,
         distToCam
       };
     }

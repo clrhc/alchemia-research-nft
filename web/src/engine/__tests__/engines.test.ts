@@ -66,6 +66,21 @@ import {
   findNearestTriggeredStation,
   stationForSector
 } from "../labStations";
+import {
+  DEFAULT_SPACIOUS_LAYOUT,
+  EXTRA_ROOM_DEFS,
+  HOUSE_FLOOR_DEFS,
+  HOUSE_SIZE_DEFS,
+  MOVABLE_ITEMS,
+  WALL_STYLES,
+  clampPlacementPoint,
+  findNearestStationWithLayout,
+  getGroundElevationForFloor,
+  getHouseBoundsRadius,
+  getUpperFloorY,
+  resolveItemPlacement,
+  sanitizeCustomLayout
+} from "../homeLayout";
 import { declutterFloatingLabels } from "../spatialDeclutter";
 import {
   COMMUNITY_FOUNTAIN_POS,
@@ -98,6 +113,7 @@ import {
   getNextUpgradeCost,
   getRelationshipTier,
   getSimsPieActions,
+  moveItemInDecor,
   initialSimsVibes,
   loadGuestbookEntries,
   loadLabDecor,
@@ -698,5 +714,81 @@ describe("Living Minted NFT Neighborhood & Sims Interactivity", () => {
     expect(afterSign[0].authorName).toBe("Dr. Aria");
     expect(afterSign[0].message).toBe("Loved visiting your cryo lab!");
     expect(loadGuestbookEntries(77, seed)[0].message).toBe("Loved visiting your cryo lab!");
+  });
+
+  it("supports spacious estate expansions, multi-story floors (1F/2F/3F), 6 cozy rooms & free-placement station moving", () => {
+    expect(HOUSE_SIZE_DEFS).toHaveLength(3);
+    expect(HOUSE_FLOOR_DEFS).toHaveLength(3);
+    expect(EXTRA_ROOM_DEFS).toHaveLength(6);
+    expect(WALL_STYLES).toHaveLength(5);
+    expect(MOVABLE_ITEMS).toHaveLength(9);
+
+    expect(getHouseBoundsRadius(1)).toBe(3.7);
+    expect(getHouseBoundsRadius(2)).toBe(4.2);
+    expect(getHouseBoundsRadius(3)).toBe(4.6);
+
+    expect(getUpperFloorY(1)).toBe(0.12);
+    expect(getUpperFloorY(2)).toBe(2.68);
+    expect(getUpperFloorY(3)).toBe(4.68);
+    expect(getGroundElevationForFloor(2, -2.5, -2.5, 2)).toBe(2.68);
+    expect(getGroundElevationForFloor(3, 2.5, -2.5, 3)).toBe(4.68);
+    expect(getGroundElevationForFloor(1, 0, 0, 1)).toBe(0.39);
+    expect(getGroundElevationForFloor(1, 4.1, 4.1, 3)).toBe(0.12);
+
+    // Placement clamping respects reactor keep-out, house bounds, 2F cutaway & optional 0.25m snap grid
+    const pushedOut = clampPlacementPoint(0.1, 0.1, 1, 1, false);
+    expect(Math.hypot(pushedOut.x, pushedOut.z)).toBeGreaterThanOrEqual(1.23);
+
+    const snapped = clampPlacementPoint(2.38, -1.61, 2, 1, true);
+    expect(snapped.x).toBe(2.5);
+    expect(snapped.z).toBe(-1.5);
+
+    const upperCutaway = clampPlacementPoint(0.2, 2.9, 2, 2, false);
+    expect(upperCutaway.z).toBeLessThanOrEqual(1.65);
+
+    // Moving a station onto Floor 2F updates proximity triggers on 2F & clears 1F!
+    const movedDecor = moveItemInDecor(defaultLabDecor(), "research", -2.5, -2.5, 1.0, 2);
+    expect(resolveItemPlacement("research", movedDecor.customLayout)).toEqual({
+      x: -2.5,
+      z: -2.5,
+      yaw: 1.0,
+      floor: 2
+    });
+    expect(findNearestStationWithLayout(-2.5, -2.5, 2, movedDecor.customLayout)).toBe("research");
+    expect(findNearestStationWithLayout(-2.5, -2.5, 1, movedDecor.customLayout)).toBeNull();
+    expect(
+      findNearestStationWithLayout(
+        DEFAULT_SPACIOUS_LAYOUT.mining.x,
+        DEFAULT_SPACIOUS_LAYOUT.mining.z,
+        1,
+        movedDecor.customLayout
+      )
+    ).toBe("mining");
+
+    // Sanitizer rejects invalid coordinates and preserves valid custom placements
+    const cleanLayout = sanitizeCustomLayout({
+      mining: { x: 99, z: -2.25, yaw: 0.5, floor: 3 },
+      badKey: { x: 1, z: 1, yaw: 0, floor: 1 }
+    });
+    expect(cleanLayout.mining?.x).toBe(4.5);
+    expect(cleanLayout.mining?.floor).toBe(3);
+    expect((cleanLayout as Record<string, unknown>).badKey).toBeUndefined();
+
+    // New Sims Pie Menus for 6 Homely Rooms & Spiral Staircase
+    const roomActions = getSimsPieActions({
+      kind: "home-room",
+      label: "Cozy Bedroom Nook",
+      roomId: "bedroom",
+      worldX: -3.25,
+      worldZ: -2.65
+    });
+    expect(roomActions[0].id).toBe("room-nap");
+
+    const stairActions = getSimsPieActions(
+      { kind: "stairs", label: "Spiral Staircase", worldX: -2.6, worldZ: -2.6 },
+      { currentFloor: 2, maxFloors: 3 }
+    );
+    expect(stairActions.some((a) => a.id === "floor-up")).toBe(true);
+    expect(stairActions.some((a) => a.id === "floor-down")).toBe(true);
   });
 });
