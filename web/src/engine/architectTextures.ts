@@ -502,6 +502,116 @@ export function createPavedRoadTexture(): THREE.CanvasTexture {
 }
 
 /**
+ * Procedural Architectural 4-Way Paved Intersection Square Texture!
+ * Features matching cool slate-silver granite perimeter blocks, diagonal ashlar
+ * intersection plaza paving, subtle compass medallion inlay & corner drain grates
+ * so every 4-way street intersection looks properly paved with zero visual seams.
+ */
+export function createIntersectionPavementTexture(): THREE.CanvasTexture {
+  const size = 512;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+
+  // Base slate-silver mortar matching createPavedRoadTexture()
+  ctx.fillStyle = "#667386";
+  ctx.fillRect(0, 0, size, size);
+
+  let seed = 73919;
+  const rand = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+
+  // 1. Inner diagonal honed granite cobble field (45-degree architectural herringbone/ashlar!)
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(42, 42, size - 84, size - 84);
+  ctx.clip();
+
+  ctx.translate(size / 2, size / 2);
+  ctx.rotate(Math.PI / 4);
+  const blockW = 46;
+  const blockH = 28;
+  for (let row = -14; row <= 14; row++) {
+    const y = row * blockH;
+    const offset = (Math.abs(row) % 2) * (blockW / 2);
+    for (let col = -10; col <= 10; col++) {
+      const x = col * blockW + offset;
+      const shade = Math.round(106 + (rand() - 0.5) * 16);
+      ctx.fillStyle = `rgb(${shade}, ${shade + 8}, ${shade + 20})`;
+      ctx.fillRect(x + 1.5, y + 1.5, blockW - 3, blockH - 3);
+      ctx.fillStyle = "rgba(241, 245, 249, 0.13)";
+      ctx.fillRect(x + 2, y + 2, blockW - 4, 2.5);
+    }
+  }
+  ctx.restore();
+
+  // 2. Perimeter honed granite header-course stone border framing all 4 approaches cleanly
+  const borderW = 42;
+  const edgeStep = 32;
+  for (let i = 0; i < size; i += edgeStep) {
+    for (const [bx, by, bw, bh] of [
+      [i, 0, edgeStep, borderW],
+      [i, size - borderW, edgeStep, borderW],
+      [0, i, borderW, edgeStep],
+      [size - borderW, i, borderW, edgeStep]
+    ] as const) {
+      const shade = Math.round(114 + (rand() - 0.5) * 12);
+      ctx.fillStyle = `rgb(${shade}, ${shade + 9}, ${shade + 21})`;
+      ctx.fillRect(bx + 1.5, by + 1.5, bw - 3, bh - 3);
+      ctx.fillStyle = "rgba(248, 250, 252, 0.16)";
+      ctx.fillRect(bx + 2, by + 2, bw - 4, 2.5);
+    }
+  }
+
+  // 3. Subtle European-modern circular granite medallion inlay in intersection center
+  const cx = size / 2;
+  const cy = size / 2;
+  ctx.strokeStyle = "rgba(226, 232, 240, 0.34)";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 88, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(51, 65, 85, 0.36)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 82, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Subtle radial cobblestone joints inside the center ring
+  for (let k = 0; k < 16; k++) {
+    const a = (k / 16) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * 28, cy + Math.sin(a) * 28);
+    ctx.lineTo(cx + Math.cos(a) * 84, cy + Math.sin(a) * 84);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#7b879a";
+  ctx.beginPath();
+  ctx.arc(cx, cy, 28, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(226, 232, 240, 0.38)";
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  // 4. Fine mineral stone aggregate speckle across the entire intersection square
+  for (let i = 0; i < 850; i++) {
+    const sx = rand() * size;
+    const sy = rand() * size;
+    ctx.fillStyle = i % 2 === 0 ? "rgba(255,255,255,0.12)" : "rgba(30,41,59,0.14)";
+    ctx.fillRect(sx, sy, 2, 2);
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+/**
  * Procedural Warm Sunlit Garden Stepping-Stone & Gravel Park Footpath Texture!
  */
 export function createGardenPathTexture(): THREE.CanvasTexture {

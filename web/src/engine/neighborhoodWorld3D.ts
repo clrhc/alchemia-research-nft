@@ -2,6 +2,7 @@ import * as THREE from "three";
 import {
   createDistrictGroundTexture,
   createGardenPathTexture,
+  createIntersectionPavementTexture,
   createMoodBubbleTexture,
   createPavedRoadTexture,
   createRadialGlowTexture,
@@ -283,29 +284,22 @@ export class NeighborhoodWorld3D {
   }
 
   private buildTownRoadsAndCanal() {
-    const nsRoadTex = createPavedRoadTexture();
-    nsRoadTex.repeat.set(1.2, 28);
-    const ewRoadTex = createPavedRoadTexture();
-    ewRoadTex.repeat.set(28, 1.2);
+    const roadTex = createPavedRoadTexture();
+    const intersectionTex = createIntersectionPavementTexture();
     const gardenPathTex = createGardenPathTexture();
     gardenPathTex.repeat.set(6, 6);
-    this.ownedTextures.push(nsRoadTex, ewRoadTex, gardenPathTex);
+    this.ownedTextures.push(roadTex, intersectionTex, gardenPathTex);
 
-    const nsPavedMat = new THREE.MeshStandardMaterial({
-      map: nsRoadTex,
-      color: "#cbd5e1",
-      roughness: 0.72,
-      metalness: 0.08
-    });
-    const ewPavedMat = new THREE.MeshStandardMaterial({
-      map: ewRoadTex,
-      color: "#cbd5e1",
+    const pavedRoadMat = new THREE.MeshStandardMaterial({
+      map: roadTex,
+      color: "#cfd8e4",
       roughness: 0.72,
       metalness: 0.08
     });
     const intersectionMat = new THREE.MeshStandardMaterial({
-      color: "#7b8799",
-      roughness: 0.74,
+      map: intersectionTex,
+      color: "#cfd8e4",
+      roughness: 0.72,
       metalness: 0.08
     });
     const sidewalkMat = new THREE.MeshStandardMaterial({
@@ -316,12 +310,20 @@ export class NeighborhoodWorld3D {
     const laneLineMat = new THREE.MeshBasicMaterial({
       color: "#f8fafc",
       transparent: true,
-      opacity: 0.78
+      opacity: 0.82,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2
     });
     const stripeMat = new THREE.MeshBasicMaterial({
       color: "#ffffff",
       transparent: true,
-      opacity: 0.92
+      opacity: 0.94,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2
     });
     const metalMat = new THREE.MeshStandardMaterial({
       map: this.titaniumTex,
@@ -334,6 +336,27 @@ export class NeighborhoodWorld3D {
       roughness: 0.36,
       metalness: 0.35
     });
+
+    // Helper: scales top-face UVs to exact real-world meter tiling so every road segment & sidewalk
+    // slab renders unstretched, uniform granite pavers without cloning materials!
+    const applyWorldTopUVs = (
+      geo: THREE.BoxGeometry,
+      tileSize: number,
+      swapAxes = false
+    ): THREE.BoxGeometry => {
+      const pos = geo.attributes.position as THREE.BufferAttribute;
+      const norm = geo.attributes.normal as THREE.BufferAttribute;
+      const uv = geo.attributes.uv as THREE.BufferAttribute;
+      for (let i = 0; i < pos.count; i++) {
+        if (norm.getY(i) > 0.5) {
+          const u = pos.getX(i) / tileSize + 0.5;
+          const v = pos.getZ(i) / tileSize + 0.5;
+          uv.setXY(i, swapAxes ? v : u, swapAxes ? u : v);
+        }
+      }
+      uv.needsUpdate = true;
+      return geo;
+    };
 
     // Wide Sunlit Botanical Meadow Valley Parkland Terrain with clean rectangular
     // architectural foundation cutout under Plot #1 so the sunken B1 Basement opens cleanly!
@@ -386,89 +409,176 @@ export class NeighborhoodWorld3D {
     canal.position.y = -0.008;
     this.group.add(canal);
 
-    // ---- PROPER ORTHOGONAL NEIGHBORHOOD PAVED STREET GRID (4 N-S × 4 E-W Streets!) ----
-    const streetLen = 60;
+    // ---- ZERO-OVERLAP ORTHOGONAL NEIGHBORHOOD PAVED STREET GRID (4 N-S × 4 E-W Streets!) ----
+    // Every street is cleanly segmented BETWEEN the 16 intersections so ZERO road or sidewalk meshes
+    // ever overlap or z-fight! Raised sidewalks (top y = 0.048) cleanly flank paved streets (top y = 0.024).
+    const gridHalf = 30;
     const roadW = TOWN_STREETS.roadWidth; // 2.2m
-    const walkW = TOWN_STREETS.sidewalkTotalWidth; // 3.3m (0.55m sidewalks each side)
+    const walkW = TOWN_STREETS.sidewalkTotalWidth; // 3.3m
+    const halfRoad = roadW / 2; // 1.1m
+    const halfWalk = walkW / 2; // 1.65m
+    const curbW = halfWalk - halfRoad; // 0.55m
+    const curbOffset = halfRoad + curbW / 2; // 1.375m
 
+    const roadH = 0.036;
+    const roadCenterY = 0.006; // top surface = +0.024
+    const walkH = 0.06;
+    const walkCenterY = 0.018; // top surface = +0.048 (crisp 2.4cm raised architectural curb!)
+    const paintY = 0.034; // 10mm above road surface + polygonOffset(-2) -> zero z-fighting at any zoom!
+
+    const buildSegments = (crossCoords: readonly number[]): Array<[number, number]> => {
+      const sorted = [...crossCoords].sort((a, b) => a - b);
+      const segs: Array<[number, number]> = [];
+      let cursor = -gridHalf;
+      for (const c of sorted) {
+        const end = c - halfWalk;
+        if (end - cursor > 0.05) segs.push([cursor, end]);
+        cursor = c + halfWalk;
+      }
+      if (gridHalf - cursor > 0.05) segs.push([cursor, gridHalf]);
+      return segs;
+    };
+
+    const nsSegments = buildSegments(TOWN_STREETS.ew);
+    const ewSegments = buildSegments(TOWN_STREETS.ns);
+
+    // 1. Non-overlapping North-South paved street blocks & flanking raised curb sidewalks
     for (const sx of TOWN_STREETS.ns) {
-      const sw = new THREE.Mesh(new THREE.BoxGeometry(walkW, 0.016, streetLen), sidewalkMat);
-      sw.position.set(sx, 0.004, 0);
-      sw.receiveShadow = true;
-      const road = new THREE.Mesh(new THREE.BoxGeometry(roadW, 0.022, streetLen), nsPavedMat);
-      road.position.set(sx, 0.012, 0);
-      road.receiveShadow = true;
-      this.group.add(sw, road);
+      for (const [zA, zB] of nsSegments) {
+        const len = zB - zA;
+        const zMid = (zA + zB) * 0.5;
 
-      // Dashed white center lane dashes between intersections
-      for (let z = -27; z <= 27; z += 2.6) {
-        if (TOWN_STREETS.ew.some((ez) => Math.abs(z - ez) < 2.2)) continue;
-        const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.08, 0.9), laneLineMat);
-        dash.rotation.x = -Math.PI / 2;
-        dash.position.set(sx, 0.026, z);
-        this.group.add(dash);
+        const roadGeo = applyWorldTopUVs(new THREE.BoxGeometry(roadW, roadH, len), 2.2, false);
+        const road = new THREE.Mesh(roadGeo, pavedRoadMat);
+        road.position.set(sx, roadCenterY, zMid);
+        road.receiveShadow = true;
+        this.group.add(road);
+
+        for (const side of [-1, 1]) {
+          const swGeo = applyWorldTopUVs(new THREE.BoxGeometry(curbW, walkH, len), 2.4, false);
+          const sw = new THREE.Mesh(swGeo, sidewalkMat);
+          sw.position.set(sx + side * curbOffset, walkCenterY, zMid);
+          sw.receiveShadow = true;
+          this.group.add(sw);
+        }
+
+        // Dashed white center lane dashes cleanly inside this block segment (clear of stop bars)
+        for (let z = zA + 1.1; z <= zB - 1.1; z += 2.4) {
+          const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.085, 0.9), laneLineMat);
+          dash.rotation.x = -Math.PI / 2;
+          dash.position.set(sx, paintY, z);
+          this.group.add(dash);
+        }
       }
     }
 
+    // 2. Non-overlapping East-West paved street blocks & flanking raised curb sidewalks
     for (const sz of TOWN_STREETS.ew) {
-      const sw = new THREE.Mesh(new THREE.BoxGeometry(streetLen, 0.016, walkW), sidewalkMat);
-      sw.position.set(0, 0.004, sz);
-      sw.receiveShadow = true;
-      const road = new THREE.Mesh(new THREE.BoxGeometry(streetLen, 0.022, roadW), ewPavedMat);
-      road.position.set(0, 0.012, sz);
-      road.receiveShadow = true;
-      this.group.add(sw, road);
+      for (const [xA, xB] of ewSegments) {
+        const len = xB - xA;
+        const xMid = (xA + xB) * 0.5;
 
-      for (let x = -27; x <= 27; x += 2.6) {
-        if (TOWN_STREETS.ns.some((ex) => Math.abs(x - ex) < 2.2)) continue;
-        const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.08), laneLineMat);
-        dash.rotation.x = -Math.PI / 2;
-        dash.position.set(x, 0.026, sz);
-        this.group.add(dash);
+        const roadGeo = applyWorldTopUVs(new THREE.BoxGeometry(len, roadH, roadW), 2.2, true);
+        const road = new THREE.Mesh(roadGeo, pavedRoadMat);
+        road.position.set(xMid, roadCenterY, sz);
+        road.receiveShadow = true;
+        this.group.add(road);
+
+        for (const side of [-1, 1]) {
+          const swGeo = applyWorldTopUVs(new THREE.BoxGeometry(len, walkH, curbW), 2.4, false);
+          const sw = new THREE.Mesh(swGeo, sidewalkMat);
+          sw.position.set(xMid, walkCenterY, sz + side * curbOffset);
+          sw.receiveShadow = true;
+          this.group.add(sw);
+        }
+
+        // Dashed white center lane dashes cleanly inside this block segment
+        for (let x = xA + 1.1; x <= xB - 1.1; x += 2.4) {
+          const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.085), laneLineMat);
+          dash.rotation.x = -Math.PI / 2;
+          dash.position.set(x, paintY, sz);
+          this.group.add(dash);
+        }
       }
     }
 
-    // Crisp 4-Way Paved Intersections, Zebra Pedestrian Crosswalks & Corner Street Signs!
-    const boxGeo = new THREE.BoxGeometry(roadW + 0.04, 0.024, roadW + 0.04);
-    const nsStripeGeo = new THREE.PlaneGeometry(0.18, 0.48);
-    const ewStripeGeo = new THREE.PlaneGeometry(0.48, 0.18);
+    // 3. Proper Paved 4-Way Intersections (exact non-overlapping tile grid:
+    //    center granite plaza square + 4 flush crosswalk road aprons + 4 raised corner curbs!)
+    const interCenterGeo = new THREE.BoxGeometry(roadW, roadH, roadW);
+    const nsApronGeo = applyWorldTopUVs(new THREE.BoxGeometry(roadW, roadH, curbW), 2.2, false);
+    const ewApronGeo = applyWorldTopUVs(new THREE.BoxGeometry(curbW, roadH, roadW), 2.2, true);
+    const cornerCurbGeo = applyWorldTopUVs(new THREE.BoxGeometry(curbW, walkH, curbW), 2.4, false);
+    const nsStripeGeo = new THREE.PlaneGeometry(0.18, 0.42);
+    const ewStripeGeo = new THREE.PlaneGeometry(0.42, 0.18);
+    const nsStopBarGeo = new THREE.PlaneGeometry(roadW - 0.18, 0.075);
+    const ewStopBarGeo = new THREE.PlaneGeometry(0.075, roadW - 0.18);
 
     for (const sx of TOWN_STREETS.ns) {
       for (const sz of TOWN_STREETS.ew) {
-        const box = new THREE.Mesh(boxGeo, intersectionMat);
-        box.position.set(sx, 0.014, sz);
-        box.receiveShadow = true;
-        this.group.add(box);
+        // Center 2.2m × 2.2m paved granite intersection square (flush at top y = 0.024, ZERO overlap!)
+        const centerSquare = new THREE.Mesh(interCenterGeo, intersectionMat);
+        centerSquare.position.set(sx, roadCenterY, sz);
+        centerSquare.receiveShadow = true;
+        this.group.add(centerSquare);
 
-        // 4-way zebra crosswalk stripes around every intersection!
+        // 4 Flush Crosswalk Connector Aprons (0.55m × 2.2m) + 4-Way Zebra Crosswalk Stripes & Stop Bars
         for (const side of [-1, 1]) {
+          const nsApron = new THREE.Mesh(nsApronGeo, pavedRoadMat);
+          nsApron.position.set(sx, roadCenterY, sz + side * curbOffset);
+          nsApron.receiveShadow = true;
+          const ewApron = new THREE.Mesh(ewApronGeo, pavedRoadMat);
+          ewApron.position.set(sx + side * curbOffset, roadCenterY, sz);
+          ewApron.receiveShadow = true;
+          this.group.add(nsApron, ewApron);
+
           for (const off of [-0.66, -0.22, 0.22, 0.66]) {
             const s1 = new THREE.Mesh(nsStripeGeo, stripeMat);
             s1.rotation.x = -Math.PI / 2;
-            s1.position.set(sx + off, 0.028, sz + side * 1.48);
+            s1.position.set(sx + off, paintY, sz + side * curbOffset);
             const s2 = new THREE.Mesh(ewStripeGeo, stripeMat);
             s2.rotation.x = -Math.PI / 2;
-            s2.position.set(sx + side * 1.48, 0.028, sz + off);
+            s2.position.set(sx + side * curbOffset, paintY, sz + off);
             this.group.add(s1, s2);
+          }
+
+          // Crisp architectural pedestrian stop bars just behind each crosswalk
+          const stopNS = new THREE.Mesh(nsStopBarGeo, laneLineMat);
+          stopNS.rotation.x = -Math.PI / 2;
+          stopNS.position.set(sx, paintY, sz + side * (halfWalk + 0.14));
+          const stopEW = new THREE.Mesh(ewStopBarGeo, laneLineMat);
+          stopEW.rotation.x = -Math.PI / 2;
+          stopEW.position.set(sx + side * (halfWalk + 0.14), paintY, sz);
+          this.group.add(stopNS, stopEW);
+        }
+
+        // 4 Raised Corner Sidewalk Quadrants (0.55m × 0.55m, flush with flanking sidewalks at top y = 0.048!)
+        for (const cx of [-1, 1]) {
+          for (const cz of [-1, 1]) {
+            const corner = new THREE.Mesh(cornerCurbGeo, sidewalkMat);
+            corner.position.set(sx + cx * curbOffset, walkCenterY, sz + cz * curbOffset);
+            corner.receiveShadow = true;
+            this.group.add(corner);
           }
         }
 
         // Cute brushed-silver neighborhood street-name corner post at the 4 inner square corners!
         if (Math.abs(sx) < 10 && Math.abs(sz) < 10) {
           const post = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.038, 1.85, 8), metalMat);
-          post.position.set(sx + (sx > 0 ? -1.48 : 1.48), 0.92, sz + (sz > 0 ? -1.48 : 1.48));
+          post.position.set(sx + (sx > 0 ? -1.42 : 1.42), 0.94, sz + (sz > 0 ? -1.42 : 1.42));
           const bladeA = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.12, 0.03), signBoardMat);
-          bladeA.position.set(post.position.x, 1.76, post.position.z);
+          bladeA.position.set(post.position.x, 1.78, post.position.z);
           const bladeB = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.12, 0.56), signBoardMat);
-          bladeB.position.set(post.position.x, 1.62, post.position.z);
+          bladeB.position.set(post.position.x, 1.64, post.position.z);
           this.group.add(post, bladeA, bladeB);
         }
       }
     }
 
-    // Welcoming Paved Town Square Plaza connecting your Home Front Gate (z = 4.9) to Community Fountain & Main St (z = 8.4)!
-    const townSquare = new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.02, 4.4), sidewalkMat);
-    townSquare.position.set(0, 0.012, 5.65);
+    // Welcoming Paved Town Square Plaza connecting your Home Front Gate (z = 4.95) seamlessly
+    // up to Main St's North Sidewalk Edge (z = 8.4 - 1.65 = 6.75) with ZERO overlap!
+    const squareGeo = applyWorldTopUVs(new THREE.BoxGeometry(6.2, walkH, 1.8), 2.4, false);
+    const townSquare = new THREE.Mesh(squareGeo, sidewalkMat);
+    townSquare.position.set(0, walkCenterY, 5.85);
     townSquare.receiveShadow = true;
     this.group.add(townSquare);
   }
